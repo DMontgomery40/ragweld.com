@@ -1,0 +1,48 @@
+import { useCallback } from 'react';
+import { useConfigStore } from '@/stores/useConfigStore';
+import { useRepoStore } from '@/stores/useRepoStore';
+
+/**
+ * Hook for accessing global application state via Zustand stores
+ * NO LONGER bridges to window.CoreUtils.state - uses Zustand directly
+ *
+ * @deprecated Use individual Zustand stores directly (useConfigStore, useRepoStore, etc.)
+ * This hook exists only for backwards compatibility during migration
+ */
+export function useGlobalState() {
+  const config = useConfigStore((s) => s.config);
+  const repos = useRepoStore((s) => s.repos);
+  const activeRepo = useRepoStore((s) => s.activeRepo);
+
+  // Derive state from Zustand stores
+  const state = {
+    config: config || null,
+    models: null, // models are loaded via useAppInit into legacy window.CoreUtils.state during transition
+    profiles: [], // Profiles managed by legacy modules during transition
+    defaultProfile: null,
+    hwScan: null,
+    keywords: null,
+    commitMeta: null,
+    repos,
+    currentRepo: activeRepo
+  };
+
+  const updateState = useCallback((updates: Record<string, unknown>) => {
+    // During transition, also update legacy window.CoreUtils.state if it exists
+    const w = window as any;
+    if (w.CoreUtils?.state) {
+      Object.assign(w.CoreUtils.state, updates);
+      window.dispatchEvent(new CustomEvent('tribrid-state-update', { detail: updates }));
+    }
+
+    // Note: Most updates should go through individual Zustand stores
+    // This is a fallback for legacy code paths
+    console.warn('[useGlobalState] updateState called - use individual Zustand stores instead');
+  }, []);
+
+  const getState = useCallback((key: string) => {
+    return state[key as keyof typeof state];
+  }, [state]);
+
+  return { state, updateState, getState };
+}

@@ -1,0 +1,41 @@
+{
+  "name": "tribrid-rag-web",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "lint": "tsc -p tsconfig.json",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@types/react-syntax-highlighter": "^15.5.13",
+    "ansi-to-react": "^6.2.6",
+    "axios": "^1.7.7",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-force-graph-2d": "^1.29.0",
+    "react-markdown": "^10.1.0",
+    "react-router-dom": "^6.28.0",
+    "react-syntax-highlighter": "^16.1.0",
+    "remark-gfm": "^4.0.1",
+    "zustand": "^4.5.4",
+    "msw": "^2.7.0"
+  },
+  "msw": {
+    "workerDirectory": ["public"]
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.4",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "autoprefixer": "^10.4.20",
+    "baseline-browser-mapping": "^2.9.19",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "typescript": "^5.6.3",
+    "vite": "^7.3.1"
+  }
+}

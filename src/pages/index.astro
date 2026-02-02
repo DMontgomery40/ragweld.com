@@ -1,0 +1,40 @@
+---
+import Nav from '../components/Nav.astro';
+import Hero from '../components/Hero.astro';
+import Footer from '../components/Footer.astro';
+import '../styles/global.css';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ragweld - Tribrid RAG: Vector + Sparse + Graph</title>
+    <meta name="description" content="ragweld combines vector search, sparse retrieval (BM25), and GraphRAG into one unified retrieval system. Experience the power of tribrid RAG." />
+    <meta name="keywords" content="RAG, retrieval augmented generation, vector search, BM25, GraphRAG, LLM, AI" />
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="ragweld - Tribrid RAG" />
+    <meta property="og:description" content="Vector + Sparse + Graph. One fused answer." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://ragweld.com" />
+    <meta property="og:image" content="/og-image.png" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="ragweld - Tribrid RAG" />
+    <meta name="twitter:description" content="Vector + Sparse + Graph. One fused answer." />
+    <meta name="twitter:image" content="/og-image.png" />
+
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="canonical" href="https://ragweld.com" />
+  </head>
+  <body class="antialiased">
+    <Nav />
+    <main>
+      <Hero />
+    </main>
+    <Footer />
+  </body>
+</html>

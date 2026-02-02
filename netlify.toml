@@ -1,0 +1,22 @@
+[build]
+  command = "npm run build && node scripts/validate-demo.cjs"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[redirects]]
+  from = "/demo/*"
+  to = "/demo/index.html"
+  status = 200
+
+[[headers]]
+  for = "/demo/mockServiceWorker.js"
+  [headers.values]
+    Service-Worker-Allowed = "/"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
