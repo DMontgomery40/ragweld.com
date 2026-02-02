@@ -30,7 +30,7 @@ interface ConfigStore {
   reset: () => void;
 }
 
-export const useConfigStore = create<ConfigStore>((set) => {
+export const useConfigStore = create<ConfigStore>((set, get) => {
   // Debounce + aggregation per top-level section
   const pendingBySection: Record<string, Record<string, unknown>> = {};
   const timersBySection: Record<string, ReturnType<typeof setTimeout>> = {};

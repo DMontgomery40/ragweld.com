@@ -4,7 +4,7 @@ import path from 'path'
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  // Demo build for ragweld.com - served at /demo/
+  // Ensure built assets resolve under FastAPI mount at /web
   base: '/demo/',
   plugins: [react()],
   resolve: {
@@ -23,6 +23,12 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8012',
+        changeOrigin: true
+      }
+    }
   },
   build: {
     outDir: 'dist'

@@ -6,17 +6,15 @@ import type React from 'react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useAPI, useConfig, useConfigField } from '@/hooks';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { RepoSelector } from '@/components/ui/RepoSelector';
 import { EmbeddingMismatchWarning } from '@/components/ui/EmbeddingMismatchWarning';
 import { useEmbeddingStatus } from '@/hooks/useEmbeddingStatus';
 import { useRepoStore } from '@/stores/useRepoStore';
-import { SourceDropdown } from '@/components/Chat/SourceDropdown';
-import { ModelPicker } from '@/components/Chat/ModelPicker';
-import { StatusBar } from '@/components/Chat/StatusBar';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import type { ActiveSources, ChatDebugInfo, ChatModelInfo, ChatModelsResponse, ChunkMatch } from '@/types/generated';
+import type { ChatDebugInfo } from '@/types/generated';
 
 // Useful tips shown during response generation
 // Each tip has content and optional category for styling
@@ -416,10 +414,12 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
   const [sending, setSending] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [typing, setTyping] = useState(false);
+  // Per-query repo override - empty string means use the global activeRepo
+  const [queryRepoOverride, setQueryRepoOverride] = useState('');
   const [conversationId, setConversationId] = useState<string | null>(null);
   
   // Use centralized repo store for repo list and default
-  const { repos, loadRepos, initialized } = useRepoStore();
+  const { activeRepo, loadRepos, initialized } = useRepoStore();
   
   // Check if index exists for "no index" warning
   const { status: embeddingStatus } = useEmbeddingStatus();
@@ -436,45 +436,9 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
   // Per-message retrieval leg toggles (do NOT persist; user requested per-message control)
   const [includeVector, setIncludeVector] = useState(true);
   const [includeSparse, setIncludeSparse] = useState(true);
-  const [includeGraph, setIncludeGraph] = useState(false);
+  const [includeGraph, setIncludeGraph] = useState(true);
   // Note: include_vector/sparse/graph are per-message settings on ChatRequest,
   // not config settings. They default to true in the Pydantic model.
-
-  // Chat 2.0: composable sources + model picker
-  const sourcesInitRef = useRef(false);
-  const [activeSources, setActiveSources] = useState<ActiveSources>({ corpus_ids: ['recall_default'] });
-  useEffect(() => {
-    if (sourcesInitRef.current) return;
-    if (!config) return;
-    sourcesInitRef.current = true;
-    const defaults = config.chat?.default_corpus_ids ?? ['recall_default'];
-    setActiveSources({ corpus_ids: defaults });
-  }, [config]);
-
-  const [chatModels, setChatModels] = useState<ChatModelInfo[]>([]);
-  const [modelOverride, setModelOverride] = useState<string>('');
-  const modelInitRef = useRef(false);
-  useEffect(() => {
-    if (!config) return;
-    if (modelInitRef.current) return;
-    if (!chatModels.length) return;
-    // Prefer configured OpenRouter default; otherwise prefer local default (prefixed).
-    const openrouterDefault = config.chat?.openrouter?.default_model;
-    const localDefault = config.chat?.local_models?.default_chat_model;
-    const preferred =
-      (typeof openrouterDefault === 'string' && openrouterDefault.trim()) ||
-      (typeof localDefault === 'string' && localDefault.trim() ? `local:${localDefault.trim()}` : '');
-    if (preferred) {
-      setModelOverride(preferred);
-    } else {
-      const first = chatModels[0];
-      setModelOverride(first.source === 'local' ? `local:${first.id}` : first.id);
-    }
-    modelInitRef.current = true;
-  }, [chatModels, config]);
-
-  const [lastMatches, setLastMatches] = useState<ChunkMatch[]>([]);
-  const [lastLatencyMs, setLastLatencyMs] = useState<number | null>(null);
 
   // Quick settings (also editable in Chat Settings subtab)
   const [chatModel, setChatModel] = useConfigField<string>('ui.chat_default_model', 'gpt-4o-mini');
@@ -575,21 +539,6 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
       clearTimeout(timeoutId);
     };
   }, [streaming, typing]);
-
-  // Load chat model options (Chat 2.0)
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await fetch(api('chat/models'));
-        if (!r.ok) return;
-        const d = (await r.json()) as ChatModelsResponse;
-        const models = Array.isArray(d?.models) ? (d.models as ChatModelInfo[]) : [];
-        setChatModels(models);
-      } catch {
-        // Best-effort; ModelPicker can render empty state.
-      }
-    })();
-  }, [api]);
 
   // Chat settings state (TriBridConfig-backed)
   const [streamPref, setStreamPref] = useState<boolean>(() => chatStreamingEnabled);
@@ -772,17 +721,20 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
   const handleStreamingResponse = async (userMessage: Message) => {
     setStreaming(true);
 
+    const corpusId = (queryRepoOverride || activeRepo || '').trim();
+    if (!corpusId) {
+      throw new Error('Select a corpus before chatting');
+    }
+
     // Stream from /api/chat/stream (SSE)
     const response = await fetch(api('chat/stream'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message: userMessage.content,
-        sources: activeSources,
+        corpus_id: corpusId,
         conversation_id: conversationId,
         stream: true,
-        images: [],
-        model_override: modelOverride,
         include_vector: includeVector,
         include_sparse: includeSparse,
         include_graph: includeGraph,
@@ -888,7 +840,6 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
               setConversationId(parsed.conversation_id);
             }
             if (Array.isArray(parsed.sources)) {
-              setLastMatches(parsed.sources as ChunkMatch[]);
               citations = parsed.sources
                 .map((s: any) => {
                   const fp = s?.file_path;
@@ -906,11 +857,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
               startedAtMs = parsed.started_at_ms;
             }
             if (typeof parsed.ended_at_ms === 'number') {
-              const ended = parsed.ended_at_ms;
-              endedAtMs = ended;
-              if (typeof startedAtMs === 'number') {
-                setLastLatencyMs(Math.max(0, ended - startedAtMs));
-              }
+              endedAtMs = parsed.ended_at_ms;
             }
             debug = parsed && typeof parsed.debug === 'object' ? (parsed.debug as ChatDebugInfo) : null;
             confidence = typeof parsed?.debug?.confidence === 'number' ? parsed.debug.confidence : undefined;
@@ -973,6 +920,11 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
     const params = new URLSearchParams(window.location.search || '');
     const fast = fastMode || params.get('fast') === '1' || params.get('smoke') === '1';
 
+    const corpusId = (queryRepoOverride || activeRepo || '').trim();
+    if (!corpusId) {
+      throw new Error('Select a corpus before chatting');
+    }
+
     // NOTE: `fast` is currently a UI-only toggle. The backend chat API does not accept fast_mode yet.
     void fast;
 
@@ -981,11 +933,9 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message: userMessage.content,
-        sources: activeSources,
+        corpus_id: corpusId,
         conversation_id: conversationId,
         stream: false,
-        images: [],
-        model_override: modelOverride,
         include_vector: includeVector,
         include_sparse: includeSparse,
         include_graph: includeGraph,
@@ -1003,8 +953,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
       data && typeof data.conversation_id === 'string' ? data.conversation_id : null;
     if (nextConversationId) setConversationId(nextConversationId);
 
-    const sources: ChunkMatch[] = Array.isArray(data?.sources) ? (data.sources as ChunkMatch[]) : [];
-    setLastMatches(sources);
+    const sources: any[] = Array.isArray(data?.sources) ? data.sources : [];
     const citations: string[] = sources
       .map((s: any) => {
         const fp = s?.file_path;
@@ -1019,9 +968,6 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
     const runId: string | undefined = typeof data?.run_id === 'string' ? data.run_id : undefined;
     const startedAtMs: number | undefined = typeof data?.started_at_ms === 'number' ? data.started_at_ms : undefined;
     const endedAtMs: number | undefined = typeof data?.ended_at_ms === 'number' ? data.ended_at_ms : undefined;
-    if (typeof startedAtMs === 'number' && typeof endedAtMs === 'number') {
-      setLastLatencyMs(Math.max(0, endedAtMs - startedAtMs));
-    }
     const debug: ChatDebugInfo | null = data && typeof data?.debug === 'object' ? (data.debug as ChatDebugInfo) : null;
     const confidence: number | undefined = typeof data?.debug?.confidence === 'number' ? data.debug.confidence : undefined;
     const assistantMessage: Message = {
@@ -1148,20 +1094,13 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
             <input id="chat-fast-mode" type="checkbox" checked={fastMode} onChange={(e) => setFastMode(e.target.checked)} style={{ width: '14px', height: '14px', cursor: 'pointer' }} />
             Fast
           </label>
-          <SourceDropdown
-            value={activeSources}
-            onChange={setActiveSources}
-            corpora={repos}
-            includeVector={includeVector}
-            includeSparse={includeSparse}
-            includeGraph={includeGraph}
-            onIncludeVectorChange={setIncludeVector}
-            onIncludeSparseChange={setIncludeSparse}
-            onIncludeGraphChange={setIncludeGraph}
+          <RepoSelector
+            id="chat-repo-select"
+            value={queryRepoOverride}
+            onChange={setQueryRepoOverride}
+            showAutoDetect={true}
+            compact={true}
           />
-          <div style={{ width: '360px', minWidth: '280px' }}>
-            <ModelPicker value={modelOverride} onChange={setModelOverride} models={chatModels} />
-          </div>
 
           <button
             onClick={handleExport}
@@ -2025,8 +1964,6 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
           </div>
         )}
       </div>
-
-      <StatusBar sources={activeSources} matches={lastMatches} latencyMs={lastLatencyMs} />
 
       <style>{`
         @keyframes pulse {

@@ -2,6 +2,7 @@ import { apiClient, api } from './client';
 import type {
   DevStackRestartResponse,
   DevStackStatusResponse,
+  DockerContainer,
   DockerContainersResponse,
   DockerStatus,
   LokiStatus,
