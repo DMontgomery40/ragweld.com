@@ -44,7 +44,12 @@ export const handlers = [
     });
   }),
 
-  // Corpus/Repo endpoints (repo_id is actually corpus_id per CLAUDE.md)
+  // Corpus endpoints (app uses both /api/corpora and /api/corpus)
+  http.get('/api/corpora', async () => {
+    await delay(100);
+    return HttpResponse.json(mockCorpora);
+  }),
+
   http.get('/api/repos', async () => {
     await delay(100);
     return HttpResponse.json(mockCorpora);
@@ -64,7 +69,12 @@ export const handlers = [
     return HttpResponse.json(corpus);
   }),
 
-  // Chat models endpoint
+  // Models endpoints (app uses /api/models)
+  http.get('/api/models', async () => {
+    await delay(200);
+    return HttpResponse.json(mockChatModels);
+  }),
+
   http.get('/api/chat/models', async () => {
     await delay(200);
     return HttpResponse.json(mockChatModels);
@@ -154,7 +164,7 @@ export const handlers = [
     });
   }),
 
-  // Docker status (for the demo, show as running)
+  // Docker status endpoints
   http.get('/api/docker/status', async () => {
     await delay(100);
     return HttpResponse.json({
@@ -167,7 +177,32 @@ export const handlers = [
     });
   }),
 
-  // Indexing status (show as complete for demo)
+  http.get('/api/docker/containers', async () => {
+    await delay(100);
+    return HttpResponse.json([
+      { name: 'tribrid-postgres', status: 'running', port: 5432 },
+      { name: 'tribrid-neo4j', status: 'running', port: 7687 },
+      { name: 'tribrid-api', status: 'running', port: 8012 },
+    ]);
+  }),
+
+  http.get('/api/docker/redis/ping', async () => {
+    await delay(50);
+    return HttpResponse.json({ status: 'ok', pong: true });
+  }),
+
+  // Indexing status endpoints
+  http.get('/api/index/status', async () => {
+    await delay(100);
+    return HttpResponse.json({
+      status: 'complete',
+      progress: 100,
+      chunks_indexed: 1847,
+      files_processed: 156,
+      last_updated: new Date().toISOString(),
+    });
+  }),
+
   http.get('/api/index/status/:corpus_id', async ({ params }) => {
     await delay(100);
     const corpus = mockCorpora.find((c) => c.id === params.corpus_id);
@@ -181,6 +216,17 @@ export const handlers = [
     });
   }),
 
+  http.get('/api/index/stats', async () => {
+    await delay(100);
+    return HttpResponse.json({
+      total_chunks: 3981,
+      total_files: 359,
+      total_corpora: 2,
+      embedding_model: 'text-embedding-3-small',
+      last_indexed: new Date().toISOString(),
+    });
+  }),
+
   // Eval datasets (empty for demo)
   http.get('/api/eval/datasets', async () => {
     await delay(100);
@@ -191,5 +237,83 @@ export const handlers = [
   http.get('/api/recall/search', async () => {
     await delay(100);
     return HttpResponse.json({ matches: [], query: '', corpus_id: 'recall_default' });
+  }),
+
+  // MCP status
+  http.get('/api/mcp/status', async () => {
+    await delay(100);
+    return HttpResponse.json({
+      status: 'demo',
+      servers: [],
+      message: 'MCP not available in demo mode',
+    });
+  }),
+
+  // Monitoring/observability status
+  http.get('/api/loki/status', async () => {
+    await delay(100);
+    return HttpResponse.json({ status: 'demo', available: false });
+  }),
+
+  http.get('/api/webhooks/alertmanager/status', async () => {
+    await delay(100);
+    return HttpResponse.json({ status: 'demo', configured: false });
+  }),
+
+  http.get('/api/traces', async () => {
+    await delay(100);
+    return HttpResponse.json({ traces: [], total: 0 });
+  }),
+
+  http.get('/api/dev/status', async () => {
+    await delay(100);
+    return HttpResponse.json({
+      mode: 'demo',
+      env: 'production',
+      version: '0.1.0-demo',
+    });
+  }),
+
+  // Keywords
+  http.get('/api/keywords', async () => {
+    await delay(100);
+    return HttpResponse.json([]);
+  }),
+
+  http.post('/api/keywords', async ({ request }) => {
+    await delay(100);
+    const body = await request.json();
+    return HttpResponse.json(body);
+  }),
+
+  // Env reload (no-op in demo)
+  http.post('/api/env/reload', async () => {
+    await delay(100);
+    return HttpResponse.json({ status: 'ok', message: 'Demo mode - no reload needed' });
+  }),
+
+  // Grafana (not available in demo)
+  http.get('/api/grafana/status', async () => {
+    await delay(100);
+    return HttpResponse.json({ status: 'demo', available: false });
+  }),
+
+  // Catch-all for unhandled API routes - return demo message
+  http.get('/api/*', async ({ request }) => {
+    console.log('[MSW] Unhandled GET:', new URL(request.url).pathname);
+    await delay(50);
+    return HttpResponse.json({
+      status: 'demo',
+      message: 'This endpoint is not mocked in demo mode'
+    });
+  }),
+
+  http.post('/api/*', async ({ request }) => {
+    console.log('[MSW] Unhandled POST:', new URL(request.url).pathname);
+    await delay(50);
+    return HttpResponse.json({
+      status: 'demo',
+      message: 'This endpoint is not mocked in demo mode'
+    });
   }),
 ];
