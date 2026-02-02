@@ -53,25 +53,40 @@
 
     <!-- Demo iframe container -->
     <div class="rounded-xl border border-[#222] overflow-hidden shadow-2xl shadow-black/50 bg-[#111]">
-      <div class="flex items-center gap-2 px-4 py-3 bg-[#161616] border-b border-[#222]">
-        <div class="flex gap-2">
-          <div class="w-3 h-3 rounded-full bg-[#ff5f56]"></div>
-          <div class="w-3 h-3 rounded-full bg-[#ffbd2e]"></div>
-          <div class="w-3 h-3 rounded-full bg-[#27c93f]"></div>
+      <div class="flex items-center justify-between gap-2 px-4 py-3 bg-[#161616] border-b border-[#222]">
+        <div class="flex items-center gap-2">
+          <div class="flex gap-2">
+            <div class="w-3 h-3 rounded-full bg-[#ff5f56]"></div>
+            <div class="w-3 h-3 rounded-full bg-[#ffbd2e]"></div>
+            <div class="w-3 h-3 rounded-full bg-[#27c93f]"></div>
+          </div>
+          <span class="ml-4 text-gray-500 text-sm">Live Demo (Faxbot corpora)</span>
         </div>
-        <span class="ml-4 text-gray-500 text-sm">Live Demo (simulated backend)</span>
+        <div class="flex items-center gap-3">
+          <a href="/demo/?corpus=faxbot" class="text-sm text-[#00ff88] hover:text-[#00dd77] transition-colors">
+            Open full demo →
+          </a>
+          <a
+            href="/demo/?corpus=faxbot"
+            target="_blank"
+            rel="noopener"
+            class="rounded-md border border-[#333] px-3 py-1.5 text-xs text-white hover:bg-[#111] transition-colors"
+          >
+            Try fullscreen
+          </a>
+        </div>
       </div>
       <iframe
         title="ragweld Demo"
-        src="/demo/"
+        src="/demo/?corpus=faxbot"
         loading="lazy"
-        class="w-full aspect-[16/10] border-0"
+        class="w-full h-[70vh] min-h-[520px] md:h-[80vh] md:min-h-[640px] md:max-h-[980px] border-0"
         sandbox="allow-scripts allow-same-origin allow-forms"
       ></iframe>
     </div>
 
     <p class="mt-4 text-center text-gray-500 text-sm">
-      This demo uses simulated responses. Deploy your own instance for real RAG.
+      Live search + chat are backed by the open-source Faxbot corpora. Add <span class="text-gray-400">?mock=1</span> for offline demo mode.
     </p>
   </div>
 </section>

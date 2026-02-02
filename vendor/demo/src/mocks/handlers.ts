@@ -5,17 +5,23 @@
  * to simulate a fully functional backend.
  */
 
-import { http, HttpResponse, delay } from 'msw';
+import { http, HttpResponse, delay, passthrough } from 'msw';
 import {
   mockCorpora,
   mockChatModels,
   mockConfig,
   mockChunkMatches,
+  mockGraphByCorpus,
   mockHealthResponse,
   generateChatChunks,
 } from './data';
 
-export const handlers = [
+const getGraph = (corpusId: string) => {
+  const key = String(corpusId || '').trim();
+  return mockGraphByCorpus[key] || null;
+};
+
+export const handlersFull = [
   // Health check
   http.get('/api/health', async () => {
     await delay(100);
@@ -62,7 +68,7 @@ export const handlers = [
 
   http.get('/api/corpus/:id', async ({ params }) => {
     await delay(100);
-    const corpus = mockCorpora.find((c) => c.id === params.id);
+    const corpus = mockCorpora.find((c) => c.corpus_id === params.id);
     if (!corpus) {
       return new HttpResponse(null, { status: 404 });
     }
@@ -152,16 +158,163 @@ export const handlers = [
     });
   }),
 
+  // Non-streaming chat endpoint (fallback path when streaming is disabled)
+  http.post('/api/chat', async ({ request }) => {
+    await delay(350);
+    const body = (await request.json()) as {
+      message: string;
+      sources?: { corpus_ids?: string[] };
+      conversation_id?: string;
+      stream?: boolean;
+      model_override?: string;
+      include_vector?: boolean;
+      include_sparse?: boolean;
+      include_graph?: boolean;
+    };
+    const startedAtMs = Date.now();
+    const endedAtMs = startedAtMs + 250;
+    const content = generateChatChunks(body.message)
+      .map((c) => c.text)
+      .join('');
+    return HttpResponse.json({
+      run_id: `demo-run-${Date.now()}`,
+      started_at_ms: startedAtMs,
+      ended_at_ms: endedAtMs,
+      debug: {
+        confidence: 0.85,
+        include_vector: body.include_vector ?? true,
+        include_sparse: body.include_sparse ?? true,
+        include_graph: body.include_graph ?? true,
+        vector_enabled: true,
+        sparse_enabled: true,
+        graph_enabled: true,
+        fusion_method: 'rrf',
+        rrf_k: 60,
+        normalize_scores: true,
+        final_k_used: 10,
+        vector_results: 5,
+        sparse_results: 4,
+        graph_entity_hits: 3,
+        graph_hydrated_chunks: 3,
+        final_results: 10,
+        top1_score: 0.92,
+        avg5_score: 0.87,
+      },
+      conversation_id: body.conversation_id || `demo-${Date.now()}`,
+      message: {
+        role: 'assistant',
+        content,
+        timestamp: new Date().toISOString(),
+      },
+      sources: mockChunkMatches,
+      tokens_used: 0,
+    });
+  }),
+
   // Search endpoint
   http.post('/api/search', async ({ request }) => {
     await delay(300);
-    const body = (await request.json()) as { query: string; repo_id?: string; k?: number };
+    const body = (await request.json()) as { query: string; corpus_id?: string; top_k?: number; k?: number };
     return HttpResponse.json({
-      matches: mockChunkMatches.slice(0, body.k || 10),
       query: body.query,
-      repo_id: body.repo_id || 'faxbot',
+      matches: mockChunkMatches.slice(0, body.top_k || body.k || 10),
+      fusion_method: 'rrf',
+      reranker_mode: 'none',
       latency_ms: 150 + Math.random() * 100,
+      debug: {
+        corpus_id: body.corpus_id || 'faxbot',
+        include_vector: true,
+        include_sparse: true,
+        include_graph: true,
+      },
     });
+  }),
+
+  // Graph endpoints (for offline / ?mock=1 mode)
+  http.get('/api/graph/:corpusId/stats', async ({ params }) => {
+    await delay(80);
+    const g = getGraph(String(params.corpusId));
+    if (!g) return new HttpResponse(null, { status: 404 });
+    return HttpResponse.json(g.stats);
+  }),
+
+  http.get('/api/graph/:corpusId/communities', async ({ params }) => {
+    await delay(80);
+    const g = getGraph(String(params.corpusId));
+    if (!g) return new HttpResponse(null, { status: 404 });
+    return HttpResponse.json(g.communities);
+  }),
+
+  http.get('/api/graph/:corpusId/entities', async ({ params, request }) => {
+    await delay(100);
+    const g = getGraph(String(params.corpusId));
+    if (!g) return new HttpResponse(null, { status: 404 });
+
+    const url = new URL(request.url);
+    const q = (url.searchParams.get('q') || '').trim().toLowerCase();
+    const limitRaw = Number.parseInt(String(url.searchParams.get('limit') || '50'), 10);
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, limitRaw)) : 50;
+
+    let ents = g.entities;
+    if (q) {
+      ents = ents.filter((e: any) => {
+        const name = String(e?.name || '').toLowerCase();
+        const fp = String(e?.file_path || '').toLowerCase();
+        const desc = String(e?.description || '').toLowerCase();
+        return name.includes(q) || fp.includes(q) || desc.includes(q);
+      });
+    }
+
+    return HttpResponse.json(ents.slice(0, limit));
+  }),
+
+  http.get('/api/graph/:corpusId/entity/:entityId/neighbors', async ({ params }) => {
+    await delay(120);
+    const g = getGraph(String(params.corpusId));
+    if (!g) return new HttpResponse(null, { status: 404 });
+
+    const entityId = String(params.entityId || '').trim();
+    const center = g.entities.find((e: any) => String(e?.entity_id) === entityId);
+    if (!center) return new HttpResponse(null, { status: 404 });
+
+    const rels = g.relationships.filter((r: any) => r?.source_id === entityId || r?.target_id === entityId);
+    const ids = new Set<string>([entityId]);
+    for (const r of rels) {
+      ids.add(String(r.source_id));
+      ids.add(String(r.target_id));
+    }
+    const ents = g.entities.filter((e: any) => ids.has(String(e?.entity_id)));
+    return HttpResponse.json({ entities: ents, relationships: rels });
+  }),
+
+  http.get('/api/graph/:corpusId/community/:communityId/members', async ({ params }) => {
+    await delay(120);
+    const g = getGraph(String(params.corpusId));
+    if (!g) return new HttpResponse(null, { status: 404 });
+
+    const communityId = String(params.communityId || '').trim();
+    const community = g.communities.find((c: any) => String(c?.community_id) === communityId);
+    if (!community) return new HttpResponse(null, { status: 404 });
+
+    const members = new Set<string>(Array.isArray(community.member_ids) ? community.member_ids.map(String) : []);
+    const ents = g.entities.filter((e: any) => members.has(String(e?.entity_id)));
+    return HttpResponse.json(ents);
+  }),
+
+  http.get('/api/graph/:corpusId/community/:communityId/subgraph', async ({ params }) => {
+    await delay(140);
+    const g = getGraph(String(params.corpusId));
+    if (!g) return new HttpResponse(null, { status: 404 });
+
+    const communityId = String(params.communityId || '').trim();
+    const community = g.communities.find((c: any) => String(c?.community_id) === communityId);
+    if (!community) return new HttpResponse(null, { status: 404 });
+
+    const members = new Set<string>(Array.isArray(community.member_ids) ? community.member_ids.map(String) : []);
+    const ents = g.entities.filter((e: any) => members.has(String(e?.entity_id)));
+    const rels = g.relationships.filter((r: any) => members.has(String(r?.source_id)) && members.has(String(r?.target_id)));
+
+    return HttpResponse.json({ entities: ents, relationships: rels });
   }),
 
   // Docker status endpoints
@@ -205,7 +358,7 @@ export const handlers = [
 
   http.get('/api/index/status/:corpus_id', async ({ params }) => {
     await delay(100);
-    const corpus = mockCorpora.find((c) => c.id === params.corpus_id);
+    const corpus = mockCorpora.find((c) => c.corpus_id === params.corpus_id);
     return HttpResponse.json({
       corpus_id: params.corpus_id,
       status: 'complete',
@@ -317,3 +470,37 @@ export const handlers = [
     });
   }),
 ];
+
+// Partial mocks: keep demo-only tabs working, but let core RAG endpoints hit the real backend.
+// Used when running /demo without ?mock=1.
+const passthroughHandlers = [
+  // Core: real backend
+  http.get('/api/health', () => passthrough()),
+  http.get('/api/corpora', () => passthrough()),
+  http.get('/api/repos', () => passthrough()),
+  http.get('/api/corpus', () => passthrough()),
+  http.get('/api/corpus/:id', () => passthrough()),
+  http.post('/api/search', () => passthrough()),
+  http.post('/api/chat', () => passthrough()),
+  http.post('/api/chat/stream', () => passthrough()),
+  http.get('/api/graph/*', () => passthrough()),
+];
+
+const LIVE_HANDLER_PATHS = new Set([
+  '/api/health',
+  '/api/corpora',
+  '/api/repos',
+  '/api/corpus',
+  '/api/corpus/:id',
+  '/api/search',
+  '/api/chat',
+  '/api/chat/stream',
+]);
+
+export const handlersPartial = [
+  ...passthroughHandlers,
+  ...handlersFull.filter((h: any) => !LIVE_HANDLER_PATHS.has(String(h?.info?.path || ''))),
+];
+
+// Back-compat: some code may still import `handlers`.
+export const handlers = handlersFull;

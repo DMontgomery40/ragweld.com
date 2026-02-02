@@ -1,0 +1,43 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+
+const { frontmatter } = Astro.props;
+
+const title = frontmatter?.title ?? 'Untitled';
+const description = frontmatter?.summary ?? frontmatter?.description ?? '';
+const publishedAt = frontmatter?.date ? new Date(frontmatter.date) : null;
+
+const dateLabel = publishedAt
+  ? new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'long', day: 'numeric' }).format(publishedAt)
+  : null;
+---
+
+<BaseLayout title={`${title} — ragweld blog`} description={description} ogType="article">
+  <Nav />
+  <main class="bg-[#0a0a0a] pt-28 pb-16">
+    <div class="mx-auto max-w-3xl px-4">
+      <a href="/blog" class="text-sm text-gray-400 hover:text-white transition-colors">← Blog</a>
+      <h1 class="mt-5 text-4xl font-bold text-white tracking-tight">{title}</h1>
+      {
+        dateLabel && publishedAt && (
+          <time datetime={publishedAt.toISOString()} class="mt-3 block text-sm text-gray-500">
+            {dateLabel}
+          </time>
+        )
+      }
+
+      <article
+        class="prose prose-invert prose-zinc mt-10 max-w-none prose-a:text-[#00ff88] prose-a:no-underline hover:prose-a:underline prose-code:text-[#5b9dff] prose-pre:bg-[#0f0f0f] prose-pre:border prose-pre:border-[#222]"
+      >
+        <slot />
+      </article>
+
+      <div class="mt-16 border-t border-[#222] pt-8 text-sm text-gray-500">
+        <a href="/blog" class="hover:text-white transition-colors">Back to all posts</a>
+      </div>
+    </div>
+  </main>
+  <Footer />
+</BaseLayout>

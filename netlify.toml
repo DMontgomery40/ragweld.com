@@ -2,12 +2,20 @@
   command = "npm run build && node scripts/validate-demo.cjs"
   publish = "dist"
 
+[functions]
+  directory = "netlify/functions"
+
 [build.environment]
   NODE_VERSION = "20"
 
 [[redirects]]
   from = "/demo/*"
   to = "/demo/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
   status = 200
 
 [[headers]]

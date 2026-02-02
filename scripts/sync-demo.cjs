@@ -51,4 +51,12 @@ if (fs.existsSync(viteConfigPath)) {
   console.log('Patched vite.config.ts with base: /demo/');
 }
 
+// Patch demo entrypoint (basename + MSW bootstrap)
+try {
+  const patchScript = path.join(__dirname, 'patch-demo-entry.cjs');
+  execSync(`node "${patchScript}"`, { stdio: 'inherit' });
+} catch (e) {
+  console.warn('Warning: failed to patch demo entrypoint:', e?.message || e);
+}
+
 console.log('Done! Run npm --prefix vendor/demo install to install dependencies.');

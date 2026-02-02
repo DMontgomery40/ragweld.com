@@ -6,6 +6,6 @@
  */
 
 import { setupWorker } from 'msw/browser';
-import { handlers } from './handlers';
 
-export const worker = setupWorker(...handlers);
+// Handlers are registered dynamically at startup (supports partial mocks + ?mock=1 fallback).
+export const worker = setupWorker();

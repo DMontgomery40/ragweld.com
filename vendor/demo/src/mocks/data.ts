@@ -5,27 +5,35 @@
  * in the live demo mode.
  */
 
-import type { TriBridConfig, ChunkMatch, ChatModelInfo } from '@/types/generated';
+import type { TriBridConfig, ChunkMatch, ChatModelInfo, Entity, Relationship, Community, GraphStats } from '@/types/generated';
 
 // Sample corpora (cross-promotion for faxbot.net and vivified)
 export const mockCorpora = [
   {
-    id: 'faxbot',
+    corpus_id: 'faxbot',
     name: 'Faxbot',
+    path: 'https://github.com/dmontgomery40/faxbot',
     description: 'Faxbot codebase - modern fax automation platform',
-    indexed: true,
+    slug: 'faxbot',
+    branch: 'main',
+    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 30).toISOString(),
+    last_indexed: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(), // 2 days ago
+    // Mock-only fields (used by demo-only endpoints)
     chunk_count: 1847,
     file_count: 156,
-    last_indexed: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(), // 2 days ago
   },
   {
-    id: 'vivified',
+    corpus_id: 'vivified',
     name: 'Vivified',
+    path: 'https://vivified.example.com',
     description: 'Vivified documentation and code samples',
-    indexed: true,
+    slug: 'vivified',
+    branch: null,
+    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 30).toISOString(),
+    last_indexed: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(), // 1 day ago
+    // Mock-only fields (used by demo-only endpoints)
     chunk_count: 2134,
     file_count: 203,
-    last_indexed: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(), // 1 day ago
   },
 ];
 
@@ -189,6 +197,133 @@ interface AuthConfig {
     source: 'graph',
   },
 ];
+
+type MockGraphData = {
+  stats: GraphStats;
+  entities: Entity[];
+  relationships: Relationship[];
+  communities: Community[];
+};
+
+const countBy = <T extends Record<string, unknown>>(items: T[], key: keyof T): Record<string, number> => {
+  return items.reduce((acc, item) => {
+    const k = String(item[key] ?? 'unknown');
+    acc[k] = (acc[k] ?? 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+};
+
+const buildStats = (corpus_id: string, entities: Entity[], relationships: Relationship[], communities: Community[]): GraphStats => ({
+  corpus_id,
+  total_entities: entities.length,
+  total_relationships: relationships.length,
+  total_communities: communities.length,
+  entity_breakdown: countBy(entities as unknown as Record<string, unknown>[], 'entity_type'),
+  relationship_breakdown: countBy(relationships as unknown as Record<string, unknown>[], 'relation_type'),
+});
+
+const faxbotGraphEntities: Entity[] = [
+  {
+    entity_id: 'fx:authMiddleware',
+    name: 'authMiddleware',
+    entity_type: 'function',
+    file_path: 'src/middleware/auth.ts',
+    description: 'Validates JWTs and attaches the user to the request.',
+  },
+  {
+    entity_id: 'fx:authenticateUser',
+    name: 'authenticateUser',
+    entity_type: 'function',
+    file_path: 'src/auth/authenticate.ts',
+    description: 'Validates credentials and issues a JWT.',
+  },
+  {
+    entity_id: 'fx:AuthConfig',
+    name: 'AuthConfig',
+    entity_type: 'concept',
+    file_path: 'src/auth/config.ts',
+    description: 'Authentication settings such as token expiry and bcrypt rounds.',
+  },
+  {
+    entity_id: 'fx:auth',
+    name: 'auth',
+    entity_type: 'module',
+    file_path: 'src/auth/index.ts',
+    description: 'Authentication module entrypoint.',
+  },
+];
+
+const faxbotGraphRelationships: Relationship[] = [
+  { source_id: 'fx:auth', target_id: 'fx:authenticateUser', relation_type: 'contains', weight: 1.0 },
+  { source_id: 'fx:auth', target_id: 'fx:authMiddleware', relation_type: 'contains', weight: 1.0 },
+  { source_id: 'fx:authenticateUser', target_id: 'fx:AuthConfig', relation_type: 'references', weight: 0.7 },
+  { source_id: 'fx:authMiddleware', target_id: 'fx:AuthConfig', relation_type: 'references', weight: 0.6 },
+  { source_id: 'fx:authenticateUser', target_id: 'fx:authMiddleware', relation_type: 'calls', weight: 0.5 },
+];
+
+const faxbotGraphCommunities: Community[] = [
+  {
+    community_id: 'fx:community:auth',
+    name: 'Auth + Identity',
+    summary: 'Login, tokens, and request authentication.',
+    member_ids: ['fx:auth', 'fx:authenticateUser', 'fx:authMiddleware', 'fx:AuthConfig'],
+    level: 0,
+  },
+];
+
+const vivifiedGraphEntities: Entity[] = [
+  {
+    entity_id: 'vv:Quickstart',
+    name: 'Quickstart',
+    entity_type: 'concept',
+    file_path: 'docs/quickstart.md',
+    description: 'High-level getting-started guide.',
+  },
+  {
+    entity_id: 'vv:Cli',
+    name: 'cli',
+    entity_type: 'module',
+    file_path: 'src/cli/index.ts',
+    description: 'CLI entrypoints and argument parsing.',
+  },
+  {
+    entity_id: 'vv:run',
+    name: 'run',
+    entity_type: 'function',
+    file_path: 'src/cli/run.ts',
+    description: 'Primary CLI command implementation.',
+  },
+];
+
+const vivifiedGraphRelationships: Relationship[] = [
+  { source_id: 'vv:Cli', target_id: 'vv:run', relation_type: 'contains', weight: 1.0 },
+  { source_id: 'vv:run', target_id: 'vv:Quickstart', relation_type: 'references', weight: 0.6 },
+];
+
+const vivifiedGraphCommunities: Community[] = [
+  {
+    community_id: 'vv:community:docs',
+    name: 'Docs + CLI',
+    summary: 'Docs pages and their corresponding CLI entrypoints.',
+    member_ids: ['vv:Quickstart', 'vv:Cli', 'vv:run'],
+    level: 0,
+  },
+];
+
+export const mockGraphByCorpus: Record<string, MockGraphData> = {
+  faxbot: {
+    entities: faxbotGraphEntities,
+    relationships: faxbotGraphRelationships,
+    communities: faxbotGraphCommunities,
+    stats: buildStats('faxbot', faxbotGraphEntities, faxbotGraphRelationships, faxbotGraphCommunities),
+  },
+  vivified: {
+    entities: vivifiedGraphEntities,
+    relationships: vivifiedGraphRelationships,
+    communities: vivifiedGraphCommunities,
+    stats: buildStats('vivified', vivifiedGraphEntities, vivifiedGraphRelationships, vivifiedGraphCommunities),
+  },
+};
 
 // Response generators for chat streaming
 export interface ChatChunk {

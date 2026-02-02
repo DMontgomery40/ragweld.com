@@ -1,0 +1,48 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Nav from '../../components/Nav.astro';
+import Footer from '../../components/Footer.astro';
+
+const postModules = import.meta.glob('./posts/*.md', { eager: true });
+const posts = Object.values(postModules) as any[];
+posts.sort((a, b) => {
+  const aDate = new Date(a.frontmatter.date).valueOf();
+  const bDate = new Date(b.frontmatter.date).valueOf();
+  return bDate - aDate;
+});
+
+const dateFmt = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: '2-digit' });
+---
+
+<BaseLayout
+  title="ragweld blog"
+  description="Engineering notes from building TriBridRAG: fused retrieval across vector, sparse (BM25), and graph search."
+  canonical="https://ragweld.com/blog/"
+>
+  <Nav />
+  <main class="bg-[#0a0a0a] pt-28 pb-16">
+    <div class="mx-auto max-w-4xl px-4">
+      <h1 class="text-4xl font-bold text-white tracking-tight">Blog</h1>
+      <p class="mt-3 max-w-2xl text-gray-400">
+        Notes from building TriBridRAG: fused retrieval across vector, sparse (BM25), and graph search.
+      </p>
+
+      <div class="mt-10 divide-y divide-[#222] border-y border-[#222]">
+        {
+          posts.map((post) => (
+            <a href={post.url} class="block py-6 group">
+              <div class="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
+                <div class="text-lg font-semibold text-white transition-colors group-hover:text-[#00ff88]">
+                  {post.frontmatter.title}
+                </div>
+                <div class="text-sm text-gray-500">{dateFmt.format(new Date(post.frontmatter.date))}</div>
+              </div>
+              <div class="mt-2 text-sm text-gray-400">{post.frontmatter.summary}</div>
+            </a>
+          ))
+        }
+      </div>
+    </div>
+  </main>
+  <Footer />
+</BaseLayout>
