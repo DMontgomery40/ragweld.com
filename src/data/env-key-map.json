@@ -1,0 +1,860 @@
+{
+  "envToPath": {
+    "RRF_K_DIV": "retrieval.rrf_k_div",
+    "LANGGRAPH_FINAL_K": "retrieval.langgraph_final_k",
+    "MAX_QUERY_REWRITES": "retrieval.max_query_rewrites",
+    "LANGGRAPH_MAX_QUERY_REWRITES": "retrieval.langgraph_max_query_rewrites",
+    "MQ_REWRITES": "retrieval.max_query_rewrites",
+    "FALLBACK_CONFIDENCE": "retrieval.fallback_confidence",
+    "FINAL_K": "retrieval.final_k",
+    "EVAL_FINAL_K": "retrieval.eval_final_k",
+    "CONF_TOP1": "retrieval.conf_top1",
+    "CONF_AVG5": "retrieval.conf_avg5",
+    "CONF_ANY": "retrieval.conf_any",
+    "EVAL_MULTI": "retrieval.eval_multi",
+    "QUERY_EXPANSION_ENABLED": "retrieval.query_expansion_enabled",
+    "BM25_WEIGHT": "retrieval.bm25_weight",
+    "BM25_K1": "retrieval.bm25_k1",
+    "BM25_B": "retrieval.bm25_b",
+    "VECTOR_WEIGHT": "retrieval.vector_weight",
+    "CHUNK_SUMMARY_SEARCH_ENABLED": "retrieval.chunk_summary_search_enabled",
+    "MULTI_QUERY_M": "retrieval.multi_query_m",
+    "USE_SEMANTIC_SYNONYMS": "retrieval.use_semantic_synonyms",
+    "TRIBRID_SYNONYMS_PATH": "retrieval.tribrid_synonyms_path",
+    "TOPK_DENSE": "retrieval.topk_dense",
+    "TOPK_SPARSE": "retrieval.topk_sparse",
+    "CHUNK_SUMMARY_BONUS": "scoring.chunk_summary_bonus",
+    "FILENAME_BOOST_EXACT": "scoring.filename_boost_exact",
+    "FILENAME_BOOST_PARTIAL": "scoring.filename_boost_partial",
+    "VENDOR_MODE": "scoring.vendor_mode",
+    "PATH_BOOSTS": "scoring.path_boosts",
+    "LAYER_BONUS_GUI": "layer_bonus.gui",
+    "LAYER_BONUS_RETRIEVAL": "layer_bonus.retrieval",
+    "LAYER_BONUS_INDEXER": "layer_bonus.indexer",
+    "VENDOR_PENALTY": "layer_bonus.vendor_penalty",
+    "FRESHNESS_BONUS": "layer_bonus.freshness_bonus",
+    "LAYER_INTENT_MATRIX": "layer_bonus.intent_matrix",
+    "EMBEDDING_TYPE": "embedding.embedding_type",
+    "EMBEDDING_MODEL": "embedding.embedding_model",
+    "EMBEDDING_DIM": "embedding.embedding_dim",
+    "VOYAGE_MODEL": "embedding.voyage_model",
+    "EMBEDDING_MODEL_LOCAL": "embedding.embedding_model_local",
+    "EMBEDDING_BATCH_SIZE": "embedding.embedding_batch_size",
+    "EMBEDDING_MAX_TOKENS": "embedding.embedding_max_tokens",
+    "EMBEDDING_CACHE_ENABLED": "embedding.embedding_cache_enabled",
+    "EMBEDDING_TIMEOUT": "embedding.embedding_timeout",
+    "EMBEDDING_RETRY_MAX": "embedding.embedding_retry_max",
+    "CHUNK_SIZE": "chunking.chunk_size",
+    "CHUNK_OVERLAP": "chunking.chunk_overlap",
+    "AST_OVERLAP_LINES": "chunking.ast_overlap_lines",
+    "MAX_INDEXABLE_FILE_SIZE": "chunking.max_indexable_file_size",
+    "MAX_CHUNK_TOKENS": "chunking.max_chunk_tokens",
+    "MIN_CHUNK_CHARS": "chunking.min_chunk_chars",
+    "GREEDY_FALLBACK_TARGET": "chunking.greedy_fallback_target",
+    "CHUNKING_STRATEGY": "chunking.chunking_strategy",
+    "PRESERVE_IMPORTS": "chunking.preserve_imports",
+    "POSTGRES_URL": "indexing.postgres_url",
+    "COLLECTION_NAME": "indexing.table_name",
+    "COLLECTION_SUFFIX": "indexing.collection_suffix",
+    "REPO_PATH": "indexing.repo_path",
+    "INDEXING_BATCH_SIZE": "indexing.indexing_batch_size",
+    "INDEXING_WORKERS": "indexing.indexing_workers",
+    "BM25_TOKENIZER": "indexing.bm25_tokenizer",
+    "BM25_STEMMER_LANG": "indexing.bm25_stemmer_lang",
+    "BM25_STOPWORDS_LANG": "indexing.bm25_stopwords_lang",
+    "INDEX_EXCLUDED_EXTS": "indexing.index_excluded_exts",
+    "INDEX_MAX_FILE_SIZE_MB": "indexing.index_max_file_size_mb",
+    "SKIP_DENSE": "indexing.skip_dense",
+    "OUT_DIR_BASE": "indexing.out_dir_base",
+    "RAG_OUT_BASE": "indexing.rag_out_base",
+    "REPOS_FILE": "indexing.repos_file",
+    "NEO4J_URI": "graph_storage.neo4j_uri",
+    "NEO4J_USER": "graph_storage.neo4j_user",
+    "NEO4J_PASSWORD": "graph_storage.neo4j_password",
+    "NEO4J_DATABASE": "graph_storage.neo4j_database",
+    "GRAPH_MAX_HOPS": "graph_storage.max_hops",
+    "GRAPH_INCLUDE_COMMUNITIES": "graph_storage.include_communities",
+    "GRAPH_COMMUNITY_ALGORITHM": "graph_storage.community_algorithm",
+    "GRAPH_SEARCH_TOP_K": "graph_storage.graph_search_top_k",
+    "FUSION_METHOD": "fusion.method",
+    "FUSION_VECTOR_WEIGHT": "fusion.vector_weight",
+    "FUSION_SPARSE_WEIGHT": "fusion.sparse_weight",
+    "FUSION_GRAPH_WEIGHT": "fusion.graph_weight",
+    "FUSION_RRF_K": "fusion.rrf_k",
+    "FUSION_NORMALIZE_SCORES": "fusion.normalize_scores",
+    "RERANKER_MODE": "reranking.reranker_mode",
+    "RERANKER_CLOUD_PROVIDER": "reranking.reranker_cloud_provider",
+    "RERANKER_CLOUD_MODEL": "reranking.reranker_cloud_model",
+    "RERANKER_LOCAL_MODEL": "reranking.reranker_local_model",
+    "TRIBRID_RERANKER_ALPHA": "reranking.tribrid_reranker_alpha",
+    "TRIBRID_RERANKER_TOPN": "reranking.tribrid_reranker_topn",
+    "RERANKER_CLOUD_TOP_N": "reranking.reranker_cloud_top_n",
+    "TRIBRID_RERANKER_BATCH": "reranking.tribrid_reranker_batch",
+    "TRIBRID_RERANKER_MAXLEN": "reranking.tribrid_reranker_maxlen",
+    "TRIBRID_RERANKER_RELOAD_ON_CHANGE": "reranking.tribrid_reranker_reload_on_change",
+    "TRIBRID_RERANKER_RELOAD_PERIOD_SEC": "reranking.tribrid_reranker_reload_period_sec",
+    "RERANKER_TIMEOUT": "reranking.reranker_timeout",
+    "RERANK_INPUT_SNIPPET_CHARS": "reranking.rerank_input_snippet_chars",
+    "TRANSFORMERS_TRUST_REMOTE_CODE": "reranking.transformers_trust_remote_code",
+    "GEN_MODEL": "generation.gen_model",
+    "GEN_TEMPERATURE": "generation.gen_temperature",
+    "GEN_MAX_TOKENS": "generation.gen_max_tokens",
+    "GEN_TOP_P": "generation.gen_top_p",
+    "GEN_TIMEOUT": "generation.gen_timeout",
+    "GEN_RETRY_MAX": "generation.gen_retry_max",
+    "ENRICH_MODEL": "generation.enrich_model",
+    "ENRICH_BACKEND": "generation.enrich_backend",
+    "ENRICH_DISABLED": "generation.enrich_disabled",
+    "OLLAMA_NUM_CTX": "generation.ollama_num_ctx",
+    "OLLAMA_REQUEST_TIMEOUT": "generation.ollama_request_timeout",
+    "OLLAMA_STREAM_IDLE_TIMEOUT": "generation.ollama_stream_idle_timeout",
+    "GEN_MODEL_CLI": "generation.gen_model_cli",
+    "GEN_MODEL_OLLAMA": "generation.gen_model_ollama",
+    "GEN_MODEL_HTTP": "generation.gen_model_http",
+    "GEN_MODEL_MCP": "generation.gen_model_mcp",
+    "ENRICH_MODEL_OLLAMA": "generation.enrich_model_ollama",
+    "OLLAMA_URL": "generation.ollama_url",
+    "OPENAI_BASE_URL": "generation.openai_base_url",
+    "CHUNK_SUMMARIES_ENRICH_DEFAULT": "enrichment.chunk_summaries_enrich_default",
+    "CHUNK_SUMMARIES_MAX": "enrichment.chunk_summaries_max",
+    "ENRICH_CODE_CHUNKS": "enrichment.enrich_code_chunks",
+    "ENRICH_MIN_CHARS": "enrichment.enrich_min_chars",
+    "ENRICH_MAX_CHARS": "enrichment.enrich_max_chars",
+    "ENRICH_TIMEOUT": "enrichment.enrich_timeout",
+    "CHUNK_SUMMARIES_CODE_SNIPPET_LENGTH": "chunk_summaries.code_snippet_length",
+    "CHUNK_SUMMARIES_MAX_SYMBOLS": "chunk_summaries.max_symbols",
+    "CHUNK_SUMMARIES_MAX_ROUTES": "chunk_summaries.max_routes",
+    "CHUNK_SUMMARIES_PURPOSE_MAX_LENGTH": "chunk_summaries.purpose_max_length",
+    "KEYWORDS_MAX_PER_REPO": "keywords.keywords_max_per_repo",
+    "KEYWORDS_MIN_FREQ": "keywords.keywords_min_freq",
+    "KEYWORDS_BOOST": "keywords.keywords_boost",
+    "KEYWORDS_AUTO_GENERATE": "keywords.keywords_auto_generate",
+    "KEYWORDS_REFRESH_HOURS": "keywords.keywords_refresh_hours",
+    "TRACING_ENABLED": "tracing.tracing_enabled",
+    "TRACE_SAMPLING_RATE": "tracing.trace_sampling_rate",
+    "PROMETHEUS_PORT": "tracing.prometheus_port",
+    "METRICS_ENABLED": "tracing.metrics_enabled",
+    "ALERT_INCLUDE_RESOLVED": "tracing.alert_include_resolved",
+    "ALERT_WEBHOOK_TIMEOUT": "tracing.alert_webhook_timeout",
+    "LOG_LEVEL": "tracing.log_level",
+    "TRACING_MODE": "tracing.tracing_mode",
+    "TRACE_AUTO_LS": "tracing.trace_auto_ls",
+    "TRACE_RETENTION": "tracing.trace_retention",
+    "TRIBRID_LOG_PATH": "tracing.tribrid_log_path",
+    "ALERT_NOTIFY_SEVERITIES": "tracing.alert_notify_severities",
+    "LANGCHAIN_ENDPOINT": "tracing.langchain_endpoint",
+    "LANGCHAIN_PROJECT": "tracing.langchain_project",
+    "LANGCHAIN_TRACING_V2": "tracing.langchain_tracing_v2",
+    "LANGTRACE_API_HOST": "tracing.langtrace_api_host",
+    "LANGTRACE_PROJECT_ID": "tracing.langtrace_project_id",
+    "RERANKER_TRAIN_EPOCHS": "training.reranker_train_epochs",
+    "RERANKER_TRAIN_BATCH": "training.reranker_train_batch",
+    "RERANKER_TRAIN_LR": "training.reranker_train_lr",
+    "RERANKER_WARMUP_RATIO": "training.reranker_warmup_ratio",
+    "TRIPLETS_MIN_COUNT": "training.triplets_min_count",
+    "TRIPLETS_MINE_MODE": "training.triplets_mine_mode",
+    "TRIBRID_RERANKER_MODEL_PATH": "training.tribrid_reranker_model_path",
+    "TRIBRID_RERANKER_MINE_MODE": "training.tribrid_reranker_mine_mode",
+    "TRIBRID_RERANKER_MINE_RESET": "training.tribrid_reranker_mine_reset",
+    "TRIBRID_TRIPLETS_PATH": "training.tribrid_triplets_path",
+    "CHAT_STREAMING_ENABLED": "ui.chat_streaming_enabled",
+    "CHAT_HISTORY_MAX": "ui.chat_history_max",
+    "CHAT_STREAM_INCLUDE_THINKING": "ui.chat_stream_include_thinking",
+    "CHAT_SHOW_CONFIDENCE": "ui.chat_show_confidence",
+    "CHAT_SHOW_CITATIONS": "ui.chat_show_citations",
+    "CHAT_SHOW_TRACE": "ui.chat_show_trace",
+    "CHAT_SHOW_DEBUG_FOOTER": "ui.chat_show_debug_footer",
+    "CHAT_DEFAULT_MODEL": "ui.chat_default_model",
+    "CHAT_STREAM_TIMEOUT": "ui.chat_stream_timeout",
+    "CHAT_THINKING_BUDGET_TOKENS": "ui.chat_thinking_budget_tokens",
+    "EDITOR_PORT": "ui.editor_port",
+    "GRAFANA_DASHBOARD_UID": "ui.grafana_dashboard_uid",
+    "GRAFANA_DASHBOARD_SLUG": "ui.grafana_dashboard_slug",
+    "GRAFANA_BASE_URL": "ui.grafana_base_url",
+    "GRAFANA_AUTH_MODE": "ui.grafana_auth_mode",
+    "GRAFANA_EMBED_ENABLED": "ui.grafana_embed_enabled",
+    "GRAFANA_KIOSK": "ui.grafana_kiosk",
+    "GRAFANA_ORG_ID": "ui.grafana_org_id",
+    "GRAFANA_REFRESH": "ui.grafana_refresh",
+    "EDITOR_BIND": "ui.editor_bind",
+    "EDITOR_EMBED_ENABLED": "ui.editor_embed_enabled",
+    "EDITOR_ENABLED": "ui.editor_enabled",
+    "EDITOR_IMAGE": "ui.editor_image",
+    "THEME_MODE": "ui.theme_mode",
+    "OPEN_BROWSER": "ui.open_browser",
+    "RUNTIME_MODE": "ui.runtime_mode",
+    "HYDRATION_MODE": "hydration.hydration_mode",
+    "HYDRATION_MAX_CHARS": "hydration.hydration_max_chars",
+    "EVAL_DATASET_PATH": "evaluation.eval_dataset_path",
+    "BASELINE_PATH": "evaluation.baseline_path",
+    "EVAL_MULTI_M": "evaluation.eval_multi_m",
+    "PROMPT_MAIN_RAG_CHAT": "system_prompts.main_rag_chat",
+    "PROMPT_QUERY_EXPANSION": "system_prompts.query_expansion",
+    "PROMPT_QUERY_REWRITE": "system_prompts.query_rewrite",
+    "PROMPT_SEMANTIC_CARDS": "system_prompts.semantic_chunk_summaries",
+    "PROMPT_CODE_ENRICHMENT": "system_prompts.code_enrichment",
+    "PROMPT_EVAL_ANALYSIS": "system_prompts.eval_analysis",
+    "PROMPT_LIGHTWEIGHT_CARDS": "system_prompts.lightweight_chunk_summaries",
+    "MCP_HTTP_ENABLED": "mcp.enabled",
+    "MCP_HTTP_PATH": "mcp.mount_path",
+    "MCP_HTTP_STATELESS": "mcp.stateless_http",
+    "MCP_HTTP_JSON_RESPONSE": "mcp.json_response",
+    "MCP_HTTP_DNS_REBIND_PROTECTION": "mcp.enable_dns_rebinding_protection",
+    "MCP_REQUIRE_API_KEY": "mcp.require_api_key",
+    "MCP_DEFAULT_TOP_K": "mcp.default_top_k",
+    "MCP_DEFAULT_MODE": "mcp.default_mode",
+    "DOCKER_HOST": "docker.docker_host",
+    "DOCKER_STATUS_TIMEOUT": "docker.docker_status_timeout",
+    "DOCKER_CONTAINER_LIST_TIMEOUT": "docker.docker_container_list_timeout",
+    "DOCKER_CONTAINER_ACTION_TIMEOUT": "docker.docker_container_action_timeout",
+    "DOCKER_INFRA_UP_TIMEOUT": "docker.docker_infra_up_timeout",
+    "DOCKER_INFRA_DOWN_TIMEOUT": "docker.docker_infra_down_timeout",
+    "DOCKER_LOGS_TAIL": "docker.docker_logs_tail",
+    "DOCKER_LOGS_TIMESTAMPS": "docker.docker_logs_timestamps",
+    "DEV_FRONTEND_PORT": "docker.dev_frontend_port",
+    "DEV_BACKEND_PORT": "docker.dev_backend_port",
+    "DEV_STACK_RESTART_TIMEOUT": "docker.dev_stack_restart_timeout"
+  },
+  "pathToEnvs": {
+    "retrieval.rrf_k_div": [
+      "RRF_K_DIV"
+    ],
+    "retrieval.langgraph_final_k": [
+      "LANGGRAPH_FINAL_K"
+    ],
+    "retrieval.max_query_rewrites": [
+      "MAX_QUERY_REWRITES",
+      "MQ_REWRITES"
+    ],
+    "retrieval.langgraph_max_query_rewrites": [
+      "LANGGRAPH_MAX_QUERY_REWRITES"
+    ],
+    "retrieval.fallback_confidence": [
+      "FALLBACK_CONFIDENCE"
+    ],
+    "retrieval.final_k": [
+      "FINAL_K"
+    ],
+    "retrieval.eval_final_k": [
+      "EVAL_FINAL_K"
+    ],
+    "retrieval.conf_top1": [
+      "CONF_TOP1"
+    ],
+    "retrieval.conf_avg5": [
+      "CONF_AVG5"
+    ],
+    "retrieval.conf_any": [
+      "CONF_ANY"
+    ],
+    "retrieval.eval_multi": [
+      "EVAL_MULTI"
+    ],
+    "retrieval.query_expansion_enabled": [
+      "QUERY_EXPANSION_ENABLED"
+    ],
+    "retrieval.bm25_weight": [
+      "BM25_WEIGHT"
+    ],
+    "retrieval.bm25_k1": [
+      "BM25_K1"
+    ],
+    "retrieval.bm25_b": [
+      "BM25_B"
+    ],
+    "retrieval.vector_weight": [
+      "VECTOR_WEIGHT"
+    ],
+    "retrieval.chunk_summary_search_enabled": [
+      "CHUNK_SUMMARY_SEARCH_ENABLED"
+    ],
+    "retrieval.multi_query_m": [
+      "MULTI_QUERY_M"
+    ],
+    "retrieval.use_semantic_synonyms": [
+      "USE_SEMANTIC_SYNONYMS"
+    ],
+    "retrieval.tribrid_synonyms_path": [
+      "TRIBRID_SYNONYMS_PATH"
+    ],
+    "retrieval.topk_dense": [
+      "TOPK_DENSE"
+    ],
+    "retrieval.topk_sparse": [
+      "TOPK_SPARSE"
+    ],
+    "scoring.chunk_summary_bonus": [
+      "CHUNK_SUMMARY_BONUS"
+    ],
+    "scoring.filename_boost_exact": [
+      "FILENAME_BOOST_EXACT"
+    ],
+    "scoring.filename_boost_partial": [
+      "FILENAME_BOOST_PARTIAL"
+    ],
+    "scoring.vendor_mode": [
+      "VENDOR_MODE"
+    ],
+    "scoring.path_boosts": [
+      "PATH_BOOSTS"
+    ],
+    "layer_bonus.gui": [
+      "LAYER_BONUS_GUI"
+    ],
+    "layer_bonus.retrieval": [
+      "LAYER_BONUS_RETRIEVAL"
+    ],
+    "layer_bonus.indexer": [
+      "LAYER_BONUS_INDEXER"
+    ],
+    "layer_bonus.vendor_penalty": [
+      "VENDOR_PENALTY"
+    ],
+    "layer_bonus.freshness_bonus": [
+      "FRESHNESS_BONUS"
+    ],
+    "layer_bonus.intent_matrix": [
+      "LAYER_INTENT_MATRIX"
+    ],
+    "embedding.embedding_type": [
+      "EMBEDDING_TYPE"
+    ],
+    "embedding.embedding_model": [
+      "EMBEDDING_MODEL"
+    ],
+    "embedding.embedding_dim": [
+      "EMBEDDING_DIM"
+    ],
+    "embedding.voyage_model": [
+      "VOYAGE_MODEL"
+    ],
+    "embedding.embedding_model_local": [
+      "EMBEDDING_MODEL_LOCAL"
+    ],
+    "embedding.embedding_batch_size": [
+      "EMBEDDING_BATCH_SIZE"
+    ],
+    "embedding.embedding_max_tokens": [
+      "EMBEDDING_MAX_TOKENS"
+    ],
+    "embedding.embedding_cache_enabled": [
+      "EMBEDDING_CACHE_ENABLED"
+    ],
+    "embedding.embedding_timeout": [
+      "EMBEDDING_TIMEOUT"
+    ],
+    "embedding.embedding_retry_max": [
+      "EMBEDDING_RETRY_MAX"
+    ],
+    "chunking.chunk_size": [
+      "CHUNK_SIZE"
+    ],
+    "chunking.chunk_overlap": [
+      "CHUNK_OVERLAP"
+    ],
+    "chunking.ast_overlap_lines": [
+      "AST_OVERLAP_LINES"
+    ],
+    "chunking.max_indexable_file_size": [
+      "MAX_INDEXABLE_FILE_SIZE"
+    ],
+    "chunking.max_chunk_tokens": [
+      "MAX_CHUNK_TOKENS"
+    ],
+    "chunking.min_chunk_chars": [
+      "MIN_CHUNK_CHARS"
+    ],
+    "chunking.greedy_fallback_target": [
+      "GREEDY_FALLBACK_TARGET"
+    ],
+    "chunking.chunking_strategy": [
+      "CHUNKING_STRATEGY"
+    ],
+    "chunking.preserve_imports": [
+      "PRESERVE_IMPORTS"
+    ],
+    "indexing.postgres_url": [
+      "POSTGRES_URL"
+    ],
+    "indexing.table_name": [
+      "COLLECTION_NAME"
+    ],
+    "indexing.collection_suffix": [
+      "COLLECTION_SUFFIX"
+    ],
+    "indexing.repo_path": [
+      "REPO_PATH"
+    ],
+    "indexing.indexing_batch_size": [
+      "INDEXING_BATCH_SIZE"
+    ],
+    "indexing.indexing_workers": [
+      "INDEXING_WORKERS"
+    ],
+    "indexing.bm25_tokenizer": [
+      "BM25_TOKENIZER"
+    ],
+    "indexing.bm25_stemmer_lang": [
+      "BM25_STEMMER_LANG"
+    ],
+    "indexing.bm25_stopwords_lang": [
+      "BM25_STOPWORDS_LANG"
+    ],
+    "indexing.index_excluded_exts": [
+      "INDEX_EXCLUDED_EXTS"
+    ],
+    "indexing.index_max_file_size_mb": [
+      "INDEX_MAX_FILE_SIZE_MB"
+    ],
+    "indexing.skip_dense": [
+      "SKIP_DENSE"
+    ],
+    "indexing.out_dir_base": [
+      "OUT_DIR_BASE"
+    ],
+    "indexing.rag_out_base": [
+      "RAG_OUT_BASE"
+    ],
+    "indexing.repos_file": [
+      "REPOS_FILE"
+    ],
+    "graph_storage.neo4j_uri": [
+      "NEO4J_URI"
+    ],
+    "graph_storage.neo4j_user": [
+      "NEO4J_USER"
+    ],
+    "graph_storage.neo4j_password": [
+      "NEO4J_PASSWORD"
+    ],
+    "graph_storage.neo4j_database": [
+      "NEO4J_DATABASE"
+    ],
+    "graph_storage.max_hops": [
+      "GRAPH_MAX_HOPS"
+    ],
+    "graph_storage.include_communities": [
+      "GRAPH_INCLUDE_COMMUNITIES"
+    ],
+    "graph_storage.community_algorithm": [
+      "GRAPH_COMMUNITY_ALGORITHM"
+    ],
+    "graph_storage.graph_search_top_k": [
+      "GRAPH_SEARCH_TOP_K"
+    ],
+    "fusion.method": [
+      "FUSION_METHOD"
+    ],
+    "fusion.vector_weight": [
+      "FUSION_VECTOR_WEIGHT"
+    ],
+    "fusion.sparse_weight": [
+      "FUSION_SPARSE_WEIGHT"
+    ],
+    "fusion.graph_weight": [
+      "FUSION_GRAPH_WEIGHT"
+    ],
+    "fusion.rrf_k": [
+      "FUSION_RRF_K"
+    ],
+    "fusion.normalize_scores": [
+      "FUSION_NORMALIZE_SCORES"
+    ],
+    "reranking.reranker_mode": [
+      "RERANKER_MODE"
+    ],
+    "reranking.reranker_cloud_provider": [
+      "RERANKER_CLOUD_PROVIDER"
+    ],
+    "reranking.reranker_cloud_model": [
+      "RERANKER_CLOUD_MODEL"
+    ],
+    "reranking.reranker_local_model": [
+      "RERANKER_LOCAL_MODEL"
+    ],
+    "reranking.tribrid_reranker_alpha": [
+      "TRIBRID_RERANKER_ALPHA"
+    ],
+    "reranking.tribrid_reranker_topn": [
+      "TRIBRID_RERANKER_TOPN"
+    ],
+    "reranking.reranker_cloud_top_n": [
+      "RERANKER_CLOUD_TOP_N"
+    ],
+    "reranking.tribrid_reranker_batch": [
+      "TRIBRID_RERANKER_BATCH"
+    ],
+    "reranking.tribrid_reranker_maxlen": [
+      "TRIBRID_RERANKER_MAXLEN"
+    ],
+    "reranking.tribrid_reranker_reload_on_change": [
+      "TRIBRID_RERANKER_RELOAD_ON_CHANGE"
+    ],
+    "reranking.tribrid_reranker_reload_period_sec": [
+      "TRIBRID_RERANKER_RELOAD_PERIOD_SEC"
+    ],
+    "reranking.reranker_timeout": [
+      "RERANKER_TIMEOUT"
+    ],
+    "reranking.rerank_input_snippet_chars": [
+      "RERANK_INPUT_SNIPPET_CHARS"
+    ],
+    "reranking.transformers_trust_remote_code": [
+      "TRANSFORMERS_TRUST_REMOTE_CODE"
+    ],
+    "generation.gen_model": [
+      "GEN_MODEL"
+    ],
+    "generation.gen_temperature": [
+      "GEN_TEMPERATURE"
+    ],
+    "generation.gen_max_tokens": [
+      "GEN_MAX_TOKENS"
+    ],
+    "generation.gen_top_p": [
+      "GEN_TOP_P"
+    ],
+    "generation.gen_timeout": [
+      "GEN_TIMEOUT"
+    ],
+    "generation.gen_retry_max": [
+      "GEN_RETRY_MAX"
+    ],
+    "generation.enrich_model": [
+      "ENRICH_MODEL"
+    ],
+    "generation.enrich_backend": [
+      "ENRICH_BACKEND"
+    ],
+    "generation.enrich_disabled": [
+      "ENRICH_DISABLED"
+    ],
+    "generation.ollama_num_ctx": [
+      "OLLAMA_NUM_CTX"
+    ],
+    "generation.ollama_request_timeout": [
+      "OLLAMA_REQUEST_TIMEOUT"
+    ],
+    "generation.ollama_stream_idle_timeout": [
+      "OLLAMA_STREAM_IDLE_TIMEOUT"
+    ],
+    "generation.gen_model_cli": [
+      "GEN_MODEL_CLI"
+    ],
+    "generation.gen_model_ollama": [
+      "GEN_MODEL_OLLAMA"
+    ],
+    "generation.gen_model_http": [
+      "GEN_MODEL_HTTP"
+    ],
+    "generation.gen_model_mcp": [
+      "GEN_MODEL_MCP"
+    ],
+    "generation.enrich_model_ollama": [
+      "ENRICH_MODEL_OLLAMA"
+    ],
+    "generation.ollama_url": [
+      "OLLAMA_URL"
+    ],
+    "generation.openai_base_url": [
+      "OPENAI_BASE_URL"
+    ],
+    "enrichment.chunk_summaries_enrich_default": [
+      "CHUNK_SUMMARIES_ENRICH_DEFAULT"
+    ],
+    "enrichment.chunk_summaries_max": [
+      "CHUNK_SUMMARIES_MAX"
+    ],
+    "enrichment.enrich_code_chunks": [
+      "ENRICH_CODE_CHUNKS"
+    ],
+    "enrichment.enrich_min_chars": [
+      "ENRICH_MIN_CHARS"
+    ],
+    "enrichment.enrich_max_chars": [
+      "ENRICH_MAX_CHARS"
+    ],
+    "enrichment.enrich_timeout": [
+      "ENRICH_TIMEOUT"
+    ],
+    "chunk_summaries.code_snippet_length": [
+      "CHUNK_SUMMARIES_CODE_SNIPPET_LENGTH"
+    ],
+    "chunk_summaries.max_symbols": [
+      "CHUNK_SUMMARIES_MAX_SYMBOLS"
+    ],
+    "chunk_summaries.max_routes": [
+      "CHUNK_SUMMARIES_MAX_ROUTES"
+    ],
+    "chunk_summaries.purpose_max_length": [
+      "CHUNK_SUMMARIES_PURPOSE_MAX_LENGTH"
+    ],
+    "keywords.keywords_max_per_repo": [
+      "KEYWORDS_MAX_PER_REPO"
+    ],
+    "keywords.keywords_min_freq": [
+      "KEYWORDS_MIN_FREQ"
+    ],
+    "keywords.keywords_boost": [
+      "KEYWORDS_BOOST"
+    ],
+    "keywords.keywords_auto_generate": [
+      "KEYWORDS_AUTO_GENERATE"
+    ],
+    "keywords.keywords_refresh_hours": [
+      "KEYWORDS_REFRESH_HOURS"
+    ],
+    "tracing.tracing_enabled": [
+      "TRACING_ENABLED"
+    ],
+    "tracing.trace_sampling_rate": [
+      "TRACE_SAMPLING_RATE"
+    ],
+    "tracing.prometheus_port": [
+      "PROMETHEUS_PORT"
+    ],
+    "tracing.metrics_enabled": [
+      "METRICS_ENABLED"
+    ],
+    "tracing.alert_include_resolved": [
+      "ALERT_INCLUDE_RESOLVED"
+    ],
+    "tracing.alert_webhook_timeout": [
+      "ALERT_WEBHOOK_TIMEOUT"
+    ],
+    "tracing.log_level": [
+      "LOG_LEVEL"
+    ],
+    "tracing.tracing_mode": [
+      "TRACING_MODE"
+    ],
+    "tracing.trace_auto_ls": [
+      "TRACE_AUTO_LS"
+    ],
+    "tracing.trace_retention": [
+      "TRACE_RETENTION"
+    ],
+    "tracing.tribrid_log_path": [
+      "TRIBRID_LOG_PATH"
+    ],
+    "tracing.alert_notify_severities": [
+      "ALERT_NOTIFY_SEVERITIES"
+    ],
+    "tracing.langchain_endpoint": [
+      "LANGCHAIN_ENDPOINT"
+    ],
+    "tracing.langchain_project": [
+      "LANGCHAIN_PROJECT"
+    ],
+    "tracing.langchain_tracing_v2": [
+      "LANGCHAIN_TRACING_V2"
+    ],
+    "tracing.langtrace_api_host": [
+      "LANGTRACE_API_HOST"
+    ],
+    "tracing.langtrace_project_id": [
+      "LANGTRACE_PROJECT_ID"
+    ],
+    "training.reranker_train_epochs": [
+      "RERANKER_TRAIN_EPOCHS"
+    ],
+    "training.reranker_train_batch": [
+      "RERANKER_TRAIN_BATCH"
+    ],
+    "training.reranker_train_lr": [
+      "RERANKER_TRAIN_LR"
+    ],
+    "training.reranker_warmup_ratio": [
+      "RERANKER_WARMUP_RATIO"
+    ],
+    "training.triplets_min_count": [
+      "TRIPLETS_MIN_COUNT"
+    ],
+    "training.triplets_mine_mode": [
+      "TRIPLETS_MINE_MODE"
+    ],
+    "training.tribrid_reranker_model_path": [
+      "TRIBRID_RERANKER_MODEL_PATH"
+    ],
+    "training.tribrid_reranker_mine_mode": [
+      "TRIBRID_RERANKER_MINE_MODE"
+    ],
+    "training.tribrid_reranker_mine_reset": [
+      "TRIBRID_RERANKER_MINE_RESET"
+    ],
+    "training.tribrid_triplets_path": [
+      "TRIBRID_TRIPLETS_PATH"
+    ],
+    "ui.chat_streaming_enabled": [
+      "CHAT_STREAMING_ENABLED"
+    ],
+    "ui.chat_history_max": [
+      "CHAT_HISTORY_MAX"
+    ],
+    "ui.chat_stream_include_thinking": [
+      "CHAT_STREAM_INCLUDE_THINKING"
+    ],
+    "ui.chat_show_confidence": [
+      "CHAT_SHOW_CONFIDENCE"
+    ],
+    "ui.chat_show_citations": [
+      "CHAT_SHOW_CITATIONS"
+    ],
+    "ui.chat_show_trace": [
+      "CHAT_SHOW_TRACE"
+    ],
+    "ui.chat_show_debug_footer": [
+      "CHAT_SHOW_DEBUG_FOOTER"
+    ],
+    "ui.chat_default_model": [
+      "CHAT_DEFAULT_MODEL"
+    ],
+    "ui.chat_stream_timeout": [
+      "CHAT_STREAM_TIMEOUT"
+    ],
+    "ui.chat_thinking_budget_tokens": [
+      "CHAT_THINKING_BUDGET_TOKENS"
+    ],
+    "ui.editor_port": [
+      "EDITOR_PORT"
+    ],
+    "ui.grafana_dashboard_uid": [
+      "GRAFANA_DASHBOARD_UID"
+    ],
+    "ui.grafana_dashboard_slug": [
+      "GRAFANA_DASHBOARD_SLUG"
+    ],
+    "ui.grafana_base_url": [
+      "GRAFANA_BASE_URL"
+    ],
+    "ui.grafana_auth_mode": [
+      "GRAFANA_AUTH_MODE"
+    ],
+    "ui.grafana_embed_enabled": [
+      "GRAFANA_EMBED_ENABLED"
+    ],
+    "ui.grafana_kiosk": [
+      "GRAFANA_KIOSK"
+    ],
+    "ui.grafana_org_id": [
+      "GRAFANA_ORG_ID"
+    ],
+    "ui.grafana_refresh": [
+      "GRAFANA_REFRESH"
+    ],
+    "ui.editor_bind": [
+      "EDITOR_BIND"
+    ],
+    "ui.editor_embed_enabled": [
+      "EDITOR_EMBED_ENABLED"
+    ],
+    "ui.editor_enabled": [
+      "EDITOR_ENABLED"
+    ],
+    "ui.editor_image": [
+      "EDITOR_IMAGE"
+    ],
+    "ui.theme_mode": [
+      "THEME_MODE"
+    ],
+    "ui.open_browser": [
+      "OPEN_BROWSER"
+    ],
+    "ui.runtime_mode": [
+      "RUNTIME_MODE"
+    ],
+    "hydration.hydration_mode": [
+      "HYDRATION_MODE"
+    ],
+    "hydration.hydration_max_chars": [
+      "HYDRATION_MAX_CHARS"
+    ],
+    "evaluation.eval_dataset_path": [
+      "EVAL_DATASET_PATH"
+    ],
+    "evaluation.baseline_path": [
+      "BASELINE_PATH"
+    ],
+    "evaluation.eval_multi_m": [
+      "EVAL_MULTI_M"
+    ],
+    "system_prompts.main_rag_chat": [
+      "PROMPT_MAIN_RAG_CHAT"
+    ],
+    "system_prompts.query_expansion": [
+      "PROMPT_QUERY_EXPANSION"
+    ],
+    "system_prompts.query_rewrite": [
+      "PROMPT_QUERY_REWRITE"
+    ],
+    "system_prompts.semantic_chunk_summaries": [
+      "PROMPT_SEMANTIC_CARDS"
+    ],
+    "system_prompts.code_enrichment": [
+      "PROMPT_CODE_ENRICHMENT"
+    ],
+    "system_prompts.eval_analysis": [
+      "PROMPT_EVAL_ANALYSIS"
+    ],
+    "system_prompts.lightweight_chunk_summaries": [
+      "PROMPT_LIGHTWEIGHT_CARDS"
+    ],
+    "mcp.enabled": [
+      "MCP_HTTP_ENABLED"
+    ],
+    "mcp.mount_path": [
+      "MCP_HTTP_PATH"
+    ],
+    "mcp.stateless_http": [
+      "MCP_HTTP_STATELESS"
+    ],
+    "mcp.json_response": [
+      "MCP_HTTP_JSON_RESPONSE"
+    ],
+    "mcp.enable_dns_rebinding_protection": [
+      "MCP_HTTP_DNS_REBIND_PROTECTION"
+    ],
+    "mcp.require_api_key": [
+      "MCP_REQUIRE_API_KEY"
+    ],
+    "mcp.default_top_k": [
+      "MCP_DEFAULT_TOP_K"
+    ],
+    "mcp.default_mode": [
+      "MCP_DEFAULT_MODE"
+    ],
+    "docker.docker_host": [
+      "DOCKER_HOST"
+    ],
+    "docker.docker_status_timeout": [
+      "DOCKER_STATUS_TIMEOUT"
+    ],
+    "docker.docker_container_list_timeout": [
+      "DOCKER_CONTAINER_LIST_TIMEOUT"
+    ],
+    "docker.docker_container_action_timeout": [
+      "DOCKER_CONTAINER_ACTION_TIMEOUT"
+    ],
+    "docker.docker_infra_up_timeout": [
+      "DOCKER_INFRA_UP_TIMEOUT"
+    ],
+    "docker.docker_infra_down_timeout": [
+      "DOCKER_INFRA_DOWN_TIMEOUT"
+    ],
+    "docker.docker_logs_tail": [
+      "DOCKER_LOGS_TAIL"
+    ],
+    "docker.docker_logs_timestamps": [
+      "DOCKER_LOGS_TIMESTAMPS"
+    ],
+    "docker.dev_frontend_port": [
+      "DEV_FRONTEND_PORT"
+    ],
+    "docker.dev_backend_port": [
+      "DEV_BACKEND_PORT"
+    ],
+    "docker.dev_stack_restart_timeout": [
+      "DEV_STACK_RESTART_TIMEOUT"
+    ]
+  }
+}

@@ -1,0 +1,215 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Nav from '../../components/Nav.astro';
+import Footer from '../../components/Footer.astro';
+import { buildKnobRegistry, safeJsonForHtml } from '../../lib/knobRegistry';
+
+const registry = buildKnobRegistry();
+const groups = Object.entries(registry.groups);
+---
+
+<BaseLayout
+  title="ragweld — Knob Registry"
+  description="Every tunable configuration knob in TriBridRAG, sourced from the Pydantic/OpenAPI config models and augmented with in-app tooltips where available."
+  canonical="https://ragweld.com/knobs/"
+>
+  <Nav />
+  <main class="bg-[#0a0a0a] pt-28 pb-16">
+    <div class="mx-auto max-w-6xl px-4">
+      <a href="/" class="text-sm text-gray-400 hover:text-white transition-colors">← Home</a>
+
+      <div class="mt-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h1 class="text-4xl font-bold text-white tracking-tight">Knob Registry</h1>
+          <p class="mt-3 text-gray-400 max-w-3xl">
+            This is the complete configuration surface area: every tunable knob exposed by the Pydantic config models,
+            with tooltips layered in where they exist.
+          </p>
+          <p class="mt-2 text-gray-500 max-w-3xl">
+            Use search to jump to a setting, then copy the dot-path into config or the UI. For environment-style keys,
+            we show the matching env key when available.
+          </p>
+        </div>
+        <div class="text-sm text-gray-500">
+          <span id="knob-count">—</span>
+        </div>
+      </div>
+
+      <div class="mt-8 grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
+        <div class="flex gap-3 flex-col sm:flex-row sm:items-center">
+          <input
+            id="knob-search"
+            type="search"
+            placeholder="Search knobs (path, env key, or text)…"
+            class="w-full rounded-lg border border-[#222] bg-[#0f0f0f] px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-[#00ff88]/40"
+          />
+          <label class="flex items-center gap-2 text-sm text-gray-400 select-none">
+            <input
+              id="show-internal"
+              type="checkbox"
+              class="h-4 w-4 rounded border-[#333] bg-[#0f0f0f] text-[#00ff88] focus:ring-[#00ff88]/40"
+            />
+            Show internal/basics
+          </label>
+        </div>
+
+        <div class="text-sm text-gray-500">
+          <a
+            href="https://dmontgomery40.github.io/tribrid-rag/"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="hover:text-white transition-colors"
+          >
+            Full docs →
+          </a>
+        </div>
+      </div>
+
+      <div class="mt-10 space-y-10">
+        {
+          groups.map(([groupName, knobs]) => (
+            <section class="rounded-xl border border-[#222] bg-[#0f0f0f] p-6" data-group={groupName}>
+              <div class="flex items-baseline justify-between gap-4 flex-wrap">
+                <h2 class="text-xl font-bold text-white">
+                  <span class="text-[#00ff88]">{groupName}</span>
+                  <span class="ml-2 text-sm text-gray-500 font-medium">({knobs.length})</span>
+                </h2>
+                <div class="text-xs text-gray-500">dot-path → type → default → env key (if available)</div>
+              </div>
+
+              <ul class="mt-6 space-y-3">
+                {knobs.map((k) => (
+                  <li
+                    class="knob-item rounded-xl border border-[#222] bg-[#0a0a0a] p-4"
+                    data-path={k.path}
+                    data-env={(k.envKeys || []).join(',')}
+                    data-internal={k.internal ? '1' : '0'}
+                  >
+                    <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <div class="font-mono text-sm text-[#00ff88] break-all">{k.path}</div>
+                        {k.envKeys?.length ? (
+                          <div class="mt-1 font-mono text-xs text-gray-500 break-all">
+                            env: {k.envKeys.join(', ')}
+                          </div>
+                        ) : (
+                          <div class="mt-1 text-xs text-gray-600">env: —</div>
+                        )}
+                      </div>
+
+                      <div class="text-xs text-gray-500 md:text-right">
+                        <div class="font-mono">{k.type}</div>
+                        {k.defaultValue ? <div>default: <span class="font-mono">{k.defaultValue}</span></div> : <div>default: —</div>}
+                        {k.internal ? <div class="mt-1 text-[#5b9dff]">internal/basics</div> : null}
+                      </div>
+                    </div>
+
+                    {k.description ? (
+                      <p class="mt-3 text-sm text-gray-300 whitespace-pre-line">{k.description}</p>
+                    ) : (
+                      <p class="mt-3 text-sm text-gray-500">No description in OpenAPI yet.</p>
+                    )}
+
+                    {k.tooltipEnvKey ? (
+                      <details class="mt-3" data-tooltip-env={k.tooltipEnvKey}>
+                        <summary class="cursor-pointer text-sm text-gray-400 hover:text-white transition-colors">
+                          Tooltip ({k.tooltipEnvKey})
+                        </summary>
+                        <div class="mt-2 rounded-lg border border-[#222] bg-[#0f0f0f] p-4 text-sm text-gray-300">
+                          <div class="tooltip-content text-sm leading-relaxed text-gray-300">Loading…</div>
+                        </div>
+                      </details>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))
+        }
+      </div>
+    </div>
+  </main>
+
+  <Footer />
+
+  <style>
+    .tooltip-content .tt-title { font-weight: 700; color: #fff; display: block; margin-bottom: 8px; }
+    .tooltip-content .tt-strong { font-weight: 600; color: #fff; }
+    .tooltip-content .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; color: #5b9dff; }
+    .tooltip-content .tt-links { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px; }
+    .tooltip-content .tt-links a { color: #00ff88; text-decoration: none; }
+    .tooltip-content .tt-links a:hover { text-decoration: underline; }
+    .tooltip-content .tt-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    .tooltip-content .tt-badge { display: inline-flex; align-items: center; border: 1px solid #222; border-radius: 999px; padding: 2px 8px; font-size: 12px; color: #cbd5e1; background: #0a0a0a; }
+  </style>
+
+  <script type="application/json" id="tooltip-map">
+    {safeJsonForHtml(registry.tooltipHtmlByEnvKey)}
+  </script>
+
+  <script is:inline>
+    const searchInput = document.getElementById('knob-search');
+    const showInternal = document.getElementById('show-internal');
+    const countEl = document.getElementById('knob-count');
+    const items = Array.from(document.querySelectorAll('.knob-item'));
+
+    const tooltipJsonEl = document.getElementById('tooltip-map');
+    let tooltipMap = {};
+    try {
+      tooltipMap = JSON.parse(tooltipJsonEl?.textContent || '{}');
+    } catch {
+      tooltipMap = {};
+    }
+
+    function applyFilters() {
+      const q = String(searchInput?.value || '').trim().toLowerCase();
+      const allowInternal = Boolean(showInternal?.checked);
+
+      let shown = 0;
+      let total = items.length;
+      let internalHidden = 0;
+
+      for (const el of items) {
+        const internal = el.getAttribute('data-internal') === '1';
+        const text = (el.textContent || '').toLowerCase();
+        const matches = !q || text.includes(q);
+        const visible = matches && (allowInternal || !internal);
+        el.style.display = visible ? '' : 'none';
+        if (visible) shown += 1;
+        if (!allowInternal && internal) internalHidden += 1;
+      }
+
+      // Hide empty groups.
+      const groups = Array.from(document.querySelectorAll('section[data-group]'));
+      for (const g of groups) {
+        const visibleItems = Array.from(g.querySelectorAll('.knob-item')).some((li) => li.style.display !== 'none');
+        g.style.display = visibleItems ? '' : 'none';
+      }
+
+      if (countEl) {
+        const extra = internalHidden ? ` • ${internalHidden} internal hidden` : '';
+        countEl.textContent = `${shown} / ${total} knobs${extra}`;
+      }
+    }
+
+    function wireTooltips() {
+      const detailsEls = Array.from(document.querySelectorAll('details[data-tooltip-env]'));
+      for (const d of detailsEls) {
+        d.addEventListener('toggle', () => {
+          if (!d.open) return;
+          if (d.getAttribute('data-loaded') === '1') return;
+          const envKey = d.getAttribute('data-tooltip-env');
+          const html = envKey ? tooltipMap?.[envKey] : null;
+          const container = d.querySelector('.tooltip-content');
+          if (container) container.innerHTML = html || '<span class=\"text-gray-500\">Tooltip text missing.</span>';
+          d.setAttribute('data-loaded', '1');
+        });
+      }
+    }
+
+    searchInput?.addEventListener('input', applyFilters);
+    showInternal?.addEventListener('change', applyFilters);
+    applyFilters();
+    wireTooltips();
+  </script>
+</BaseLayout>
