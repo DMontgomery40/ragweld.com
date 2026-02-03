@@ -1,25 +1,25 @@
 ---
 const screenshots = [
   {
-    title: 'System status + quick actions',
+    title: 'Retrieval config (hybrid + dense)',
     description:
-      'Keep the local stack healthy (Postgres, Neo4j, API) and trigger maintenance actions like re-indexing and health refreshes.',
-    src: '/screenshots/tribridrag-ui.png',
-    alt: 'TriBridRAG dashboard showing system status and quick actions.',
+      'Tune the core retrieval knobs: BM25 + dense, candidate counts, thresholds, reranking, and advanced fusion behavior.',
+    src: '/screenshots/config-retrieval.png',
+    alt: 'Configuration screen showing retrieval parameters for hybrid (BM25) and dense (vector) retrieval, plus reranking and advanced tuning.',
   },
   {
-    title: 'Tribrid retrieval tuning',
+    title: 'Chat with knobs + traces',
     description:
-      'Adjust vector/sparse/graph fusion weights and core retrieval settings (BM25, top-k, graph hops) while you iterate on quality.',
-    src: '/screenshots/tribridrag-retrieval.png',
-    alt: 'RAG configuration screen showing fusion weights and retrieval settings for vector, sparse, and graph search.',
+      'A chat surface designed for iteration: prompt + response, plus the settings and routing trace you need to explain why an answer happened.',
+    src: '/screenshots/chat-tab.png',
+    alt: 'Chat tab with a conversation area and a settings panel for chat and retrieval, including routing trace controls.',
   },
   {
-    title: 'Built-in parameter glossary',
+    title: 'Embedded Grafana metrics',
     description:
-      'A searchable reference for every configuration knob—turning tribal knowledge into docs you can actually use while debugging.',
-    src: '/screenshots/tribridrag-glossary.png',
-    alt: 'Parameter glossary screen with a searchable reference for RAG configuration parameters.',
+      'Keep observability in the same workspace: configure a Grafana dashboard and monitor throughput, errors, and costs while you run.',
+    src: '/screenshots/metrics-embedded-grafana.png',
+    alt: 'Metrics screen showing an embedded Grafana dashboard with throughput, error rate, and cost panels.',
   },
 ];
 ---
@@ -58,4 +58,3 @@ const screenshots = [
     </div>
   </div>
 </section>
-
