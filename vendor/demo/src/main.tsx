@@ -14,6 +14,7 @@ import './styles/micro-interactions.css'
 import './styles/storage-calculator.css'
 import './styles/slider-polish.css' // Range input polish for onboarding sliders
 
+// ragweld:demo:msw:start
 async function enableMocking() {
   // Only enable MSW in demo mode
   if (!window.location.pathname.startsWith('/demo')) {
@@ -38,6 +39,7 @@ async function enableMocking() {
   })
   console.log(`[MSW] Mock service worker started for demo mode (mode=${forceMock ? 'full' : 'partial'})`)
 }
+// ragweld:demo:msw:end
 
 enableMocking().then(() => {
   ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -66,4 +68,5 @@ enableMocking().then(() => {
       </BrowserRouter>
     </React.StrictMode>,
   )
+  
 })
