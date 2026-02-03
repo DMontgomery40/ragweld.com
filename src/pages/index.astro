@@ -2,12 +2,14 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Nav from '../components/Nav.astro';
 import Hero from '../components/Hero.astro';
+import Offerings from '../components/Offerings.astro';
+import CTA from '../components/CTA.astro';
 import Footer from '../components/Footer.astro';
 ---
 
 <BaseLayout
-  title="ragweld - Tribrid RAG: Vector + Sparse + Graph"
-  description="ragweld is a tribrid RAG workbench: benchmarking + eval drilldowns, deep configuration, self-training reranker loops, and in-UI observability — with vector+sparse+graph retrieval under the hood."
+  title="ragweld — Tribrid RAG Workbench"
+  description="ragweld is a tribrid RAG workbench: vector+sparse+graph retrieval, benchmarks + eval drilldowns, run diffs across hundreds of parameters, deep configuration + glossary, observability + alerting hooks, and MCP server support."
   canonical="https://ragweld.com/"
   ogImage="/og-image.png"
 >
@@ -20,11 +22,24 @@ import Footer from '../components/Footer.astro';
           <h2 class="text-3xl font-bold text-white">What ragweld actually is</h2>
           <p class="mt-3 text-gray-400">
             The retrieval stack matters — but ragweld’s differentiator is the engineering surface area around it:
-            benchmarking, evaluation, diagnosis, and learning loops.
+            benchmarking, evaluation, diagnosis, and operations.
+          </p>
+          <p class="mt-3 text-gray-500">
+            It’s built for senior engineers who need answers like: what changed, why did it change, and what should we
+            try next — without guessing.
           </p>
         </div>
 
         <div class="mt-10 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          <div class="rounded-xl border border-[#222] bg-[#0f0f0f] p-6">
+            <div class="text-sm font-semibold text-[#00ff88]">Retrieval</div>
+            <h3 class="mt-2 text-lg font-bold text-white">Hybrid + graph, fused and inspectable</h3>
+            <p class="mt-2 text-sm text-gray-400">
+              Tribrid retrieval: vector + sparse + graph legs. Fuse signals, inspect sources, and tune each leg instead
+              of treating retrieval like a black box.
+            </p>
+          </div>
+
           <div class="rounded-xl border border-[#222] bg-[#0f0f0f] p-6">
             <div class="text-sm font-semibold text-[#00ff88]">Benchmarks</div>
             <h3 class="mt-2 text-lg font-bold text-white">Measure regressions, not vibes</h3>
@@ -39,7 +54,7 @@ import Footer from '../components/Footer.astro';
             <h3 class="mt-2 text-lg font-bold text-white">Diff the “why”</h3>
             <p class="mt-2 text-sm text-gray-400">
               Inspect per-query outcomes, retrieval legs, and sources. Diff runs across 200+ parameters (down to
-              embeddings + tokenization), and get a one-click analysis of what likely mattered.
+              embeddings + tokenization), and get a one-click comparison summary of what likely mattered.
             </p>
           </div>
 
@@ -47,8 +62,8 @@ import Footer from '../components/Footer.astro';
             <div class="text-sm font-semibold text-gray-300">Reranker</div>
             <h3 class="mt-2 text-lg font-bold text-white">Learning loop built in</h3>
             <p class="mt-2 text-sm text-gray-400">
-              Built-in cross-encoder reranking that can train on user query tuples (and run nightly if you want), with
-              training telemetry + eval drilldown for the reranker itself.
+              Cross-encoder reranking with a feedback workflow: capture tuples, mine triplets, and compare/promote runs.
+              Automation is first-class (cron/CI) because production doesn’t wait for a button click.
             </p>
           </div>
 
@@ -66,7 +81,16 @@ import Footer from '../components/Footer.astro';
             <h3 class="mt-2 text-lg font-bold text-white">See metrics while you run</h3>
             <p class="mt-2 text-sm text-gray-400">
               Grafana embedded in the UI (split-screen) so you can run a query, eval, or benchmark and watch live
-              metrics in the same workspace — plus Figfin webhooks/alerts when canaries regress (e.g., MRR drops).
+              metrics in the same workspace — plus alerting hooks for production ops.
+            </p>
+          </div>
+
+          <div class="rounded-xl border border-[#222] bg-[#0f0f0f] p-6">
+            <div class="text-sm font-semibold text-[#00ff88]">Alerts + hooks</div>
+            <h3 class="mt-2 text-lg font-bold text-white">Enterprise-grade, configurable</h3>
+            <p class="mt-2 text-sm text-gray-400">
+              Alerting isn’t “on/off” — it’s your rules, your on-call. ragweld provides the plumbing: Slack/Discord
+              webhooks and Alertmanager visibility so production incidents don’t hide in logs.
             </p>
           </div>
 
@@ -74,8 +98,17 @@ import Footer from '../components/Footer.astro';
             <div class="text-sm font-semibold text-gray-300">Chat + memory</div>
             <h3 class="mt-2 text-lg font-bold text-white">A full chat interface, too</h3>
             <p class="mt-2 text-sm text-gray-400">
-              Multi-model chat (including image workflows), persistent memory (sparse + dense), multi-corpus querying,
-              and per-corpus embeddings/tokenization when your data demands it.
+              Multi-model chat (including vision inputs), persistent memory (sparse + dense), multi-corpus querying, and
+              per-corpus embeddings/tokenization when your data demands it.
+            </p>
+          </div>
+
+          <div class="rounded-xl border border-[#222] bg-[#0f0f0f] p-6">
+            <div class="text-sm font-semibold text-[#5b9dff]">MCP</div>
+            <h3 class="mt-2 text-lg font-bold text-white">Use it anywhere</h3>
+            <p class="mt-2 text-sm text-gray-400">
+              Built-in MCP server support so you can use TriBridRAG tools from other clients (IDEs, agents, automation)
+              without rewriting integrations for each surface.
             </p>
           </div>
         </div>
@@ -119,6 +152,9 @@ import Footer from '../components/Footer.astro';
         </div>
       </div>
     </section>
+
+    <Offerings />
+    <CTA />
   </main>
   <Footer />
 </BaseLayout>

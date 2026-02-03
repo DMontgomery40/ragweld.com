@@ -7,10 +7,10 @@
         rag<span class="text-[#00ff88]">weld</span>
       </h1>
       <p class="mt-4 text-xl text-gray-400 max-w-2xl mx-auto">
-        A tribrid RAG workbench: measure, tune, and ship.
+        A tribrid RAG workbench: benchmark, debug, and ship.
       </p>
       <p class="mt-2 text-gray-500">
-        Deep retrieval + deep instrumentation — benchmarking, drilldowns, and learning loops built in.
+        Hybrid retrieval (vector + sparse + graph) with the engineering surface area you actually need in production.
       </p>
       <div class="mt-8 flex justify-center gap-4 flex-wrap">
         <a
@@ -43,31 +43,34 @@
     <!-- Feature pills -->
     <div class="flex justify-center gap-3 mb-8 flex-wrap">
       <span class="px-3 py-1 rounded-full bg-[#1a1a2e] text-[#00ff88] text-sm border border-[#00ff88]/30">
+        Vector + Sparse + Graph
+      </span>
+      <span class="px-3 py-1 rounded-full bg-[#1a1a2e] text-[#00ff88] text-sm border border-[#00ff88]/30">
         Benchmarks + Evals
       </span>
       <span class="px-3 py-1 rounded-full bg-[#1a1a2e] text-[#00ff88] text-sm border border-[#00ff88]/30">
-        Drilldown Diffs
+        Eval Drilldowns
       </span>
       <span class="px-3 py-1 rounded-full bg-[#1a1a2e] text-[#00ff88] text-sm border border-[#00ff88]/30">
-        One-click Analysis
+        Run Diffs + Analysis
       </span>
       <span class="px-3 py-1 rounded-full bg-[#1a1a2e] text-[#00ff88] text-sm border border-[#00ff88]/30">
-        Trainable Reranker
+        Learning Reranker
       </span>
       <span class="px-3 py-1 rounded-full bg-[#1a1a2e] text-[#00ff88] text-sm border border-[#00ff88]/30">
         Grafana Split-view
       </span>
       <span class="px-3 py-1 rounded-full bg-[#1a1a2e] text-[#00ff88] text-sm border border-[#00ff88]/30">
-        Multi-model + Images
+        Webhooks + Alerts
       </span>
       <span class="px-3 py-1 rounded-full bg-[#1a1a2e] text-[#00ff88] text-sm border border-[#00ff88]/30">
         Memory + Multi-corpus
       </span>
       <span class="px-3 py-1 rounded-full bg-[#1a1a2e] text-[#00ff88] text-sm border border-[#00ff88]/30">
-        Figfin Alerts
+        Multi-model + Vision
       </span>
       <span class="px-3 py-1 rounded-full bg-[#1a1a2e] text-[#00ff88] text-sm border border-[#00ff88]/30">
-        Vector + Sparse + Graph
+        MCP Server
       </span>
     </div>
 
@@ -80,12 +83,23 @@
             <div class="w-3 h-3 rounded-full bg-[#ffbd2e]"></div>
             <div class="w-3 h-3 rounded-full bg-[#27c93f]"></div>
           </div>
-          <span class="ml-4 text-gray-500 text-sm">Live Demo (Faxbot corpora)</span>
+          <span class="ml-4 text-gray-500 text-sm">Live Demo (Faxbot + Vivified corpora)</span>
         </div>
         <div class="flex items-center gap-3">
-          <a href="/demo/?corpus=faxbot" class="text-sm text-[#00ff88] hover:text-[#00dd77] transition-colors">
-            Open full demo →
-          </a>
+          <div class="flex items-center gap-2">
+            <a
+              href="/demo/?corpus=faxbot"
+              class="rounded-md border border-[#333] px-2.5 py-1 text-xs text-white hover:bg-[#111] transition-colors"
+            >
+              Faxbot
+            </a>
+            <a
+              href="/demo/?corpus=vivified"
+              class="rounded-md border border-[#333] px-2.5 py-1 text-xs text-white hover:bg-[#111] transition-colors"
+            >
+              Vivified
+            </a>
+          </div>
           <a
             href="/demo/?corpus=faxbot"
             target="_blank"
@@ -106,7 +120,7 @@
     </div>
 
     <p class="mt-4 text-center text-gray-500 text-sm">
-      Live search + chat are backed by the open-source Faxbot corpora. Add <span class="text-gray-400">?mock=1</span> for offline demo mode.
+      Live search + chat are backed by the open-source Faxbot + Vivified corpora. Add <span class="text-gray-400">?mock=1</span> for offline demo mode.
     </p>
   </div>
 </section>

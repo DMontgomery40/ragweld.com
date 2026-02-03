@@ -9,7 +9,7 @@ test('landing page demo iframe is large and popout works', async ({ page }) => {
   const box = await iframe.boundingBox();
   expect(box?.height || 0).toBeGreaterThan(500);
 
-  await page.getByRole('link', { name: /open full demo/i }).click();
+  await page.getByRole('link', { name: /^faxbot$/i }).click();
   await expect(page).toHaveURL(/\/demo\/\?corpus=faxbot/);
 
   await expect(page.locator('.topbar .brand', { hasText: 'TriBrid RAG' })).toBeVisible();
