@@ -1,0 +1,61 @@
+---
+const screenshots = [
+  {
+    title: 'System status + quick actions',
+    description:
+      'Keep the local stack healthy (Postgres, Neo4j, API) and trigger maintenance actions like re-indexing and health refreshes.',
+    src: '/screenshots/tribridrag-ui.png',
+    alt: 'TriBridRAG dashboard showing system status and quick actions.',
+  },
+  {
+    title: 'Tribrid retrieval tuning',
+    description:
+      'Adjust vector/sparse/graph fusion weights and core retrieval settings (BM25, top-k, graph hops) while you iterate on quality.',
+    src: '/screenshots/tribridrag-retrieval.png',
+    alt: 'RAG configuration screen showing fusion weights and retrieval settings for vector, sparse, and graph search.',
+  },
+  {
+    title: 'Built-in parameter glossary',
+    description:
+      'A searchable reference for every configuration knob—turning tribal knowledge into docs you can actually use while debugging.',
+    src: '/screenshots/tribridrag-glossary.png',
+    alt: 'Parameter glossary screen with a searchable reference for RAG configuration parameters.',
+  },
+];
+---
+
+<section id="screenshots" class="bg-[#0a0a0a] pb-20">
+  <div class="mx-auto max-w-7xl px-4">
+    <div class="mx-auto max-w-3xl text-center">
+      <h2 class="text-3xl font-bold text-white">Workbench snapshots</h2>
+      <p class="mt-3 text-gray-400">
+        A few views you’ll spend time in: keeping the stack healthy, tuning tribrid retrieval, and understanding every
+        knob.
+      </p>
+    </div>
+
+    <div class="mt-10 grid gap-6 lg:grid-cols-3">
+      {
+        screenshots.map(({ title, description, src, alt }) => (
+          <figure class="rounded-xl border border-[#222] bg-[#0f0f0f] overflow-hidden">
+            <a href={src} target="_blank" rel="noopener" class="block">
+              <img
+                src={src}
+                alt={alt}
+                loading="lazy"
+                decoding="async"
+                class="h-56 w-full object-cover object-left-top border-b border-[#222]"
+              />
+            </a>
+            <figcaption class="p-6">
+              <div class="text-sm font-semibold text-[#00ff88]">{title}</div>
+              <p class="mt-2 text-sm text-gray-400">{description}</p>
+              <p class="mt-3 text-xs text-gray-500">Click to enlarge.</p>
+            </figcaption>
+          </figure>
+        ))
+      }
+    </div>
+  </div>
+</section>
+
