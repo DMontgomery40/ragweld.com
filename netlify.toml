@@ -18,6 +18,16 @@
   to = "/.netlify/functions/api/:splat"
   status = 200
 
+[[redirects]]
+  from = "/knobs"
+  to = "/glossary"
+  status = 301
+
+[[redirects]]
+  from = "/knobs/"
+  to = "/glossary/"
+  status = 301
+
 [[headers]]
   for = "/demo/mockServiceWorker.js"
   [headers.values]

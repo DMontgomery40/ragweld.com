@@ -1,0 +1,291 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Nav from '../../components/Nav.astro';
+import Footer from '../../components/Footer.astro';
+import {
+  GLOSSARY_CATEGORIES,
+  GLOSSARY_CATEGORY_ORDER,
+  categorizeGlossaryKey,
+  glossaryDefinitionToDisplayText,
+  loadGlossaryJson,
+} from '../../lib/glossary';
+
+const glossary = loadGlossaryJson();
+
+type Item = {
+  key: string;
+  term: string;
+  definition: string;
+  categoryId: keyof typeof GLOSSARY_CATEGORIES;
+  links: { text: string; href: string }[];
+  badges: { text: string; class: string }[];
+  searchText: string;
+};
+
+const items: Item[] = glossary.terms
+  .map((t) => {
+    const definition = glossaryDefinitionToDisplayText(t.definition || '');
+    return {
+      key: t.key,
+      term: t.term,
+      definition,
+      categoryId: categorizeGlossaryKey(t.key),
+      links: Array.isArray(t.links) ? t.links : [],
+      badges: Array.isArray(t.badges) ? t.badges : [],
+      searchText: `${t.key} ${t.term} ${definition}`.toLowerCase(),
+    } satisfies Item;
+  })
+  .sort((a, b) => {
+    const aIdx = GLOSSARY_CATEGORY_ORDER.indexOf(a.categoryId as any);
+    const bIdx = GLOSSARY_CATEGORY_ORDER.indexOf(b.categoryId as any);
+    if (aIdx !== bIdx) return aIdx - bIdx;
+    return a.term.localeCompare(b.term);
+  });
+
+const categoryCounts: Record<string, number> = { all: items.length };
+for (const id of GLOSSARY_CATEGORY_ORDER) categoryCounts[id] = 0;
+for (const item of items) categoryCounts[item.categoryId] += 1;
+
+const badgeClass = (raw: string) => {
+  const cls = String(raw || '').trim().toLowerCase();
+  const allowed = new Set(['info', 'warn', 'warning', 'err', 'reindex', 'ok', 'success', 'security']);
+  return allowed.has(cls) ? cls : '';
+};
+---
+
+<BaseLayout
+  title="ragweld — Parameter Glossary"
+  description="Searchable reference for all RAG configuration parameters, their descriptions, and helpful links to documentation."
+  canonical="https://ragweld.com/glossary/"
+>
+  <Nav />
+  <main class="bg-[#0a0a0a] pt-28 pb-16">
+    <div class="mx-auto max-w-6xl px-4">
+      <a href="/" class="text-sm text-gray-400 hover:text-white transition-colors">← Home</a>
+
+      <div class="mt-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h1 class="text-4xl font-bold text-white tracking-tight">Parameter Glossary</h1>
+          <p class="mt-3 text-gray-400 max-w-3xl">
+            Searchable reference for all RAG configuration parameters, their descriptions, and helpful links to documentation.
+          </p>
+          <p class="mt-2 text-gray-500 max-w-3xl">
+            Need the full raw registry view? <a href="/knobs/raw" class="text-[#00ff88] hover:text-[#00dd77] underline underline-offset-2">Open /knobs/raw</a>.
+          </p>
+        </div>
+
+        <div class="text-sm text-gray-500">
+          <a
+            href="https://dmontgomery40.github.io/tribrid-rag/"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="hover:text-white transition-colors"
+          >
+            Full docs →
+          </a>
+        </div>
+      </div>
+
+      <div class="mt-8 grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
+        <div class="flex gap-3 flex-col sm:flex-row sm:items-center">
+          <input
+            id="glossary-search"
+            type="search"
+            placeholder="Search parameters..."
+            class="w-full rounded-lg border border-[#222] bg-[#0f0f0f] px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-[#00ff88]/40"
+          />
+        </div>
+        <div class="text-sm text-gray-500">
+          <span id="glossary-count">{items.length} parameters</span>
+        </div>
+      </div>
+
+      <div class="mt-6">
+        <div class="flex flex-wrap gap-2">
+          <button
+            type="button"
+            data-category-chip
+            data-category="all"
+            data-active="1"
+            class="glossary-chip inline-flex items-center gap-2 rounded-full border border-[#222] bg-[#0a0a0a] px-3 py-1.5 text-sm text-gray-300 hover:text-white hover:bg-[#111] transition-colors"
+          >
+            All
+            <span class="glossary-chip-count rounded-full border border-[#222] bg-[#0f0f0f] px-2 py-0.5 text-xs text-gray-400">
+              {categoryCounts.all}
+            </span>
+          </button>
+          {
+            GLOSSARY_CATEGORY_ORDER.map((categoryId) => {
+              const count = categoryCounts[categoryId] || 0;
+              if (!count) return null;
+              const category = GLOSSARY_CATEGORIES[categoryId];
+              return (
+                <button
+                  type="button"
+                  data-category-chip
+                  data-category={categoryId}
+                  data-active="0"
+                  class="glossary-chip inline-flex items-center gap-2 rounded-full border border-[#222] bg-[#0a0a0a] px-3 py-1.5 text-sm text-gray-300 hover:text-white hover:bg-[#111] transition-colors"
+                >
+                  <span>{category.icon}</span>
+                  <span>{category.title}</span>
+                  <span class="glossary-chip-count rounded-full border border-[#222] bg-[#0f0f0f] px-2 py-0.5 text-xs text-gray-400">
+                    {count}
+                  </span>
+                </button>
+              );
+            })
+          }
+        </div>
+      </div>
+
+      <div class="mt-10">
+        <div
+          id="glossary-empty"
+          class="hidden rounded-xl border border-[#222] bg-[#0f0f0f] p-10 text-center text-gray-400"
+        >
+          <div class="mx-auto mb-4 h-16 w-16 rounded-full border border-[#222] bg-[#0a0a0a] flex items-center justify-center">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.35-4.35" />
+            </svg>
+          </div>
+          <p class="text-lg font-semibold text-white">No parameters found</p>
+          <p class="mt-1 text-sm text-gray-500">Try a different search term or category filter.</p>
+        </div>
+
+        <div id="glossary-grid" class="mt-0 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {
+            items.map((item) => {
+              const category = GLOSSARY_CATEGORIES[item.categoryId];
+              return (
+                <article
+                  class="glossary-item rounded-xl border border-[#222] bg-[#0f0f0f] p-5 hover:border-[#00ff88]/50 transition-colors"
+                  data-category={item.categoryId}
+                  data-search={item.searchText}
+                >
+                  <div class="flex items-start justify-between gap-3">
+                    <div>
+                      <div class="flex items-center gap-2">
+                        <span class="text-xl">{category.icon}</span>
+                        <h2 class="text-sm font-bold text-[#00ff88] leading-snug">{item.term}</h2>
+                      </div>
+                    </div>
+                    <code class="text-[11px] text-[#5b9dff] bg-[#0a0a0a] border border-[#222] rounded px-2 py-1 font-mono whitespace-nowrap">
+                      {item.key}
+                    </code>
+                  </div>
+
+                  {item.badges?.length ? (
+                    <div class="mt-3 flex flex-wrap gap-2">
+                      {item.badges.map((b) => (
+                        <span class={`glossary-badge ${badgeClass(b.class)}`}>{b.text}</span>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <p class="mt-3 text-sm text-gray-300 whitespace-pre-line leading-relaxed">{item.definition}</p>
+
+                  {item.links?.length ? (
+                    <div class="mt-4 border-t border-[#222] pt-3 flex flex-col gap-2">
+                      {item.links.map((l) => (
+                        <a
+                          href={l.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="inline-flex items-center gap-2 text-sm text-[#5b9dff] hover:text-[#00ff88] transition-colors"
+                        >
+                          <span>{l.text}</span>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                            <polyline points="15 3 21 3 21 9" />
+                            <line x1="10" y1="14" x2="21" y2="3" />
+                          </svg>
+                        </a>
+                      ))}
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })
+          }
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <Footer />
+
+  <style is:global>
+    button.glossary-chip[data-active="1"] { background: #00ff88; border-color: rgba(0, 255, 136, 0.6); color: #000; }
+    button.glossary-chip[data-active="1"] .glossary-chip-count { background: rgba(0, 0, 0, 0.12); border-color: rgba(0, 0, 0, 0.18); color: rgba(0, 0, 0, 0.7); }
+
+    .glossary-badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      border: 1px solid #222;
+      background: #0a0a0a;
+      color: #cbd5e1;
+    }
+    .glossary-badge.info { background: rgba(91, 157, 255, 0.15); color: #5b9dff; border-color: rgba(91, 157, 255, 0.3); }
+    .glossary-badge.warn, .glossary-badge.warning { background: rgba(255, 170, 0, 0.18); color: #ffaa00; border-color: rgba(255, 170, 0, 0.35); }
+    .glossary-badge.err { background: rgba(255, 107, 107, 0.18); color: #ff6b6b; border-color: rgba(255, 107, 107, 0.35); }
+    .glossary-badge.reindex { background: rgba(255, 107, 107, 0.15); color: #ff6b6b; border-color: rgba(255, 107, 107, 0.3); }
+    .glossary-badge.ok, .glossary-badge.success { background: rgba(0, 255, 136, 0.12); color: #00ff88; border-color: rgba(0, 255, 136, 0.25); }
+    .glossary-badge.security { background: rgba(255, 170, 0, 0.18); color: #ffaa00; border-color: rgba(255, 170, 0, 0.35); }
+  </style>
+
+  <script is:inline>
+    const searchEl = document.getElementById('glossary-search');
+    const countEl = document.getElementById('glossary-count');
+    const emptyEl = document.getElementById('glossary-empty');
+    const cards = Array.from(document.querySelectorAll('.glossary-item'));
+    const chips = Array.from(document.querySelectorAll('[data-category-chip]'));
+
+    let activeCategory = 'all';
+
+    function setActiveChip(category) {
+      activeCategory = category || 'all';
+      for (const chip of chips) {
+        const c = String(chip.getAttribute('data-category') || 'all');
+        chip.setAttribute('data-active', c === activeCategory ? '1' : '0');
+      }
+    }
+
+    function applyFilters() {
+      const q = String(searchEl?.value || '').trim().toLowerCase();
+      let shown = 0;
+
+      for (const el of cards) {
+        const category = String(el.getAttribute('data-category') || '');
+        const search = String(el.getAttribute('data-search') || '');
+        const catOk = activeCategory === 'all' || category === activeCategory;
+        const matchOk = !q || search.includes(q);
+        const visible = catOk && matchOk;
+        el.style.display = visible ? '' : 'none';
+        if (visible) shown += 1;
+      }
+
+      if (countEl) countEl.textContent = `${shown} parameter${shown === 1 ? '' : 's'}`;
+      if (emptyEl) emptyEl.classList.toggle('hidden', shown !== 0);
+    }
+
+    for (const chip of chips) {
+      chip.addEventListener('click', () => {
+        setActiveChip(chip.getAttribute('data-category') || 'all');
+        applyFilters();
+      });
+    }
+
+    searchEl?.addEventListener('input', applyFilters);
+    setActiveChip('all');
+    applyFilters();
+  </script>
+</BaseLayout>
+

@@ -1,8 +1,8 @@
 ---
-import BaseLayout from '../../layouts/BaseLayout.astro';
-import Nav from '../../components/Nav.astro';
-import Footer from '../../components/Footer.astro';
-import { buildKnobRegistry, safeJsonForHtml } from '../../lib/knobRegistry';
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import Nav from '../../../components/Nav.astro';
+import Footer from '../../../components/Footer.astro';
+import { buildKnobRegistry, safeJsonForHtml } from '../../../lib/knobRegistry';
 
 const registry = buildKnobRegistry();
 const groups = Object.entries(registry.groups);
@@ -15,18 +15,21 @@ const groupSlug = (name: string) =>
 ---
 
 <BaseLayout
-  title="ragweld — Knob Registry"
+  title="ragweld — Knob Registry (Raw)"
   description="Every tunable configuration knob in TriBridRAG, sourced from the Pydantic/OpenAPI config models and augmented with in-app tooltips where available."
-  canonical="https://ragweld.com/knobs/"
+  canonical="https://ragweld.com/knobs/raw/"
 >
   <Nav />
   <main class="bg-[#0a0a0a] pt-28 pb-16">
     <div class="mx-auto max-w-6xl px-4">
-      <a href="/" class="text-sm text-gray-400 hover:text-white transition-colors">← Home</a>
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <a href="/glossary" class="text-sm text-gray-400 hover:text-white transition-colors">← Glossary</a>
+        <a href="/" class="text-sm text-gray-600 hover:text-gray-300 transition-colors">Home</a>
+      </div>
 
       <div class="mt-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 class="text-4xl font-bold text-white tracking-tight">Knob Registry</h1>
+          <h1 class="text-4xl font-bold text-white tracking-tight">Knob Registry (Raw)</h1>
           <p class="mt-3 text-gray-400 max-w-3xl">
             This is the complete configuration surface area: every tunable knob exposed by the Pydantic config models,
             with tooltips layered in where they exist.

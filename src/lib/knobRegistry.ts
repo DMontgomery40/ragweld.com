@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import vm from 'node:vm';
+import { buildTooltipHtmlFromGlossaryTerm, loadGlossaryJson } from './glossary';
 
 type TsProp = {
   name: string;
@@ -135,24 +135,6 @@ function parseEnvKeyMap(jsonText: string): EnvKeyMap {
   };
 }
 
-function loadTooltipsMap(tooltipsJs: string): Record<string, string> {
-  // The file is an IIFE that writes to window.Tooltips. We evaluate it in a sandbox.
-  const sandbox: any = {
-    window: {},
-    document: {
-      querySelectorAll: () => [],
-      addEventListener: () => {},
-    },
-    console,
-  };
-  vm.createContext(sandbox);
-  vm.runInContext(tooltipsJs, sandbox, { filename: 'tooltips.js', timeout: 5000 });
-
-  const buildTooltipMap = sandbox.window?.Tooltips?.buildTooltipMap;
-  if (typeof buildTooltipMap !== 'function') return {};
-  return buildTooltipMap() as Record<string, string>;
-}
-
 function rewriteDocsHref(href: string, docsBase: string): string {
   const raw = String(href || '');
   if (!raw) return raw;
@@ -222,7 +204,6 @@ export function buildKnobRegistry(): KnobRegistry {
   const docsBase = 'https://dmontgomery40.github.io/tribrid-rag/';
 
   const generatedTypesPath = repoPath('vendor', 'demo', 'src', 'types', 'generated.ts');
-  const tooltipsPath = repoPath('vendor', 'demo', 'src', 'modules', 'tooltips.js');
   const envMapPath = repoPath('src', 'data', 'env-key-map.json');
 
   const tsText = fs.readFileSync(generatedTypesPath, 'utf8');
@@ -230,9 +211,12 @@ export function buildKnobRegistry(): KnobRegistry {
 
   const envKeyMap = fs.existsSync(envMapPath) ? parseEnvKeyMap(fs.readFileSync(envMapPath, 'utf8')) : null;
 
-  const tooltipsRaw = loadTooltipsMap(fs.readFileSync(tooltipsPath, 'utf8'));
+  const glossary = loadGlossaryJson();
   const tooltipHtmlByEnvKey: Record<string, string> = {};
-  for (const [k, v] of Object.entries(tooltipsRaw)) tooltipHtmlByEnvKey[k] = rewriteTooltipHtmlLinks(v, docsBase);
+  for (const t of glossary.terms) {
+    if (!t?.key) continue;
+    tooltipHtmlByEnvKey[t.key] = rewriteTooltipHtmlLinks(buildTooltipHtmlFromGlossaryTerm(t), docsBase);
+  }
 
   const knobs: KnobEntry[] = [];
 
@@ -320,4 +304,3 @@ export function safeJsonForHtml(value: unknown): string {
   // Avoid accidentally terminating a <script> tag, and keep output stable.
   return JSON.stringify(value).replace(/</g, '\\u003c');
 }
-

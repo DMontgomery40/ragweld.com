@@ -34,6 +34,17 @@ for (const item of itemsToCopy) {
 
 console.log(`Synced ${sourceDir} to ${targetDir}`);
 
+// Sync glossary.json for ragweld.com marketing site (pinned fallback for CI/Netlify)
+const sourceGlossaryPath = path.join(sourceDir, 'public', 'glossary.json');
+const targetGlossaryPath = path.join(__dirname, '..', 'public', 'glossary.json');
+if (fs.existsSync(sourceGlossaryPath)) {
+  fs.mkdirSync(path.dirname(targetGlossaryPath), { recursive: true });
+  fs.copyFileSync(sourceGlossaryPath, targetGlossaryPath);
+  console.log(`Synced glossary.json to ${targetGlossaryPath}`);
+} else {
+  console.warn(`Warning: glossary.json not found at ${sourceGlossaryPath} (leaving existing ${targetGlossaryPath} as-is)`);
+}
+
 // Patch vite.config.ts to use /demo/ base
 const viteConfigPath = path.join(targetDir, 'vite.config.ts');
 if (fs.existsSync(viteConfigPath)) {
