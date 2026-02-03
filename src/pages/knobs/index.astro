@@ -143,9 +143,11 @@ const groups = Object.entries(registry.groups);
     .tooltip-content .tt-badge { display: inline-flex; align-items: center; border: 1px solid #222; border-radius: 999px; padding: 2px 8px; font-size: 12px; color: #cbd5e1; background: #0a0a0a; }
   </style>
 
-  <script type="application/json" id="tooltip-map">
-    {safeJsonForHtml(registry.tooltipHtmlByEnvKey)}
-  </script>
+  <script
+    type="application/json"
+    id="tooltip-map"
+    set:html={safeJsonForHtml(registry.tooltipHtmlByEnvKey)}
+  ></script>
 
   <script is:inline>
     const searchInput = document.getElementById('knob-search');
