@@ -6,6 +6,12 @@ import { buildKnobRegistry, safeJsonForHtml } from '../../lib/knobRegistry';
 
 const registry = buildKnobRegistry();
 const groups = Object.entries(registry.groups);
+
+const groupSlug = (name: string) =>
+  String(name || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 ---
 
 <BaseLayout
@@ -65,10 +71,41 @@ const groups = Object.entries(registry.groups);
         </div>
       </div>
 
+      <div class="mt-6">
+        <div class="flex flex-wrap gap-2">
+          <a
+            href="#all"
+            data-group-chip
+            class="knob-chip inline-flex items-center gap-2 rounded-full border border-[#222] bg-[#0a0a0a] px-3 py-1.5 text-sm text-gray-300 hover:text-white hover:bg-[#111] transition-colors"
+          >
+            All
+          </a>
+          {
+            groups.map(([groupName, knobs]) => (
+              <a
+                href={`#group-${groupSlug(groupName)}`}
+                data-group-chip
+                class="knob-chip inline-flex items-center gap-2 rounded-full border border-[#222] bg-[#0a0a0a] px-3 py-1.5 text-sm text-gray-300 hover:text-white hover:bg-[#111] transition-colors"
+              >
+                <span>{String(groupName).replace(/_/g, ' ')}</span>
+                <span class="knob-chip-count rounded-full border border-[#222] bg-[#0f0f0f] px-2 py-0.5 text-xs text-gray-400">
+                  {knobs.length}
+                </span>
+              </a>
+            ))
+          }
+        </div>
+        <p class="mt-2 text-xs text-gray-600">Click a chip to filter/jump. Click All to clear.</p>
+      </div>
+
       <div class="mt-10 space-y-10">
         {
           groups.map(([groupName, knobs]) => (
-            <section class="rounded-xl border border-[#222] bg-[#0f0f0f] p-6" data-group={groupName}>
+            <section
+              id={`group-${groupSlug(groupName)}`}
+              class="rounded-xl border border-[#222] bg-[#0f0f0f] p-6"
+              data-group={groupName}
+            >
               <div class="flex items-baseline justify-between gap-4 flex-wrap">
                 <h2 class="text-xl font-bold text-white">
                   <span class="text-[#00ff88]">{groupName}</span>
@@ -143,6 +180,9 @@ const groups = Object.entries(registry.groups);
     .tooltip-content a:hover { color: #00dd77; }
     .tooltip-content .tt-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
     .tooltip-content .tt-badge { display: inline-flex; align-items: center; border: 1px solid #222; border-radius: 999px; padding: 2px 8px; font-size: 12px; color: #cbd5e1; background: #0a0a0a; }
+
+    a.knob-chip[data-active="1"] { background: #00ff88; border-color: rgba(0, 255, 136, 0.6); color: #000; }
+    a.knob-chip[data-active="1"] .knob-chip-count { background: rgba(0, 0, 0, 0.12); border-color: rgba(0, 0, 0, 0.18); color: rgba(0, 0, 0, 0.7); }
   </style>
 
   <script
@@ -156,6 +196,10 @@ const groups = Object.entries(registry.groups);
     const showInternal = document.getElementById('show-internal');
     const countEl = document.getElementById('knob-count');
     const items = Array.from(document.querySelectorAll('.knob-item'));
+    const sections = Array.from(document.querySelectorAll('section[data-group]'));
+    const chips = Array.from(document.querySelectorAll('[data-group-chip]'));
+
+    let activeGroup = null;
 
     const tooltipJsonEl = document.getElementById('tooltip-map');
     let tooltipMap = {};
@@ -170,12 +214,20 @@ const groups = Object.entries(registry.groups);
       const allowInternal = Boolean(showInternal?.checked);
 
       let shown = 0;
-      let total = items.length;
+      let total = 0;
       let internalHidden = 0;
 
       for (const el of items) {
         const internal = el.getAttribute('data-internal') === '1';
         const text = (el.textContent || '').toLowerCase();
+        const group = el.closest('section[data-group]')?.getAttribute('data-group') || '';
+        const groupOk = !activeGroup || group === activeGroup;
+        if (!groupOk) {
+          el.style.display = 'none';
+          continue;
+        }
+        total += 1;
+
         const matches = !q || text.includes(q);
         const visible = matches && (allowInternal || !internal);
         el.style.display = visible ? '' : 'none';
@@ -183,17 +235,45 @@ const groups = Object.entries(registry.groups);
         if (!allowInternal && internal) internalHidden += 1;
       }
 
-      // Hide empty groups.
-      const groups = Array.from(document.querySelectorAll('section[data-group]'));
-      for (const g of groups) {
-        const visibleItems = Array.from(g.querySelectorAll('.knob-item')).some((li) => li.style.display !== 'none');
-        g.style.display = visibleItems ? '' : 'none';
+      // Hide empty/filtered groups.
+      for (const s of sections) {
+        const groupName = s.getAttribute('data-group') || '';
+        if (activeGroup && groupName !== activeGroup) {
+          s.style.display = 'none';
+          continue;
+        }
+        const visibleItems = Array.from(s.querySelectorAll('.knob-item')).some((li) => li.style.display !== 'none');
+        s.style.display = visibleItems ? '' : 'none';
       }
 
       if (countEl) {
+        const scope = activeGroup ? ` in ${activeGroup}` : '';
         const extra = internalHidden ? ` • ${internalHidden} internal hidden` : '';
-        countEl.textContent = `${shown} / ${total} knobs${extra}`;
+        countEl.textContent = `${shown} / ${total} knobs${scope}${extra}`;
       }
+    }
+
+    function updateChipActive() {
+      const h = String(location.hash || '').replace(/^#/, '');
+      for (const chip of chips) {
+        const target = String(chip.getAttribute('href') || '').replace(/^#/, '');
+        const active = (!h || h === 'all') ? target === 'all' : target === h;
+        chip.setAttribute('data-active', active ? '1' : '0');
+      }
+    }
+
+    function applyGroupFromHash() {
+      const h = String(location.hash || '').replace(/^#/, '');
+      if (!h || h === 'all') {
+        activeGroup = null;
+        updateChipActive();
+        applyFilters();
+        return;
+      }
+      const el = document.getElementById(h);
+      activeGroup = el?.getAttribute('data-group') || null;
+      updateChipActive();
+      applyFilters();
     }
 
     function wireTooltips() {
@@ -213,7 +293,8 @@ const groups = Object.entries(registry.groups);
 
     searchInput?.addEventListener('input', applyFilters);
     showInternal?.addEventListener('change', applyFilters);
-    applyFilters();
+    window.addEventListener('hashchange', applyGroupFromHash);
+    applyGroupFromHash();
     wireTooltips();
   </script>
 </BaseLayout>
