@@ -1,25 +1,18 @@
 ---
 const screenshots = [
   {
-    title: 'Retrieval config (hybrid + dense)',
+    title: 'Chat + dataset context',
     description:
-      'Tune the core retrieval knobs: BM25 + dense, candidate counts, thresholds, reranking, and advanced fusion behavior.',
-    src: '/screenshots/config-retrieval.png',
-    alt: 'Configuration screen showing retrieval parameters for hybrid (BM25) and dense (vector) retrieval, plus reranking and advanced tuning.',
+      'Chat with your corpora, inspect sources, and keep retrieval knobs close while you iterate.',
+    src: '/screenshots/chat-and-dataset.png',
+    alt: 'Chat view alongside a dataset panel, showing conversational results with corpus context and nearby controls.',
   },
   {
-    title: 'Chat with knobs + traces',
+    title: 'Indexing settings + Grafana sidecar',
     description:
-      'A chat surface designed for iteration: prompt + response, plus the settings and routing trace you need to explain why an answer happened.',
-    src: '/screenshots/chat-tab.png',
-    alt: 'Chat tab with a conversation area and a settings panel for chat and retrieval, including routing trace controls.',
-  },
-  {
-    title: 'Embedded Grafana metrics',
-    description:
-      'Keep observability in the same workspace: configure a Grafana dashboard and monitor throughput, errors, and costs while you run.',
-    src: '/screenshots/metrics-embedded-grafana.png',
-    alt: 'Metrics screen showing an embedded Grafana dashboard with throughput, error rate, and cost panels.',
+      'Configure indexing and chunking while watching live metrics in a split-view embedded Grafana dashboard.',
+    src: '/screenshots/indexing-settings-with-grafana-on-side.png',
+    alt: 'Indexing settings screen shown side-by-side with an embedded Grafana metrics dashboard.',
   },
 ];
 ---
@@ -34,7 +27,7 @@ const screenshots = [
       </p>
     </div>
 
-    <div class="mt-10 grid gap-6 lg:grid-cols-3">
+    <div class="mt-10 grid gap-6 lg:grid-cols-2">
       {
         screenshots.map(({ title, description, src, alt }) => (
           <figure class="rounded-xl border border-[#222] bg-[#0f0f0f] overflow-hidden">
