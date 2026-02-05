@@ -1083,45 +1083,6 @@ export const handler = async (event) => {
     });
   }
 
-  if (method === 'GET' && path.startsWith('/api/index/') && path.endsWith('/status')) {
-    const corpusId = decodeURIComponent(path.slice('/api/index/'.length, -'/status'.length));
-    const corpus = await getCorpus(sql, corpusId);
-    const lastIndexed = corpus?.last_indexed || null;
-    return json(200, {
-      corpus_id: corpusId,
-      status: lastIndexed ? 'complete' : 'idle',
-      progress: lastIndexed ? 1 : 0,
-      current_file: null,
-      error: null,
-      started_at: null,
-      completed_at: lastIndexed,
-    });
-  }
-
-  if (method === 'GET' && path.startsWith('/api/index/') && path.endsWith('/stats')) {
-    const corpusId = decodeURIComponent(path.slice('/api/index/'.length, -'/stats'.length));
-    const corpus = await getCorpus(sql, corpusId);
-    const lastIndexed = corpus?.last_indexed || null;
-    const counts = await indexCounts(sql, corpusId);
-    // Best-effort token estimate: ~4 chars/token.
-    let totalChars = 0;
-    try {
-      const r = await sql.query(`SELECT SUM(LENGTH(content))::bigint AS n FROM chunks WHERE corpus_id = $1;`, [corpusId]);
-      totalChars = Number(r.rows?.[0]?.n) || 0;
-    } catch {}
-    const totalTokens = Math.max(0, Math.round(totalChars / 4));
-    return json(200, {
-      corpus_id: corpusId,
-      total_files: counts.docs,
-      total_chunks: counts.chunks,
-      total_tokens: totalTokens,
-      embedding_model: 'text-embedding-3-large',
-      embedding_dimensions: 3072,
-      last_indexed: lastIndexed,
-      file_breakdown: {},
-    });
-  }
-
   // Dashboard summary panel expects this schema (different from /api/index/:id/status).
   if (method === 'GET' && path === '/api/index/status') {
     const corpusId = String(url.searchParams.get('corpus_id') || '').trim() || 'faxbot';
@@ -1252,6 +1213,46 @@ export const handler = async (event) => {
       },
       keywords_count: keywordsCount,
       total_storage: postgresTotal,
+    });
+  }
+
+  // Index status per-corpus (used by /web indexing hooks; different schema from /api/index/status)
+  if (method === 'GET' && path.startsWith('/api/index/') && path.endsWith('/status')) {
+    const corpusId = decodeURIComponent(path.slice('/api/index/'.length, -'/status'.length));
+    const corpus = await getCorpus(sql, corpusId);
+    const lastIndexed = corpus?.last_indexed || null;
+    return json(200, {
+      corpus_id: corpusId,
+      status: lastIndexed ? 'complete' : 'idle',
+      progress: lastIndexed ? 1 : 0,
+      current_file: null,
+      error: null,
+      started_at: null,
+      completed_at: lastIndexed,
+    });
+  }
+
+  if (method === 'GET' && path.startsWith('/api/index/') && path.endsWith('/stats')) {
+    const corpusId = decodeURIComponent(path.slice('/api/index/'.length, -'/stats'.length));
+    const corpus = await getCorpus(sql, corpusId);
+    const lastIndexed = corpus?.last_indexed || null;
+    const counts = await indexCounts(sql, corpusId);
+    // Best-effort token estimate: ~4 chars/token.
+    let totalChars = 0;
+    try {
+      const r = await sql.query(`SELECT SUM(LENGTH(content))::bigint AS n FROM chunks WHERE corpus_id = $1;`, [corpusId]);
+      totalChars = Number(r.rows?.[0]?.n) || 0;
+    } catch {}
+    const totalTokens = Math.max(0, Math.round(totalChars / 4));
+    return json(200, {
+      corpus_id: corpusId,
+      total_files: counts.docs,
+      total_chunks: counts.chunks,
+      total_tokens: totalTokens,
+      embedding_model: 'text-embedding-3-large',
+      embedding_dimensions: 3072,
+      last_indexed: lastIndexed,
+      file_breakdown: {},
     });
   }
 
