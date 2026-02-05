@@ -6,19 +6,23 @@
  * embeddings will cause search to return completely irrelevant results.
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAPI } from '@/hooks/useAPI';
 import { useConfig } from '@/hooks/useConfig';
 import { useRepoStore } from '@/stores/useRepoStore';
 import type { IndexStats } from '@/types/generated';
+import { describeEmbeddingProviderStrategy } from '@/utils/embeddingStrategy';
 
 export interface EmbeddingStatus {
   // Current configuration (from tribrid_config.json / env)
   configType: string;
+  configStrategy: string;
   configDim: number;
   configModel: string;
   
   // Index configuration (from last_index.json)
+  indexProvider: string | null;
+  indexStrategy: string | null;
   indexType: string | null;
   indexDim: number | null;
   indexedAt: string | null;
@@ -31,6 +35,7 @@ export interface EmbeddingStatus {
   // Detailed comparison
   typeMatch: boolean;
   dimMatch: boolean;
+  modelMatch: boolean;
   
   // Index stats
   totalChunks: number;
@@ -72,20 +77,7 @@ export function useEmbeddingStatus(): UseEmbeddingStatusResult {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Avoid noisy console errors when the SPA navigates quickly (Playwright + real users).
-  // Aborted fetches are expected during navigation/unmount.
-  const abortRef = useRef<AbortController | null>(null);
-
   const checkStatus = useCallback(async () => {
-    // Cancel any in-flight check
-    try {
-      abortRef.current?.abort();
-    } catch {
-      // ignore
-    }
-    const controller = new AbortController();
-    abortRef.current = controller;
-
     try {
       setLoading(true);
       setError(null);
@@ -100,18 +92,22 @@ export function useEmbeddingStatus(): UseEmbeddingStatusResult {
       const emb = config.embedding;
       const provider = String(emb?.embedding_type || '').toLowerCase();
       const configType = provider || 'openai';
+      const configStrategy = describeEmbeddingProviderStrategy(configType).detail;
       const configDim = Number(emb?.embedding_dim || 0);
       let configModel = String(emb?.embedding_model || '');
       if (provider === 'voyage') configModel = String(emb?.voyage_model || '');
       if (provider === 'local' || provider === 'huggingface') configModel = String(emb?.embedding_model_local || '');
 
       // Index config (from Postgres corpus metadata via /api/index/{corpus_id}/stats)
-      const response = await fetch(api(`index/${encodeURIComponent(corpusId)}/stats`), { signal: controller.signal });
+      const response = await fetch(api(`index/${encodeURIComponent(corpusId)}/stats`));
       if (response.status === 404) {
         setStatus({
           configType,
+          configStrategy,
           configDim,
           configModel,
+          indexProvider: null,
+          indexStrategy: null,
           indexType: null,
           indexDim: null,
           indexedAt: null,
@@ -120,6 +116,7 @@ export function useEmbeddingStatus(): UseEmbeddingStatusResult {
           isMismatched: false,
           typeMatch: true,
           dimMatch: true,
+          modelMatch: true,
           totalChunks: 0,
         });
         return;
@@ -130,43 +127,42 @@ export function useEmbeddingStatus(): UseEmbeddingStatusResult {
 
       const data: IndexStats = await response.json();
       const totalChunks = Number(data.total_chunks || 0);
+      const indexProviderRaw = String(data.embedding_provider || '').trim();
       const indexModelRaw = String(data.embedding_model || '').trim();
       const indexDimRaw = Number(data.embedding_dimensions || 0);
 
       // Treat empty/0 as “no dense embedding index” (e.g., skip_dense=1 runs).
       const indexType = indexModelRaw ? indexModelRaw : null;
       const indexDim = indexDimRaw > 0 ? indexDimRaw : null;
+      const indexProvider = indexProviderRaw ? indexProviderRaw : null;
+      const indexStrategy = indexProvider ? describeEmbeddingProviderStrategy(indexProvider).detail : null;
       const hasIndex = Boolean(indexType && indexDim && totalChunks > 0);
 
       const dimMatch = hasIndex ? configDim === indexDim : true;
       const modelMatch = hasIndex ? configModel === indexType : true;
+      const typeMatch = hasIndex && indexProvider ? configType === String(indexProvider).toLowerCase() : true;
 
       setStatus({
         configType,
+        configStrategy,
         configDim,
         configModel,
+        indexProvider,
+        indexStrategy,
         indexType,
         indexDim,
         indexedAt: data.last_indexed ? String(data.last_indexed) : null,
         indexPath: null,
         hasIndex,
-        isMismatched: hasIndex ? !(dimMatch && modelMatch) : false,
-        typeMatch: true, // provider is not persisted in index stats currently
+        isMismatched: hasIndex ? !(typeMatch && dimMatch && modelMatch) : false,
+        typeMatch,
         dimMatch,
+        modelMatch,
         totalChunks,
       });
     } catch (err) {
-      // Ignore expected navigation aborts.
-      const name = (err as any)?.name ? String((err as any).name) : '';
-      const message = err instanceof Error ? err.message : String(err || '');
-      const aborted = controller.signal.aborted || name === 'AbortError' || message.includes('net::ERR_ABORTED');
-      if (aborted) return;
-
-      setError(message || 'Unknown error checking embedding status');
-      // Avoid console.error in production; consumers already surface warnings when needed.
-      if (import.meta.env.DEV) {
-        console.warn('[useEmbeddingStatus] Error:', err);
-      }
+      setError(err instanceof Error ? err.message : 'Unknown error checking embedding status');
+      console.error('[useEmbeddingStatus] Error:', err);
     } finally {
       setLoading(false);
     }
@@ -204,11 +200,6 @@ export function useEmbeddingStatus(): UseEmbeddingStatusResult {
     window.addEventListener('tribrid-corpus-changed', handleConfigChange as EventListener);
 
     return () => {
-      try {
-        abortRef.current?.abort();
-      } catch {
-        // ignore
-      }
       window.removeEventListener('config-updated', handleConfigChange);
       window.removeEventListener('index-completed', handleConfigChange);
       window.removeEventListener('dashboard-refresh', handleConfigChange);

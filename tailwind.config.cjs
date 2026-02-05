@@ -5,10 +5,16 @@ module.exports = {
     extend: {
       colors: {
         ragweld: {
-          accent: '#00ff88',
-          bg: '#0a0a0a',
-          border: '#222',
-          muted: '#666'
+          // Match the TriBridRAG "Surgical" UI theme (vendored demo tokens).
+          accent: '#64748b',
+          bg: '#09090b',
+          elev1: '#0f0f12',
+          elev2: '#18181b',
+          border: '#27272a',
+          fg: '#e4e4e7',
+          muted: '#71717a',
+          link: '#94a3b8',
+          code: '#18181b'
         }
       }
     },

@@ -271,6 +271,14 @@ export const mockConfig: TriBridConfig = {
     chat_show_debug_footer: 1,
     chat_show_confidence: 0,
     chat_history_max: 50,
+    grafana_base_url: '/demo',
+    grafana_dashboard_uid: 'tribrid-overview',
+    grafana_dashboard_slug: 'tribrid-overview',
+    grafana_auth_mode: 'anonymous',
+    grafana_embed_enabled: 1,
+    grafana_kiosk: 'tv',
+    grafana_org_id: 1,
+    grafana_refresh: '10s',
   },
 };
 

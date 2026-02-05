@@ -17,7 +17,7 @@ const screenshots = [
 ];
 ---
 
-<section id="screenshots" class="bg-[#0a0a0a] pb-20">
+<section id="screenshots" class="bg-[#09090b] pb-20">
   <div class="mx-auto max-w-7xl px-4">
     <div class="mx-auto max-w-3xl text-center">
       <h2 class="text-3xl font-bold text-white">Workbench snapshots</h2>
@@ -30,18 +30,18 @@ const screenshots = [
     <div class="mt-10 grid gap-6 lg:grid-cols-2">
       {
         screenshots.map(({ title, description, src, alt }) => (
-          <figure class="rounded-xl border border-[#222] bg-[#0f0f0f] overflow-hidden">
+          <figure class="rounded-xl border border-[#27272a] bg-[#0f0f12] overflow-hidden">
             <a href={src} target="_blank" rel="noopener" class="block">
               <img
                 src={src}
                 alt={alt}
                 loading="lazy"
                 decoding="async"
-                class="h-56 w-full object-cover object-left-top border-b border-[#222]"
+                class="h-56 w-full object-cover object-left-top border-b border-[#27272a]"
               />
             </a>
             <figcaption class="p-6">
-              <div class="text-sm font-semibold text-[#00ff88]">{title}</div>
+              <div class="text-sm font-semibold text-[#64748b]">{title}</div>
               <p class="mt-2 text-sm text-gray-400">{description}</p>
               <p class="mt-3 text-xs text-gray-500">Click to enlarge.</p>
             </figcaption>

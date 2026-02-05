@@ -96,11 +96,7 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
         throw new Error('Failed to load corpora');
       }
 
-      const payload = await reposRes.json();
-      if (!Array.isArray(payload)) {
-        throw new Error('Invalid corpora response (expected array)');
-      }
-      const repos: Corpus[] = payload;
+      const repos: Corpus[] = await reposRes.json();
 
       // Determine active corpus from URL, localStorage, or first corpus (and validate it exists)
       const url = new URL(window.location.href);
@@ -151,7 +147,6 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
 
     } catch (error) {
       set({
-        repos: [],
         loading: false,
         error: error instanceof Error ? error.message : 'Failed to load repositories',
         initialized: true  // Mark as initialized even on error to prevent retry loops
@@ -383,7 +378,7 @@ export const useActiveRepo = () => useRepoStore(state => state.activeRepo);
  *   - ASK USER: Before adding new repo-related selectors, confirm whether they should be separate hooks or combined with existing ones
  * ---/agentspec
  */
-export const useRepos = () => useRepoStore((state) => (Array.isArray(state.repos) ? state.repos : []));
+export const useRepos = () => useRepoStore(state => state.repos);
 /**
  * ---agentspec
  * what: |

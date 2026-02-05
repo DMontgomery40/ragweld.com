@@ -800,6 +800,8 @@ export interface IndexStats {
   total_chunks: number;
   /** Total token count across all chunks */
   total_tokens: number;
+  /** Embedding provider used for embeddings (embedding.embedding_type) at index time */
+  embedding_provider?: string; // default: ""
   /** Model used for embeddings */
   embedding_model: string;
   /** Dimension of embedding vectors */
@@ -834,6 +836,16 @@ export interface IndexingConfig {
   index_excluded_exts?: string; // default: ".png,.jpg,.gif,.ico,.svg,.woff,.ttf"
   /** Max file size to index (MB) */
   index_max_file_size_mb?: number; // default: 10
+  /** Max rows to extract from a single Parquet file during indexing (best-effort) */
+  parquet_extract_max_rows?: number; // default: 5000
+  /** Max characters to extract from a single Parquet file during indexing (best-effort) */
+  parquet_extract_max_chars?: number; // default: 2000000
+  /** Max characters per extracted Parquet cell (best-effort) */
+  parquet_extract_max_cell_chars?: number; // default: 20000
+  /** Extract only text/string-like columns from Parquet files when possible */
+  parquet_extract_text_columns_only?: number; // default: 1
+  /** Include column headers when extracting Parquet text */
+  parquet_extract_include_column_names?: number; // default: 1
   /** Skip dense vector indexing */
   skip_dense?: number; // default: 0
   /** Base output directory */
@@ -1226,7 +1238,7 @@ export interface RerankerTrainRunSummary {
 
 /** Reranking configuration for result refinement. */
 export interface RerankingConfig {
-  /** Reranker mode: 'cloud' (Cohere/Voyage API), 'local' (HuggingFace cross-encoder), 'learning' (TRIBRID cross-encoder-tribrid), 'none' (disabled) */
+  /** Reranker mode: 'cloud' (Cohere/Voyage/Jina API), 'local' (HuggingFace cross-encoder), 'learning' (trainable reranker: MLX Qwen3 LoRA when available, else transformers), 'none' (disabled) */
   reranker_mode?: string; // default: "none"
   /** Cloud reranker provider when mode=cloud (cohere, voyage, jina) */
   reranker_cloud_provider?: string; // default: "cohere"
@@ -1432,7 +1444,7 @@ export interface TrainingConfig {
   triplets_min_count?: number; // default: 100
   /** Triplet mining mode */
   triplets_mine_mode?: string; // default: "replace"
-  /** Reranker model path */
+  /** Active learning reranker artifact path (HF model dir for transformers; adapter dir for MLX) */
   tribrid_reranker_model_path?: string; // default: "models/cross-encoder-tribrid"
   /** Triplet mining mode */
   tribrid_reranker_mine_mode?: string; // default: "replace"
@@ -1440,6 +1452,28 @@ export interface TrainingConfig {
   tribrid_reranker_mine_reset?: number; // default: 0
   /** Training triplets file path */
   tribrid_triplets_path?: string; // default: "data/training/triplets.jsonl"
+  /** Learning reranker backend: auto (prefer MLX Qwen3 on Apple Silicon), transformers (HF), mlx_qwen3 (force MLX) */
+  learning_reranker_backend?: "auto" | "transformers" | "mlx_qwen3"; // default: "auto"
+  /** Base model to fine-tune for MLX Qwen3 learning reranker */
+  learning_reranker_base_model?: string; // default: "Qwen/Qwen3-Reranker-0.6B"
+  /** LoRA rank for MLX Qwen3 learning reranker */
+  learning_reranker_lora_rank?: number; // default: 16
+  /** LoRA alpha for MLX Qwen3 learning reranker */
+  learning_reranker_lora_alpha?: number; // default: 32.0
+  /** LoRA dropout for MLX Qwen3 learning reranker */
+  learning_reranker_lora_dropout?: number; // default: 0.05
+  /** Module name suffixes to apply LoRA to (MLX Qwen3) */
+  learning_reranker_lora_target_modules?: string[];
+  /** Negative pairs per positive during learning reranker training */
+  learning_reranker_negative_ratio?: number; // default: 5
+  /** Gradient accumulation steps per optimizer update for MLX Qwen3 learning reranker training */
+  learning_reranker_grad_accum_steps?: number; // default: 8
+  /** Promote trained learning artifact to active path only if primary metric improves */
+  learning_reranker_promote_if_improves?: number; // default: 1
+  /** Minimum improvement required to auto-promote (primary metric delta) */
+  learning_reranker_promote_epsilon?: number; // default: 0.0
+  /** Unload MLX learning reranker model after idle seconds (0 = never) */
+  learning_reranker_unload_after_sec?: number; // default: 0
 }
 
 /** User interface configuration. */
@@ -2222,6 +2256,34 @@ export interface RerankerMineResponse {
 export interface RerankerNoHitsResponse {
   /** Placeholder list of no-hit queries */
   queries?: Record<string, unknown>[];
+}
+
+/** Request payload for POST /api/reranker/score. */
+export interface RerankerScoreRequest {
+  /** Corpus identifier to score against */
+  corpus_id: string;
+  /** Query string */
+  query: string;
+  /** Document/passage text to score */
+  document: string;
+  /** Include backend-specific raw logits when available (best-effort) */
+  include_logits?: number;
+}
+
+/** Response payload for POST /api/reranker/score. */
+export interface RerankerScoreResponse {
+  /** Whether scoring succeeded */
+  ok: boolean;
+  /** Resolved backend used to score (mlx_qwen3|transformers|...) */
+  backend?: string;
+  /** Normalized score in [0,1] (best-effort) */
+  score?: number | null;
+  /** Raw yes logit (if include_logits and supported) */
+  yes_logit?: number | null;
+  /** Raw no logit (if include_logits and supported) */
+  no_logit?: number | null;
+  /** Error message (if any) */
+  error?: string | null;
 }
 
 export interface RerankerTrainDiffRequest {

@@ -20,7 +20,7 @@ const groupSlug = (name: string) =>
   canonical="https://ragweld.com/knobs/raw/"
 >
   <Nav />
-  <main class="bg-[#0a0a0a] pt-28 pb-16">
+  <main class="bg-[#09090b] pt-28 pb-16">
     <div class="mx-auto max-w-6xl px-4">
       <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
         <a href="/glossary" class="text-sm text-gray-400 hover:text-white transition-colors">← Glossary</a>
@@ -50,13 +50,13 @@ const groupSlug = (name: string) =>
             id="knob-search"
             type="search"
             placeholder="Search knobs (path, env key, or text)…"
-            class="w-full rounded-lg border border-[#222] bg-[#0f0f0f] px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-[#00ff88]/40"
+            class="w-full rounded-lg border border-[#27272a] bg-[#0f0f12] px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-[#64748b]/30"
           />
           <label class="flex items-center gap-2 text-sm text-gray-400 select-none">
             <input
               id="show-internal"
               type="checkbox"
-              class="h-4 w-4 rounded border-[#333] bg-[#0f0f0f] text-[#00ff88] focus:ring-[#00ff88]/40"
+              class="h-4 w-4 rounded border-[#27272a] bg-[#0f0f12] text-[#64748b] focus:ring-[#64748b]/30"
             />
             Show internal/basics
           </label>
@@ -79,7 +79,7 @@ const groupSlug = (name: string) =>
           <a
             href="#all"
             data-group-chip
-            class="knob-chip inline-flex items-center gap-2 rounded-full border border-[#222] bg-[#0a0a0a] px-3 py-1.5 text-sm text-gray-300 hover:text-white hover:bg-[#111] transition-colors"
+            class="knob-chip inline-flex items-center gap-2 rounded-full border border-[#27272a] bg-[#09090b] px-3 py-1.5 text-sm text-gray-300 hover:text-white hover:bg-[#18181b] transition-colors"
           >
             All
           </a>
@@ -88,10 +88,10 @@ const groupSlug = (name: string) =>
               <a
                 href={`#group-${groupSlug(groupName)}`}
                 data-group-chip
-                class="knob-chip inline-flex items-center gap-2 rounded-full border border-[#222] bg-[#0a0a0a] px-3 py-1.5 text-sm text-gray-300 hover:text-white hover:bg-[#111] transition-colors"
+                class="knob-chip inline-flex items-center gap-2 rounded-full border border-[#27272a] bg-[#09090b] px-3 py-1.5 text-sm text-gray-300 hover:text-white hover:bg-[#18181b] transition-colors"
               >
                 <span>{String(groupName).replace(/_/g, ' ')}</span>
-                <span class="knob-chip-count rounded-full border border-[#222] bg-[#0f0f0f] px-2 py-0.5 text-xs text-gray-400">
+                <span class="knob-chip-count rounded-full border border-[#27272a] bg-[#18181b] px-2 py-0.5 text-xs text-gray-400">
                   {knobs.length}
                 </span>
               </a>
@@ -106,12 +106,12 @@ const groupSlug = (name: string) =>
           groups.map(([groupName, knobs]) => (
             <section
               id={`group-${groupSlug(groupName)}`}
-              class="rounded-xl border border-[#222] bg-[#0f0f0f] p-6"
+              class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6"
               data-group={groupName}
             >
               <div class="flex items-baseline justify-between gap-4 flex-wrap">
                 <h2 class="text-xl font-bold text-white">
-                  <span class="text-[#00ff88]">{groupName}</span>
+                  <span class="text-[#94a3b8]">{groupName}</span>
                   <span class="ml-2 text-sm text-gray-500 font-medium">({knobs.length})</span>
                 </h2>
                 <div class="text-xs text-gray-500">dot-path → type → default → env key (if available)</div>
@@ -120,14 +120,14 @@ const groupSlug = (name: string) =>
               <ul class="mt-6 space-y-3">
                 {knobs.map((k) => (
                   <li
-                    class="knob-item rounded-xl border border-[#222] bg-[#0a0a0a] p-4"
+                    class="knob-item rounded-xl border border-[#27272a] bg-[#09090b] p-4"
                     data-path={k.path}
                     data-env={(k.envKeys || []).join(',')}
                     data-internal={k.internal ? '1' : '0'}
                   >
                     <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                       <div>
-                        <div class="font-mono text-sm text-[#00ff88] break-all">{k.path}</div>
+                        <div class="font-mono text-sm text-[#e4e4e7] break-all">{k.path}</div>
                         {k.envKeys?.length ? (
                           <div class="mt-1 font-mono text-xs text-gray-500 break-all">
                             env: {k.envKeys.join(', ')}
@@ -140,7 +140,7 @@ const groupSlug = (name: string) =>
                       <div class="text-xs text-gray-500 md:text-right">
                         <div class="font-mono">{k.type}</div>
                         {k.defaultValue ? <div>default: <span class="font-mono">{k.defaultValue}</span></div> : <div>default: —</div>}
-                        {k.internal ? <div class="mt-1 text-[#5b9dff]">internal/basics</div> : null}
+                        {k.internal ? <div class="mt-1 text-[#94a3b8]">internal/basics</div> : null}
                       </div>
                     </div>
 
@@ -155,7 +155,7 @@ const groupSlug = (name: string) =>
                         <summary class="cursor-pointer text-sm text-gray-400 hover:text-white transition-colors">
                           Tooltip ({k.tooltipEnvKey})
                         </summary>
-                        <div class="mt-2 rounded-lg border border-[#222] bg-[#0f0f0f] p-4 text-sm text-gray-300">
+                        <div class="mt-2 rounded-lg border border-[#27272a] bg-[#18181b] p-4 text-sm text-gray-300">
                           <div class="tooltip-content text-sm leading-relaxed text-gray-300">Loading…</div>
                         </div>
                       </details>
@@ -175,17 +175,17 @@ const groupSlug = (name: string) =>
   <style is:global>
     .tooltip-content .tt-title { font-weight: 700; color: #fff; display: block; margin-bottom: 8px; }
     .tooltip-content .tt-strong { font-weight: 600; color: #fff; }
-    .tooltip-content .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; color: #5b9dff; }
+    .tooltip-content .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; color: #a1a1aa; }
     .tooltip-content .tt-links { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px; }
     .tooltip-content .tt-links a,
-    .tooltip-content a { color: #00ff88; text-decoration: underline; text-underline-offset: 2px; }
+    .tooltip-content a { color: #94a3b8; text-decoration: underline; text-underline-offset: 2px; }
     .tooltip-content .tt-links a:hover,
-    .tooltip-content a:hover { color: #00dd77; }
+    .tooltip-content a:hover { color: #fff; }
     .tooltip-content .tt-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-    .tooltip-content .tt-badge { display: inline-flex; align-items: center; border: 1px solid #222; border-radius: 999px; padding: 2px 8px; font-size: 12px; color: #cbd5e1; background: #0a0a0a; }
+    .tooltip-content .tt-badge { display: inline-flex; align-items: center; border: 1px solid #27272a; border-radius: 999px; padding: 2px 8px; font-size: 12px; color: #a1a1aa; background: #09090b; }
 
-    a.knob-chip[data-active="1"] { background: #00ff88; border-color: rgba(0, 255, 136, 0.6); color: #000; }
-    a.knob-chip[data-active="1"] .knob-chip-count { background: rgba(0, 0, 0, 0.12); border-color: rgba(0, 0, 0, 0.18); color: rgba(0, 0, 0, 0.7); }
+    a.knob-chip[data-active="1"] { background: #64748b; border-color: rgba(100, 116, 139, 0.6); color: #fff; }
+    a.knob-chip[data-active="1"] .knob-chip-count { background: rgba(24, 24, 27, 0.55); border-color: rgba(24, 24, 27, 0.65); color: rgba(228, 228, 231, 0.85); }
   </style>
 
   <script

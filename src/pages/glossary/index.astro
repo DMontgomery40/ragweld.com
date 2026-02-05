@@ -59,7 +59,7 @@ const badgeClass = (raw: string) => {
   canonical="https://ragweld.com/glossary/"
 >
   <Nav />
-  <main class="bg-[#0a0a0a] pt-28 pb-16">
+  <main class="bg-[#09090b] pt-28 pb-16">
     <div class="mx-auto max-w-6xl px-4">
       <a href="/" class="text-sm text-gray-400 hover:text-white transition-colors">← Home</a>
 
@@ -70,7 +70,7 @@ const badgeClass = (raw: string) => {
             Searchable reference for all RAG configuration parameters, their descriptions, and helpful links to documentation.
           </p>
           <p class="mt-2 text-gray-500 max-w-3xl">
-            Need the full raw registry view? <a href="/knobs/raw" class="text-[#00ff88] hover:text-[#00dd77] underline underline-offset-2">Open /knobs/raw</a>.
+            Need the full raw registry view? <a href="/knobs/raw" class="text-[#94a3b8] hover:text-[#64748b] underline underline-offset-2">Open /knobs/raw</a>.
           </p>
         </div>
 
@@ -92,7 +92,7 @@ const badgeClass = (raw: string) => {
             id="glossary-search"
             type="search"
             placeholder="Search parameters..."
-            class="w-full rounded-lg border border-[#222] bg-[#0f0f0f] px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-[#00ff88]/40"
+            class="w-full rounded-lg border border-[#27272a] bg-[#0f0f12] px-4 py-3 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-[#64748b]/30"
           />
         </div>
         <div class="text-sm text-gray-500">
@@ -107,10 +107,10 @@ const badgeClass = (raw: string) => {
             data-category-chip
             data-category="all"
             data-active="1"
-            class="glossary-chip inline-flex items-center gap-2 rounded-full border border-[#222] bg-[#0a0a0a] px-3 py-1.5 text-sm text-gray-300 hover:text-white hover:bg-[#111] transition-colors"
+            class="glossary-chip inline-flex items-center gap-2 rounded-full border border-[#27272a] bg-[#09090b] px-3 py-1.5 text-sm text-gray-300 hover:text-white hover:bg-[#18181b] transition-colors"
           >
             All
-            <span class="glossary-chip-count rounded-full border border-[#222] bg-[#0f0f0f] px-2 py-0.5 text-xs text-gray-400">
+            <span class="glossary-chip-count rounded-full border border-[#27272a] bg-[#18181b] px-2 py-0.5 text-xs text-gray-400">
               {categoryCounts.all}
             </span>
           </button>
@@ -125,11 +125,11 @@ const badgeClass = (raw: string) => {
                   data-category-chip
                   data-category={categoryId}
                   data-active="0"
-                  class="glossary-chip inline-flex items-center gap-2 rounded-full border border-[#222] bg-[#0a0a0a] px-3 py-1.5 text-sm text-gray-300 hover:text-white hover:bg-[#111] transition-colors"
+                  class="glossary-chip inline-flex items-center gap-2 rounded-full border border-[#27272a] bg-[#09090b] px-3 py-1.5 text-sm text-gray-300 hover:text-white hover:bg-[#18181b] transition-colors"
                 >
                   <span>{category.icon}</span>
                   <span>{category.title}</span>
-                  <span class="glossary-chip-count rounded-full border border-[#222] bg-[#0f0f0f] px-2 py-0.5 text-xs text-gray-400">
+                  <span class="glossary-chip-count rounded-full border border-[#27272a] bg-[#18181b] px-2 py-0.5 text-xs text-gray-400">
                     {count}
                   </span>
                 </button>
@@ -142,9 +142,9 @@ const badgeClass = (raw: string) => {
       <div class="mt-10">
         <div
           id="glossary-empty"
-          class="hidden rounded-xl border border-[#222] bg-[#0f0f0f] p-10 text-center text-gray-400"
+          class="hidden rounded-xl border border-[#27272a] bg-[#0f0f12] p-10 text-center text-gray-400"
         >
-          <div class="mx-auto mb-4 h-16 w-16 rounded-full border border-[#222] bg-[#0a0a0a] flex items-center justify-center">
+          <div class="mx-auto mb-4 h-16 w-16 rounded-full border border-[#27272a] bg-[#09090b] flex items-center justify-center">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
               <circle cx="11" cy="11" r="8" />
               <path d="m21 21-4.35-4.35" />
@@ -160,7 +160,7 @@ const badgeClass = (raw: string) => {
               const category = GLOSSARY_CATEGORIES[item.categoryId];
               return (
                 <article
-                  class="glossary-item rounded-xl border border-[#222] bg-[#0f0f0f] p-5 hover:border-[#00ff88]/50 transition-colors"
+                  class="glossary-item rounded-xl border border-[#27272a] bg-[#0f0f12] p-5 hover:border-[#64748b]/50 transition-colors"
                   data-category={item.categoryId}
                   data-search={item.searchText}
                 >
@@ -168,10 +168,10 @@ const badgeClass = (raw: string) => {
                     <div>
                       <div class="flex items-center gap-2">
                         <span class="text-xl">{category.icon}</span>
-                        <h2 class="text-sm font-bold text-[#00ff88] leading-snug">{item.term}</h2>
+                        <h2 class="text-sm font-bold text-[#e4e4e7] leading-snug">{item.term}</h2>
                       </div>
                     </div>
-                    <code class="text-[11px] text-[#5b9dff] bg-[#0a0a0a] border border-[#222] rounded px-2 py-1 font-mono whitespace-nowrap">
+                    <code class="text-[11px] text-[#a1a1aa] bg-[#18181b] border border-[#27272a] rounded px-2 py-1 font-mono whitespace-nowrap">
                       {item.key}
                     </code>
                   </div>
@@ -187,13 +187,13 @@ const badgeClass = (raw: string) => {
                   <p class="mt-3 text-sm text-gray-300 whitespace-pre-line leading-relaxed">{item.definition}</p>
 
                   {item.links?.length ? (
-                    <div class="mt-4 border-t border-[#222] pt-3 flex flex-col gap-2">
+                    <div class="mt-4 border-t border-[#27272a] pt-3 flex flex-col gap-2">
                       {item.links.map((l) => (
                         <a
                           href={l.href}
                           target="_blank"
                           rel="noopener noreferrer"
-                          class="inline-flex items-center gap-2 text-sm text-[#5b9dff] hover:text-[#00ff88] transition-colors"
+                          class="inline-flex items-center gap-2 text-sm text-[#94a3b8] hover:text-white transition-colors"
                         >
                           <span>{l.text}</span>
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -217,8 +217,8 @@ const badgeClass = (raw: string) => {
   <Footer />
 
   <style is:global>
-    button.glossary-chip[data-active="1"] { background: #00ff88; border-color: rgba(0, 255, 136, 0.6); color: #000; }
-    button.glossary-chip[data-active="1"] .glossary-chip-count { background: rgba(0, 0, 0, 0.12); border-color: rgba(0, 0, 0, 0.18); color: rgba(0, 0, 0, 0.7); }
+    button.glossary-chip[data-active="1"] { background: #64748b; border-color: rgba(100, 116, 139, 0.6); color: #fff; }
+    button.glossary-chip[data-active="1"] .glossary-chip-count { background: rgba(24, 24, 27, 0.55); border-color: rgba(24, 24, 27, 0.65); color: rgba(228, 228, 231, 0.85); }
 
     .glossary-badge {
       display: inline-flex;
@@ -229,16 +229,16 @@ const badgeClass = (raw: string) => {
       font-weight: 700;
       letter-spacing: 0.04em;
       text-transform: uppercase;
-      border: 1px solid #222;
-      background: #0a0a0a;
-      color: #cbd5e1;
+      border: 1px solid #27272a;
+      background: #09090b;
+      color: #a1a1aa;
     }
-    .glossary-badge.info { background: rgba(91, 157, 255, 0.15); color: #5b9dff; border-color: rgba(91, 157, 255, 0.3); }
-    .glossary-badge.warn, .glossary-badge.warning { background: rgba(255, 170, 0, 0.18); color: #ffaa00; border-color: rgba(255, 170, 0, 0.35); }
-    .glossary-badge.err { background: rgba(255, 107, 107, 0.18); color: #ff6b6b; border-color: rgba(255, 107, 107, 0.35); }
-    .glossary-badge.reindex { background: rgba(255, 107, 107, 0.15); color: #ff6b6b; border-color: rgba(255, 107, 107, 0.3); }
-    .glossary-badge.ok, .glossary-badge.success { background: rgba(0, 255, 136, 0.12); color: #00ff88; border-color: rgba(0, 255, 136, 0.25); }
-    .glossary-badge.security { background: rgba(255, 170, 0, 0.18); color: #ffaa00; border-color: rgba(255, 170, 0, 0.35); }
+    .glossary-badge.info { background: rgba(148, 163, 184, 0.14); color: #94a3b8; border-color: rgba(148, 163, 184, 0.28); }
+    .glossary-badge.warn, .glossary-badge.warning { background: rgba(251, 191, 36, 0.16); color: #fbbf24; border-color: rgba(251, 191, 36, 0.32); }
+    .glossary-badge.err { background: rgba(248, 113, 113, 0.16); color: #f87171; border-color: rgba(248, 113, 113, 0.32); }
+    .glossary-badge.reindex { background: rgba(248, 113, 113, 0.14); color: #f87171; border-color: rgba(248, 113, 113, 0.28); }
+    .glossary-badge.ok, .glossary-badge.success { background: rgba(74, 222, 128, 0.14); color: #4ade80; border-color: rgba(74, 222, 128, 0.28); }
+    .glossary-badge.security { background: rgba(251, 191, 36, 0.16); color: #fbbf24; border-color: rgba(251, 191, 36, 0.32); }
   </style>
 
   <script is:inline>
@@ -288,4 +288,3 @@ const badgeClass = (raw: string) => {
     applyFilters();
   </script>
 </BaseLayout>
-

@@ -41,6 +41,10 @@ const preserved = {
     path.join(targetDir, 'public', 'mockServiceWorker.js'),
     path.join(preserveDir, 'mockServiceWorker.js')
   ),
+  grafanaEmbed: copyFileIfExists(
+    path.join(targetDir, 'src', 'pages', 'GrafanaEmbed.tsx'),
+    path.join(preserveDir, 'GrafanaEmbed.tsx')
+  ),
   mswVersion: null,
 };
 
@@ -79,6 +83,9 @@ if (preserved.mocks) {
 }
 if (preserved.mockServiceWorker) {
   copyFileIfExists(path.join(preserveDir, 'mockServiceWorker.js'), path.join(targetDir, 'public', 'mockServiceWorker.js'));
+}
+if (preserved.grafanaEmbed) {
+  copyFileIfExists(path.join(preserveDir, 'GrafanaEmbed.tsx'), path.join(targetDir, 'src', 'pages', 'GrafanaEmbed.tsx'));
 }
 
 // Ensure MSW is available when mocks are present (keeps demo fallback working after sync)
@@ -134,6 +141,14 @@ try {
   execSync(`node "${patchScript}"`, { stdio: 'inherit' });
 } catch (e) {
   console.warn('Warning: failed to patch demo entrypoint:', e?.message || e);
+}
+
+// Patch Grafana embed route + iframe params (hosted demo does not run a real Grafana)
+try {
+  const patchScript = path.join(__dirname, 'patch-demo-grafana.cjs');
+  execSync(`node "${patchScript}"`, { stdio: 'inherit' });
+} catch (e) {
+  console.warn('Warning: failed to patch demo Grafana:', e?.message || e);
 }
 
 console.log('Done! Run npm --prefix vendor/demo install to install dependencies.');

@@ -16,6 +16,7 @@ import { RepositoryConfig } from '@/components/RAG/RepositoryConfig';
 import { EmbeddingMismatchWarning } from '@/components/ui/EmbeddingMismatchWarning';
 import { TooltipIcon } from '@/components/ui/TooltipIcon';
 import type { IndexRequest, IndexStats, IndexStatus, VocabPreviewResponse, VocabPreviewTerm } from '@/types/generated';
+import { describeEmbeddingProviderStrategy } from '@/utils/embeddingStrategy';
 
 type IndexingComponent = 'embedding' | 'chunking' | 'bm25' | 'enrichment';
 
@@ -81,6 +82,24 @@ export function IndexingSubtab() {
   const [bm25Tokenizer, setBm25Tokenizer] = useConfigField<string>('indexing.bm25_tokenizer', '');
   const [bm25StemmerLang, setBm25StemmerLang] = useConfigField<string>('indexing.bm25_stemmer_lang', '');
   const [bm25StopwordsLang, setBm25StopwordsLang] = useConfigField<string>('indexing.bm25_stopwords_lang', '');
+
+  const [parquetExtractMaxRows, setParquetExtractMaxRows] = useConfigField<number>('indexing.parquet_extract_max_rows', 5000);
+  const [parquetExtractMaxChars, setParquetExtractMaxChars] = useConfigField<number>(
+    'indexing.parquet_extract_max_chars',
+    2_000_000
+  );
+  const [parquetExtractMaxCellChars, setParquetExtractMaxCellChars] = useConfigField<number>(
+    'indexing.parquet_extract_max_cell_chars',
+    20_000
+  );
+  const [parquetExtractTextColumnsOnly, setParquetExtractTextColumnsOnly] = useConfigField<number>(
+    'indexing.parquet_extract_text_columns_only',
+    1
+  );
+  const [parquetExtractIncludeColumnNames, setParquetExtractIncludeColumnNames] = useConfigField<number>(
+    'indexing.parquet_extract_include_column_names',
+    1
+  );
 
   const [skipDense, setSkipDense] = useConfigField<number>('indexing.skip_dense', 0);
   const [graphIndexingEnabled, setGraphIndexingEnabled] = useConfigField<boolean>('graph_indexing.enabled', true);
@@ -715,6 +734,10 @@ export function IndexingSubtab() {
                       transition: 'all 0.2s ease',
                     }}
                   >
+                    {(() => {
+                      const s = describeEmbeddingProviderStrategy(String(provider));
+                      return (
+                        <>
                     <div
                       style={{
                         fontSize: '12px',
@@ -727,6 +750,10 @@ export function IndexingSubtab() {
                     >
                       {String(provider)}
                     </div>
+                          <div style={{ fontSize: '10px', color: 'var(--fg-muted)', marginTop: '4px' }}>{s.detail}</div>
+                        </>
+                      );
+                    })()}
                   </button>
                 ))}
               </div>
@@ -1489,6 +1516,88 @@ export function IndexingSubtab() {
                   </div>
                 )}
               </div>
+
+              <div
+                style={{
+                  padding: '16px',
+                  background: 'var(--bg-elev2)',
+                  borderRadius: '8px',
+                  border: '1px solid var(--line)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>Parquet ingestion (bounded)</div>
+                    <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '2px' }}>
+                      Prevents huge Parquet files from dominating memory/time during indexing.
+                    </div>
+                  </div>
+                  <TooltipIcon name="PARQUET_EXTRACT_MAX_ROWS" />
+                </div>
+
+                <div style={{ marginTop: '12px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px' }}>
+                  <div className="input-group">
+                    <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>
+                      Max rows
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={200000}
+                      value={parquetExtractMaxRows}
+                      onChange={(e) => setParquetExtractMaxRows(parseInt(e.target.value || '0', 10))}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div className="input-group">
+                    <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>
+                      Max chars
+                    </label>
+                    <input
+                      type="number"
+                      min={10_000}
+                      max={50_000_000}
+                      value={parquetExtractMaxChars}
+                      onChange={(e) => setParquetExtractMaxChars(parseInt(e.target.value || '0', 10))}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div className="input-group">
+                    <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>
+                      Max cell chars
+                    </label>
+                    <input
+                      type="number"
+                      min={100}
+                      max={200_000}
+                      value={parquetExtractMaxCellChars}
+                      onChange={(e) => setParquetExtractMaxCellChars(parseInt(e.target.value || '0', 10))}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ marginTop: '12px', display: 'flex', gap: '18px', flexWrap: 'wrap' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={parquetExtractTextColumnsOnly === 1}
+                      onChange={(e) => setParquetExtractTextColumnsOnly(e.target.checked ? 1 : 0)}
+                    />
+                    <span style={{ fontSize: '12px', color: 'var(--fg)' }}>Text columns only</span>
+                    <TooltipIcon name="PARQUET_EXTRACT_TEXT_COLUMNS_ONLY" />
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={parquetExtractIncludeColumnNames === 1}
+                      onChange={(e) => setParquetExtractIncludeColumnNames(e.target.checked ? 1 : 0)}
+                    />
+                    <span style={{ fontSize: '12px', color: 'var(--fg)' }}>Include column names</span>
+                    <TooltipIcon name="PARQUET_EXTRACT_INCLUDE_COLUMN_NAMES" />
+                  </label>
+                </div>
+              </div>
             </div>
 
             <details style={{ marginTop: '18px' }}>
@@ -1589,6 +1698,7 @@ export function IndexingSubtab() {
                   { label: 'Files', value: String(indexStats.total_files ?? 0), icon: '📄' },
                   { label: 'Chunks', value: String(indexStats.total_chunks ?? 0), icon: '📦' },
                   { label: 'Tokens', value: String(indexStats.total_tokens ?? 0), icon: '🔤' },
+                  { label: 'Embedding provider', value: indexStats.embedding_provider || '—', icon: '🏷️' },
                   { label: 'Embedding model', value: indexStats.embedding_model || '—', icon: '🔢' },
                   { label: 'Dimensions', value: indexStats.embedding_dimensions ? `${indexStats.embedding_dimensions}d` : '—', icon: '📐' },
                   { label: 'Last indexed', value: indexStats.last_indexed ? new Date(String(indexStats.last_indexed)).toLocaleString() : '—', icon: '🕒' },
@@ -1742,5 +1852,3 @@ export function IndexingSubtab() {
     </div>
   );
 }
-
-
