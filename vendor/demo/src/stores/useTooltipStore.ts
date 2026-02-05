@@ -166,7 +166,17 @@ export const useTooltipStore = create<TooltipStore>((set, get) => ({
         set({ tooltips, loading: false, initialized: true });
       })
       .catch((e) => {
-        console.error('[useTooltipStore] Failed to load glossary tooltips:', e);
+        // Tooltips are non-critical; failures can happen during rapid navigation/unload.
+        // Avoid console.error noise in production (Playwright + real users).
+        const name = e?.name ? String(e.name) : '';
+        const message = e instanceof Error ? e.message : String(e || '');
+        const aborted =
+          name === 'AbortError' ||
+          message.includes('Failed to fetch') ||
+          message.includes('net::ERR_ABORTED');
+        if (import.meta.env.DEV && !aborted) {
+          console.warn('[useTooltipStore] Failed to load glossary tooltips:', e);
+        }
         set({ loading: false, initialized: true });
       });
   },
