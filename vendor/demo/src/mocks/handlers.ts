@@ -321,12 +321,9 @@ export const handlersFull = [
   http.get('/api/docker/status', async () => {
     await delay(100);
     return HttpResponse.json({
-      status: 'running',
-      containers: {
-        postgres: { status: 'running', port: 5432 },
-        neo4j: { status: 'running', port: 7687 },
-        api: { status: 'running', port: 8012 },
-      },
+      running: true,
+      runtime: 'docker',
+      containers_count: 3,
     });
   }),
 
@@ -425,38 +422,129 @@ export const handlersFull = [
   }),
 
   // Indexing status endpoints
-  http.get('/api/index/status', async () => {
+  // Dashboard uses /api/index/status (DashboardIndexStatusResponse)
+  http.get('/api/index/status', async ({ request }) => {
     await delay(100);
+    const url = new URL(request.url);
+    const corpusId = url.searchParams.get('corpus_id') || 'faxbot';
+    const corpus = mockCorpora.find((c) => c.corpus_id === corpusId) || mockCorpora[0];
     return HttpResponse.json({
-      status: 'complete',
-      progress: 100,
-      chunks_indexed: 1847,
-      files_processed: 156,
-      last_updated: new Date().toISOString(),
+      lines: [
+        `corpus_id=${corpus?.corpus_id || corpusId}`,
+        `documents=${corpus?.file_count || 0}`,
+        `chunks=${corpus?.chunk_count || 0}`,
+      ],
+      metadata: {
+        corpus_id: corpus?.corpus_id || corpusId,
+        current_repo: corpus?.name || corpusId,
+        current_branch: corpus?.branch ?? null,
+        timestamp: new Date().toISOString(),
+        embedding_config: {
+          provider: 'openai',
+          model: 'text-embedding-3-large',
+          dimensions: 3072,
+          precision: 'float32',
+        },
+        costs: { total_tokens: 0, embedding_cost: null },
+        storage_breakdown: {
+          chunks_bytes: 0,
+          embeddings_bytes: 0,
+          pgvector_index_bytes: 0,
+          bm25_index_bytes: 0,
+          chunk_summaries_bytes: 0,
+          neo4j_store_bytes: 0,
+          postgres_total_bytes: 0,
+          total_storage_bytes: 0,
+        },
+        keywords_count: 0,
+        total_storage: 0,
+      },
+      running: false,
+      progress: null,
+      current_file: null,
     });
   }),
 
-  http.get('/api/index/status/:corpus_id', async ({ params }) => {
+  // Indexing hook uses /api/index/:corpusId/status (IndexStatus)
+  http.get('/api/index/:corpusId/status', async ({ params }) => {
     await delay(100);
-    const corpus = mockCorpora.find((c) => c.corpus_id === params.corpus_id);
+    const corpusId = String(params.corpusId || 'faxbot');
+    const corpus = mockCorpora.find((c) => c.corpus_id === corpusId) || mockCorpora[0];
     return HttpResponse.json({
-      corpus_id: params.corpus_id,
+      corpus_id: corpus?.corpus_id || corpusId,
       status: 'complete',
-      progress: 100,
-      chunks_indexed: corpus?.chunk_count || 0,
-      files_processed: corpus?.file_count || 0,
-      last_updated: corpus?.last_indexed || new Date().toISOString(),
+      progress: 1,
+      current_file: null,
+      error: null,
+      started_at: null,
+      completed_at: corpus?.last_indexed || new Date().toISOString(),
     });
   }),
 
-  http.get('/api/index/stats', async () => {
+  http.get('/api/index/:corpusId/stats', async ({ params }) => {
     await delay(100);
+    const corpusId = String(params.corpusId || 'faxbot');
+    const corpus = mockCorpora.find((c) => c.corpus_id === corpusId) || mockCorpora[0];
     return HttpResponse.json({
-      total_chunks: 3981,
-      total_files: 359,
-      total_corpora: 2,
-      embedding_model: 'text-embedding-3-small',
-      last_indexed: new Date().toISOString(),
+      corpus_id: corpus?.corpus_id || corpusId,
+      total_files: corpus?.file_count || 0,
+      total_chunks: corpus?.chunk_count || 0,
+      total_tokens: 0,
+      embedding_model: 'text-embedding-3-large',
+      embedding_dimensions: 3072,
+      last_indexed: corpus?.last_indexed || new Date().toISOString(),
+      file_breakdown: {},
+    });
+  }),
+
+  // Dashboard storage panels use /api/index/stats (DashboardIndexStatsResponse)
+  http.get('/api/index/stats', async ({ request }) => {
+    await delay(100);
+    const url = new URL(request.url);
+    const corpusId = url.searchParams.get('corpus_id') || 'faxbot';
+    return HttpResponse.json({
+      corpus_id: corpusId,
+      storage_breakdown: {
+        chunks_bytes: 0,
+        embeddings_bytes: 0,
+        pgvector_index_bytes: 0,
+        bm25_index_bytes: 0,
+        chunk_summaries_bytes: 0,
+        neo4j_store_bytes: 0,
+        postgres_total_bytes: 0,
+        total_storage_bytes: 0,
+      },
+      keywords_count: 0,
+      total_storage: 0,
+    });
+  }),
+
+  http.post('/api/index', async ({ request }) => {
+    await delay(100);
+    const body = (await request.json()) as any;
+    const corpusId = String(body?.corpus_id || '').trim() || 'faxbot';
+    return HttpResponse.json({
+      corpus_id: corpusId,
+      status: 'error',
+      progress: 0,
+      error: 'Indexing is disabled in demo mode.',
+      current_file: null,
+      started_at: null,
+      completed_at: null,
+    });
+  }),
+
+  http.delete('/api/index/:corpusId', async ({ params }) => {
+    await delay(100);
+    const corpusId = String(params.corpusId || 'faxbot');
+    return HttpResponse.json({
+      corpus_id: corpusId,
+      status: 'error',
+      progress: 0,
+      error: 'Delete is disabled in demo mode.',
+      current_file: null,
+      started_at: null,
+      completed_at: null,
     });
   }),
 
@@ -476,9 +564,10 @@ export const handlersFull = [
   http.get('/api/mcp/status', async () => {
     await delay(100);
     return HttpResponse.json({
-      status: 'demo',
-      servers: [],
-      message: 'MCP not available in demo mode',
+      python_http: { host: 'localhost', port: 8012, path: null, running: false },
+      node_http: null,
+      python_stdio_available: false,
+      details: ['MCP not available in demo mode'],
     });
   }),
 
@@ -501,9 +590,13 @@ export const handlersFull = [
   http.get('/api/dev/status', async () => {
     await delay(100);
     return HttpResponse.json({
-      mode: 'demo',
-      env: 'production',
-      version: '0.1.0-demo',
+      frontend_running: true,
+      backend_running: true,
+      frontend_port: 5173,
+      backend_port: 8012,
+      frontend_url: 'http://127.0.0.1:5173',
+      backend_url: 'http://127.0.0.1:8012',
+      details: ['Demo mode (mock backend)'],
     });
   }),
 
@@ -569,6 +662,22 @@ const passthroughHandlers = [
   http.get('/api/secrets/check', () => passthrough()),
   http.get('/api/chat/models', () => passthrough()),
   http.get('/api/chat/health', () => passthrough()),
+  // Status + dashboard (supported by the live demo backend).
+  http.get('/api/dev/status', () => passthrough()),
+  http.post('/api/dev/*', () => passthrough()),
+  http.get('/api/docker/status', () => passthrough()),
+  http.get('/api/docker/containers', () => passthrough()),
+  http.get('/api/docker/containers/all', () => passthrough()),
+  http.get('/api/mcp/status', () => passthrough()),
+  http.get('/api/index/status', () => passthrough()),
+  http.get('/api/index/stats', () => passthrough()),
+  http.get('/api/index/:corpusId/status', () => passthrough()),
+  http.get('/api/index/:corpusId/stats', () => passthrough()),
+  http.post('/api/index', () => passthrough()),
+  http.delete('/api/index/:corpusId', () => passthrough()),
+  http.get('/api/monitoring/top-queries', () => passthrough()),
+  http.get('/api/traces', () => passthrough()),
+  http.get('/api/traces/latest', () => passthrough()),
   http.post('/api/search', () => passthrough()),
   http.post('/api/chat', () => passthrough()),
   http.post('/api/chat/stream', () => passthrough()),
@@ -586,9 +695,27 @@ const LIVE_HANDLER_PATHS = new Set([
   '/api/config/reset',
   '/api/config/reload',
   '/api/chat/models',
+  '/api/chat/health',
+  '/api/secrets/check',
+  '/api/dev/status',
+  '/api/dev/*',
+  '/api/docker/status',
+  '/api/docker/containers',
+  '/api/docker/containers/all',
+  '/api/mcp/status',
+  '/api/index/status',
+  '/api/index/stats',
+  '/api/index/:corpusId/status',
+  '/api/index/:corpusId/stats',
+  '/api/index',
+  '/api/index/:corpusId',
+  '/api/monitoring/top-queries',
+  '/api/traces',
+  '/api/traces/latest',
   '/api/search',
   '/api/chat',
   '/api/chat/stream',
+  '/api/graph/*',
 ]);
 
 export const handlersPartial = [

@@ -214,6 +214,67 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function inferFrontendBackendPorts(event) {
+  try {
+    const u = new URL(event?.rawUrl || 'https://ragweld.local/');
+    const isHttps = u.protocol === 'https:';
+    const portRaw = String(u.port || '').trim();
+    const port = portRaw ? Number(portRaw) : (isHttps ? 443 : 80);
+    const safePort = Number.isFinite(port) && port > 0 ? port : (isHttps ? 443 : 80);
+    return { frontend_port: safePort, backend_port: safePort };
+  } catch {
+    return { frontend_port: 443, backend_port: 443 };
+  }
+}
+
+async function relationSize(sql, relName) {
+  try {
+    const r = await sql.query(
+      `SELECT COALESCE(pg_total_relation_size(to_regclass($1)), 0)::bigint AS n;`,
+      [String(relName)],
+    );
+    return Number(r.rows?.[0]?.n) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function indexCounts(sql, corpusId) {
+  const cid = String(corpusId || '').trim();
+  const chunks = await sql.query(`SELECT COUNT(*)::int AS n FROM chunks WHERE corpus_id = $1;`, [cid]);
+  const docs = await sql.query(
+    `SELECT COUNT(DISTINCT file_path)::int AS n FROM chunks WHERE corpus_id = $1;`,
+    [cid],
+  );
+  const ents = await sql.query(`SELECT COUNT(*)::int AS n FROM graph_entities WHERE corpus_id = $1;`, [cid]);
+  const edges = await sql.query(`SELECT COUNT(*)::int AS n FROM graph_edges WHERE corpus_id = $1;`, [cid]);
+  return {
+    chunks: Number(chunks.rows?.[0]?.n) || 0,
+    docs: Number(docs.rows?.[0]?.n) || 0,
+    entities: Number(ents.rows?.[0]?.n) || 0,
+    relationships: Number(edges.rows?.[0]?.n) || 0,
+  };
+}
+
+async function totalCounts(sql) {
+  const chunks = await sql.query(`SELECT COUNT(*)::int AS n FROM chunks;`);
+  const ents = await sql.query(`SELECT COUNT(*)::int AS n FROM graph_entities;`);
+  const edges = await sql.query(`SELECT COUNT(*)::int AS n FROM graph_edges;`);
+  return {
+    chunks: Number(chunks.rows?.[0]?.n) || 0,
+    entities: Number(ents.rows?.[0]?.n) || 0,
+    relationships: Number(edges.rows?.[0]?.n) || 0,
+  };
+}
+
+function allocateBytes(totalBytes, partCount, totalCount) {
+  if (!totalBytes || totalBytes <= 0) return 0;
+  const denom = Number(totalCount) || 0;
+  if (denom <= 0) return 0;
+  const frac = Math.max(0, Math.min(1, Number(partCount || 0) / denom));
+  return Math.round(totalBytes * frac);
+}
+
 function normalizeCorpusIds(input) {
   const ids = Array.isArray(input) ? input : [];
   return ids
@@ -932,6 +993,321 @@ export const handler = async (event) => {
   const url = new URL(event.rawUrl || `https://ragweld.local${path}`);
   const body = safeJsonParse(event.body || null);
   const scope = getCorpusScopeFromUrl(url);
+
+  // ---------------------------------------------------------------------------
+  // Hosted demo status endpoints (match TriBridRAG /web expectations)
+  // ---------------------------------------------------------------------------
+  if (method === 'GET' && path === '/api/dev/status') {
+    const ports = inferFrontendBackendPorts(event);
+    return json(200, {
+      frontend_running: true,
+      backend_running: true,
+      frontend_port: ports.frontend_port,
+      backend_port: ports.backend_port,
+      frontend_url: null,
+      backend_url: null,
+      details: ['Hosted demo (Netlify)', 'Dev stack controls are not applicable'],
+    });
+  }
+
+  if (
+    method === 'POST' &&
+    (path === '/api/dev/frontend/restart' ||
+      path === '/api/dev/backend/restart' ||
+      path === '/api/dev/stack/restart' ||
+      path === '/api/dev/backend/clear-cache-restart')
+  ) {
+    const ports = inferFrontendBackendPorts(event);
+    return json(200, {
+      success: false,
+      message: 'Not supported in the hosted demo (read-only).',
+      error: 'dev_stack_unavailable',
+      frontend_port: ports.frontend_port,
+      backend_port: ports.backend_port,
+    });
+  }
+
+  if (method === 'GET' && path === '/api/docker/status') {
+    return json(200, { running: false, runtime: 'unavailable', containers_count: 0 });
+  }
+
+  if (method === 'GET' && (path === '/api/docker/containers' || path === '/api/docker/containers/all')) {
+    return json(200, { containers: [] });
+  }
+
+  if (method === 'GET' && path === '/api/mcp/status') {
+    // Hosted demo doesn't run MCP servers; report deterministic status so UI doesn't show "unknown".
+    return json(200, {
+      python_http: { host: 'localhost', port: 8012, path: null, running: false },
+      node_http: null,
+      python_stdio_available: false,
+      details: ['MCP is available in the full local stack, not in the hosted demo.'],
+    });
+  }
+
+  // Newer UI expects these endpoints, even if empty.
+  if (method === 'GET' && path === '/api/traces') {
+    return json(200, { traces: [], total: 0 });
+  }
+  if (method === 'GET' && path === '/api/traces/latest') {
+    return json(200, null);
+  }
+  if (method === 'GET' && path === '/api/monitoring/top-queries') {
+    return json(200, { total_queries: 0, top: [] });
+  }
+
+  // Indexing endpoints (hosted demo is read-only; report status from existing DB).
+  if (method === 'POST' && path === '/api/index') {
+    const corpusId = String(body?.corpus_id || '').trim();
+    return json(200, {
+      corpus_id: corpusId || 'unknown',
+      status: 'error',
+      progress: 0,
+      error: 'Indexing is disabled in the hosted demo (read-only index).',
+      started_at: null,
+      completed_at: null,
+      current_file: null,
+    });
+  }
+
+  if (method === 'DELETE' && path.startsWith('/api/index/')) {
+    const corpusId = decodeURIComponent(path.slice('/api/index/'.length));
+    return json(200, {
+      corpus_id: corpusId || 'unknown',
+      status: 'error',
+      progress: 0,
+      error: 'Delete is disabled in the hosted demo.',
+      started_at: null,
+      completed_at: null,
+      current_file: null,
+    });
+  }
+
+  if (method === 'GET' && path.startsWith('/api/index/') && path.endsWith('/status')) {
+    const corpusId = decodeURIComponent(path.slice('/api/index/'.length, -'/status'.length));
+    const corpus = await getCorpus(sql, corpusId);
+    const lastIndexed = corpus?.last_indexed || null;
+    return json(200, {
+      corpus_id: corpusId,
+      status: lastIndexed ? 'complete' : 'idle',
+      progress: lastIndexed ? 1 : 0,
+      current_file: null,
+      error: null,
+      started_at: null,
+      completed_at: lastIndexed,
+    });
+  }
+
+  if (method === 'GET' && path.startsWith('/api/index/') && path.endsWith('/stats')) {
+    const corpusId = decodeURIComponent(path.slice('/api/index/'.length, -'/stats'.length));
+    const corpus = await getCorpus(sql, corpusId);
+    const lastIndexed = corpus?.last_indexed || null;
+    const counts = await indexCounts(sql, corpusId);
+    // Best-effort token estimate: ~4 chars/token.
+    let totalChars = 0;
+    try {
+      const r = await sql.query(`SELECT SUM(LENGTH(content))::bigint AS n FROM chunks WHERE corpus_id = $1;`, [corpusId]);
+      totalChars = Number(r.rows?.[0]?.n) || 0;
+    } catch {}
+    const totalTokens = Math.max(0, Math.round(totalChars / 4));
+    return json(200, {
+      corpus_id: corpusId,
+      total_files: counts.docs,
+      total_chunks: counts.chunks,
+      total_tokens: totalTokens,
+      embedding_model: 'text-embedding-3-large',
+      embedding_dimensions: 3072,
+      last_indexed: lastIndexed,
+      file_breakdown: {},
+    });
+  }
+
+  // Dashboard summary panel expects this schema (different from /api/index/:id/status).
+  if (method === 'GET' && path === '/api/index/status') {
+    const corpusId = String(url.searchParams.get('corpus_id') || '').trim() || 'faxbot';
+    const corpus = await getCorpus(sql, corpusId);
+    const counts = await indexCounts(sql, corpusId);
+    const totals = await totalCounts(sql);
+
+    // Best-effort token estimate: ~4 chars/token.
+    let totalChars = 0;
+    try {
+      const r = await sql.query(`SELECT SUM(LENGTH(content))::bigint AS n FROM chunks WHERE corpus_id = $1;`, [corpusId]);
+      totalChars = Number(r.rows?.[0]?.n) || 0;
+    } catch {}
+    const totalTokens = Math.max(0, Math.round(totalChars / 4));
+
+    let keywordsCount = 0;
+    try {
+      const r = await sql.query(`SELECT meta FROM corpora WHERE corpus_id = $1 LIMIT 1;`, [corpusId]);
+      const meta = r.rows?.[0]?.meta || {};
+      const kw = meta?.keywords;
+      keywordsCount = Array.isArray(kw) ? kw.length : 0;
+    } catch {}
+
+    const chunksTable = await relationSize(sql, 'chunks');
+    const entitiesTable = await relationSize(sql, 'graph_entities');
+    const edgesTable = await relationSize(sql, 'graph_edges');
+    const tsvIdx = await relationSize(sql, 'chunks_corpus_tsv_idx');
+
+    const chunksBytes = allocateBytes(chunksTable, counts.chunks, totals.chunks);
+    const embeddingsBytes = 0;
+    const pgvectorIdxBytes = 0;
+    const bm25IdxBytes = allocateBytes(tsvIdx, counts.chunks, totals.chunks);
+    const chunkSummariesBytes = 0;
+    const neo4jBytes = 0;
+    const entitiesBytes = allocateBytes(entitiesTable, counts.entities, totals.entities);
+    const edgesBytes = allocateBytes(edgesTable, counts.relationships, totals.relationships);
+
+    const postgresTotal =
+      chunksBytes +
+      embeddingsBytes +
+      pgvectorIdxBytes +
+      bm25IdxBytes +
+      chunkSummariesBytes +
+      entitiesBytes +
+      edgesBytes;
+
+    const displayName = String(corpus?.name || corpusId).trim() || corpusId;
+    const timestamp = nowIso();
+
+    return json(200, {
+      lines: [
+        `corpus_id=${corpusId}`,
+        `documents=${counts.docs}`,
+        `chunks=${counts.chunks}`,
+        `entities=${counts.entities}`,
+        `relationships=${counts.relationships}`,
+        `last_indexed=${corpus?.last_indexed || 'null'}`,
+      ],
+      metadata: {
+        corpus_id: corpusId,
+        current_repo: displayName,
+        current_branch: corpus?.branch ?? null,
+        timestamp,
+        embedding_config: {
+          provider: 'openai',
+          model: 'text-embedding-3-large',
+          dimensions: 3072,
+          precision: 'float32',
+        },
+        costs: {
+          total_tokens: totalTokens,
+          embedding_cost: null,
+        },
+        storage_breakdown: {
+          chunks_bytes: chunksBytes,
+          embeddings_bytes: embeddingsBytes,
+          pgvector_index_bytes: pgvectorIdxBytes,
+          bm25_index_bytes: bm25IdxBytes,
+          chunk_summaries_bytes: chunkSummariesBytes,
+          neo4j_store_bytes: neo4jBytes,
+          postgres_total_bytes: postgresTotal,
+          total_storage_bytes: postgresTotal,
+        },
+        keywords_count: keywordsCount,
+        total_storage: postgresTotal,
+      },
+      running: false,
+      progress: null,
+      current_file: null,
+    });
+  }
+
+  if (method === 'GET' && path === '/api/index/stats') {
+    const corpusId = String(url.searchParams.get('corpus_id') || '').trim() || 'faxbot';
+    const counts = await indexCounts(sql, corpusId);
+    const totals = await totalCounts(sql);
+    const chunksTable = await relationSize(sql, 'chunks');
+    const entitiesTable = await relationSize(sql, 'graph_entities');
+    const edgesTable = await relationSize(sql, 'graph_edges');
+    const tsvIdx = await relationSize(sql, 'chunks_corpus_tsv_idx');
+
+    const chunksBytes = allocateBytes(chunksTable, counts.chunks, totals.chunks);
+    const bm25IdxBytes = allocateBytes(tsvIdx, counts.chunks, totals.chunks);
+    const entitiesBytes = allocateBytes(entitiesTable, counts.entities, totals.entities);
+    const edgesBytes = allocateBytes(edgesTable, counts.relationships, totals.relationships);
+
+    const postgresTotal = chunksBytes + bm25IdxBytes + entitiesBytes + edgesBytes;
+
+    let keywordsCount = 0;
+    try {
+      const r = await sql.query(`SELECT meta FROM corpora WHERE corpus_id = $1 LIMIT 1;`, [corpusId]);
+      const meta = r.rows?.[0]?.meta || {};
+      const kw = meta?.keywords;
+      keywordsCount = Array.isArray(kw) ? kw.length : 0;
+    } catch {}
+
+    return json(200, {
+      corpus_id: corpusId,
+      storage_breakdown: {
+        chunks_bytes: chunksBytes,
+        embeddings_bytes: 0,
+        pgvector_index_bytes: 0,
+        bm25_index_bytes: bm25IdxBytes,
+        chunk_summaries_bytes: 0,
+        neo4j_store_bytes: 0,
+        postgres_total_bytes: postgresTotal,
+        total_storage_bytes: postgresTotal,
+      },
+      keywords_count: keywordsCount,
+      total_storage: postgresTotal,
+    });
+  }
+
+  // Keywords generation (best-effort). Stores keywords into corpora.meta.keywords for dashboard display.
+  if (method === 'POST' && path === '/api/keywords/generate') {
+    const corpusId = String(body?.corpus_id || '').trim() || 'faxbot';
+
+    // Pull a bounded sample to keep this fast on large indexes.
+    const sample = await sql.query(
+      `SELECT content
+       FROM chunks
+       WHERE corpus_id = $1
+       ORDER BY chunk_id ASC
+       LIMIT 300;`,
+      [corpusId],
+    );
+
+    const stop = new Set([
+      'this','that','with','from','have','will','your','them','they','then','there','here','when','where','what','which','while','into','over','under',
+      'return','const','function','class','async','await','import','export','default','true','false','null','undefined','self','super','public','private',
+      'string','number','boolean','object','array','dict','list','tuple','none','json','http','https','select','insert','update','delete','create','table',
+      'also','only','most','more','some','such','than','much','each','very','just','like','able','make','made','used','using','use','uses','into','onto',
+    ]);
+
+    const counts = new Map();
+    for (const row of sample.rows || []) {
+      const text = String(row?.content || '').toLowerCase();
+      const words = text
+        .replace(/[^a-z0-9_\\-\\s]/g, ' ')
+        .split(/\\s+/)
+        .map((w) => w.trim())
+        .filter((w) => w.length >= 4 && w.length <= 32);
+      for (const w of words) {
+        if (stop.has(w)) continue;
+        counts.set(w, (counts.get(w) || 0) + 1);
+      }
+    }
+
+    const keywords = Array.from(counts.entries())
+      .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]))
+      .slice(0, 32)
+      .map(([w]) => w);
+
+    try {
+      await sql.query(
+        `UPDATE corpora
+         SET meta = jsonb_set(meta, '{keywords}', to_jsonb($2::text[]), true)
+         WHERE corpus_id = $1;`,
+        [corpusId, keywords],
+      );
+    } catch {
+      // ignore (best-effort)
+    }
+
+    return json(200, { corpus_id: corpusId, keywords, count: keywords.length });
+  }
 
   if (path === '/api/config') {
     if (method === 'GET') {
