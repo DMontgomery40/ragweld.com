@@ -38,11 +38,7 @@ export function GrafanaDashboard() {
     const org = Number(orgId || 0);
     if (org > 0) params.set('orgId', String(org));
 
-        // If we're pointing at a same-origin route (e.g. /demo), render the iframe in "embed mode"
-    // so it doesn't include the TriBridRAG chrome inside itself.
-    if (base.startsWith('/')) params.set('embed', '1');
-
-return `${base}/d/${encodeURIComponent(uid)}/${encodeURIComponent(slug)}?${params.toString()}`;
+    return `${base}/d/${encodeURIComponent(uid)}/${encodeURIComponent(slug)}?${params.toString()}`;
   }, [baseUrl, dashboardUid, dashboardSlug, kiosk, orgId, refresh, timeRange]);
 
   if (!embedEnabled) {

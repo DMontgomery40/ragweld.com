@@ -1,6 +1,6 @@
 {
   "version": "1.1.0",
-  "generated_from": "web/src/modules/_archived/tooltips.js",
+  "generated_from": "data/glossary.json",
   "terms": [
     {
       "term": "Advanced Parameters",
@@ -1186,6 +1186,15 @@
       "badges": []
     },
     {
+      "term": "Dedup by",
+      "key": "DEDUP_BY",
+      "definition": "How to deduplicate fused retrieval results.<br><br><b>chunk_id</b>: keep distinct chunks (best default).<br><b>file_path</b>: at most one result per file (improves diversity but disables neighbor-window expansion).",
+      "category": "retrieval",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
       "term": "Dev Local Uvicorn",
       "key": "DEV_LOCAL_UVICORN",
       "definition": "Run Uvicorn ASGI server in direct Python mode instead of Docker for faster development iteration (1=yes, 0=no). Enables hot-reload and easier debugging. Production should use 0 (Docker).",
@@ -1537,6 +1546,24 @@
       "badges": []
     },
     {
+      "term": "Auto-set embedding dimensions",
+      "key": "EMBEDDING_AUTO_SET_DIMENSIONS",
+      "definition": "When enabled, the UI automatically sets <code>embedding_dim</code> to the dimension declared for the selected embedding model in <code>data/models.json</code>. This prevents subtle mismatches that can break indexing or retrieval.",
+      "category": "embedding",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "Embedding backend",
+      "key": "EMBEDDING_BACKEND",
+      "definition": "Selects which embedding implementation is used during indexing and retrieval.<br><br><b>deterministic</b>: produces stable fake embeddings for tests/offline development (no API calls). Retrieval works but quality is not representative.<br><b>provider</b>: uses the configured provider (OpenAI/Voyage/local/HF) to generate real embeddings.",
+      "category": "embedding",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
       "term": "Embedding Batch Size",
       "key": "EMBEDDING_BATCH_SIZE",
       "definition": "Number of text chunks to embed in a single API call or local batch during indexing. Higher values (50-200) speed up indexing by reducing API round trips but may hit rate limits or memory constraints. Lower values (10-30) are safer but slower. For OpenAI/Voyage APIs, batching significantly reduces total indexing time. For local models, larger batches improve GPU utilization but require more VRAM. If indexing fails with rate limit or OOM errors, reduce this value.\n\nRecommended: 100-150 for API providers, 16-32 for local models (GPU), 4-8 for CPU-only.",
@@ -1586,6 +1613,20 @@
       "badges": []
     },
     {
+      "term": "Contextual chunk embeddings",
+      "key": "EMBEDDING_CONTEXTUAL_CHUNK_EMBEDDINGS",
+      "definition": "Controls whether chunk embeddings incorporate surrounding context.<br><br><b>off</b>: embed each chunk independently (default).<br><b>prepend_context</b>: embed chunk text with a small amount of context prepended (cheaper, simple).<br><b>late_chunking_local_only</b>: embed the document once and pool per-chunk spans (experimental, local/HF only).",
+      "category": "embedding",
+      "related": [],
+      "links": [],
+      "badges": [
+        {
+          "text": "Advanced",
+          "class": "warn"
+        }
+      ]
+    },
+    {
       "term": "Embedding Dimension",
       "key": "EMBEDDING_DIM",
       "definition": "Vector dimensionality for MXBAI/local embedding models. Common sizes: 384 (fast, lower quality), 768 (balanced, recommended), 1024 (best quality, slower). Larger dimensions capture more semantic nuance but increase Qdrant storage requirements and query latency. Must match your embedding model's output size. Changing this requires full reindexing - vectors of different dimensions are incompatible.",
@@ -1612,6 +1653,29 @@
         },
         {
           "text": "Affects storage",
+          "class": "warn"
+        }
+      ]
+    },
+    {
+      "term": "Embedding input truncation",
+      "key": "EMBEDDING_INPUT_TRUNCATION",
+      "definition": "What to do when a single chunk exceeds the embedding model’s maximum input tokens.<br><br><b>truncate_end</b>: keep the start of the text (recommended for most docs).<br><b>truncate_middle</b>: keep the beginning and end (useful when both header + footer matter).<br><b>error</b>: fail fast (best for strict pipelines).",
+      "category": "embedding",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "Late chunking max doc tokens",
+      "key": "EMBEDDING_LATE_CHUNKING_MAX_DOC_TOKENS",
+      "definition": "Upper bound on document tokens processed for late chunking. Late chunking embeds a whole document (or long span) once, so this protects memory/latency. Only used when contextual embeddings are set to <code>late_chunking_local_only</code>.",
+      "category": "embedding",
+      "related": [],
+      "links": [],
+      "badges": [
+        {
+          "text": "Experimental",
           "class": "warn"
         }
       ]
@@ -1777,6 +1841,34 @@
       "badges": []
     },
     {
+      "term": "Embedding text prefix",
+      "key": "EMBEDDING_TEXT_PREFIX",
+      "definition": "Optional string prepended to every text before embedding. Use to add stable context (e.g., \"document: \") or to enforce consistent formatting across corpora. Changing this requires reindexing.",
+      "category": "embedding",
+      "related": [],
+      "links": [],
+      "badges": [
+        {
+          "text": "Requires reindex",
+          "class": "reindex"
+        }
+      ]
+    },
+    {
+      "term": "Embedding text suffix",
+      "key": "EMBEDDING_TEXT_SUFFIX",
+      "definition": "Optional string appended to every text before embedding. Useful for adding a delimiter or stable footer context. Changing this requires reindexing.",
+      "category": "embedding",
+      "related": [],
+      "links": [],
+      "badges": [
+        {
+          "text": "Requires reindex",
+          "class": "reindex"
+        }
+      ]
+    },
+    {
       "term": "Embedding Timeout",
       "key": "EMBEDDING_TIMEOUT",
       "definition": "Maximum seconds to wait for embedding API response. Similar to GEN_TIMEOUT but for embedding calls during indexing. Increase for large batches or slow networks. Typical: 30-60 seconds.",
@@ -1828,6 +1920,33 @@
           "class": "info"
         }
       ]
+    },
+    {
+      "term": "Emit chunk ordinal",
+      "key": "EMIT_CHUNK_ORDINAL",
+      "definition": "When enabled, chunking emits a stable <code>chunk_ordinal</code> into each chunk’s metadata (0-based). This enables neighbor-window retrieval, which pulls adjacent chunks around top hits for better coherence.",
+      "category": "chunking",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "Emit parent doc id",
+      "key": "EMIT_PARENT_DOC_ID",
+      "definition": "When enabled, chunking emits a stable <code>parent_doc_id</code> into each chunk’s metadata (usually the file path). This helps downstream retrieval and debugging group chunks by document.",
+      "category": "chunking",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "Enable MMR",
+      "key": "ENABLE_MMR",
+      "definition": "Maximal Marginal Relevance (MMR) reorders results to reduce redundancy. It trades off relevance vs diversity using <code>MMR_LAMBDA</code>.",
+      "category": "retrieval",
+      "related": [],
+      "links": [],
+      "badges": []
     },
     {
       "term": "Endpoint Call Frequency (calls/min)",
@@ -3271,17 +3390,12 @@
       ]
     },
     {
-      "term": "Max File Size (MB)",
+      "term": "Index max file size (MB)",
       "key": "INDEX_MAX_FILE_SIZE_MB",
-      "definition": "Skip files larger than this size (in megabytes) during indexing. Prevents huge generated files or vendor bundles from bloating the index. Typical: 1-5 MB for source code, higher for docs.",
-      "category": "infrastructure",
+      "definition": "Hard cap for indexing: files larger than this (in MB) are skipped before reading. For very large text dumps, raise this above the file size and enable streaming ingestion.",
+      "category": "chunking",
       "related": [],
-      "links": [
-        {
-          "text": "File Size Management",
-          "href": "https://en.wikipedia.org/wiki/File_size"
-        }
-      ],
+      "links": [],
       "badges": []
     },
     {
@@ -3633,6 +3747,24 @@
       "badges": []
     },
     {
+      "term": "Large file mode",
+      "key": "LARGE_FILE_MODE",
+      "definition": "How to ingest very large text files.<br><br><b>stream</b>: reads in bounded character blocks (avoids loading the full file into memory).<br><b>read_all</b>: reads the entire file into memory before chunking (simpler, but risky for huge files).",
+      "category": "chunking",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "Large file stream chunk chars",
+      "key": "LARGE_FILE_STREAM_CHUNK_CHARS",
+      "definition": "When <code>LARGE_FILE_MODE=stream</code>, this controls the approximate number of characters to read per block. Larger blocks reduce boundary artifacts but increase memory usage.",
+      "category": "chunking",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
       "term": "Latency P99 Threshold (s)",
       "key": "LATENCY_P99_THRESHOLD",
       "definition": "Threshold for alerting on tail latency: if the 99th percentile (p99) of request latency over the monitoring window exceeds this value, an alert fires.\n\np99 focuses on the slowest 1% of requests. It’s useful for catching “everything is fine… except when it isn’t” situations caused by cold starts, slow LLM calls, database contention, or network hiccups.\n\nChoose a threshold that matches your workload. If most requests include an LLM call, a higher p99 is reasonable; for retrieval-only endpoints, p99 should be much lower.\n\n• Units: seconds\n• Typical dev: 10–30s (looser)\n• Typical prod: 2–10s (depends on LLM usage)\n• Symptom too low: noisy alerts during normal LLM slowness\n• Symptom too high: tail latency regressions go unnoticed",
@@ -3954,6 +4086,33 @@
       "badges": []
     },
     {
+      "term": "Markdown include code fences",
+      "key": "MARKDOWN_INCLUDE_CODE_FENCES",
+      "definition": "When using markdown chunking, controls whether fenced code blocks are included in their surrounding section. Disable if code fences add noise for your corpus.",
+      "category": "chunking",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "Markdown max heading level",
+      "key": "MARKDOWN_MAX_HEADING_LEVEL",
+      "definition": "When using markdown chunking, split on headings up to this level (e.g., 1–4 splits on #, ##, ###, ####). Deeper headings are treated as normal text.",
+      "category": "chunking",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "Max chunks per file",
+      "key": "MAX_CHUNKS_PER_FILE",
+      "definition": "Limits how many chunks from the same file can appear in final results. This improves document diversity and reduces “one big file dominates” behavior.",
+      "category": "retrieval",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
       "term": "Max Chunk Tokens",
       "key": "MAX_CHUNK_TOKENS",
       "definition": "Maximum token length for a single code chunk during AST-based chunking. Limits chunk size to fit within embedding model token limits (typically 512-8192 tokens). Larger chunks (1000-2000 tokens) capture more context per chunk, reducing fragmentation of large functions/classes. Smaller chunks (200-512 tokens) create more granular units, improving precision but potentially losing broader context.\n\nSweet spot: 512-768 tokens for balanced chunking. This fits most embedding models (e.g., OpenAI text-embedding-3 supports up to 8191 tokens, but 512-768 is practical). Use 768-1024 for code with large docstrings or complex classes where context matters. Use 256-512 for tight memory budgets or when targeting very specific code snippets. AST chunking respects syntax, so chunks won't split mid-function even if size limit is hit (falls back to greedy chunking).\n\nToken count is approximate (based on whitespace heuristics, not exact tokenization). Actual embedding input may vary slightly. If a logical unit (function, class) exceeds MAX_CHUNK_TOKENS, the chunker splits it using GREEDY_FALLBACK_TARGET for sub-chunking while preserving structure where possible.\n\n• Range: 200-2000 tokens (typical)\n• Small: 256-512 tokens (precision, tight memory)\n• Balanced: 512-768 tokens (recommended, fits most models)\n• Large: 768-1024 tokens (more context, larger functions)\n• Very large: 1024-2000 tokens (maximum context, risky for some models)\n• Constraint: Must not exceed embedding model token limit",
@@ -4186,6 +4345,42 @@
       ]
     },
     {
+      "term": "Min score (graph)",
+      "key": "MIN_SCORE_GRAPH",
+      "definition": "Minimum score threshold for graph-leg candidates before fusion. Use this to drop very weak graph hits.",
+      "category": "retrieval",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "Min score (sparse)",
+      "key": "MIN_SCORE_SPARSE",
+      "definition": "Minimum score threshold for sparse-leg candidates before fusion. Use this to reduce noisy BM25/FTS matches.",
+      "category": "retrieval",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "Min score (vector)",
+      "key": "MIN_SCORE_VECTOR",
+      "definition": "Minimum score threshold for vector-leg candidates before fusion (in addition to vector similarity threshold). Use this to drop weak embedding matches.",
+      "category": "retrieval",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "MMR lambda (λ)",
+      "key": "MMR_LAMBDA",
+      "definition": "MMR relevance vs diversity tradeoff. <b>1.0</b> is pure relevance (no diversity), <b>0.0</b> is maximum diversity. Typical: 0.6–0.8.",
+      "category": "retrieval",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
       "term": "Multi‑Query Rewrites",
       "key": "MQ_REWRITES",
       "definition": "Number of query variations to generate for improved recall. Each rewrite searches independently, then results are fused and reranked. For example, query \"auth flow\" might expand to \"authentication flow\", \"login process\", \"user authentication\". Higher values (4-6) improve recall for vague questions like \"Where is X implemented?\" but increase API calls and latency. Start at 2-3 for general use.",
@@ -4250,6 +4445,15 @@
           "class": "info"
         }
       ]
+    },
+    {
+      "term": "Neighbor window",
+      "key": "NEIGHBOR_WINDOW",
+      "definition": "After selecting top hits, fetch adjacent chunks by <code>chunk_ordinal</code> within this window for better coherence (e.g., 1 pulls the previous and next chunk). Requires <code>EMIT_CHUNK_ORDINAL</code> at index time.",
+      "category": "retrieval",
+      "related": [],
+      "links": [],
+      "badges": []
     },
     {
       "term": "Neo4j Connection URI",
@@ -4447,6 +4651,15 @@
           "class": "info"
         }
       ]
+    },
+    {
+      "term": "Overlap tokens",
+      "key": "OVERLAP_TOKENS",
+      "definition": "Token overlap between adjacent chunks for token-based strategies. Overlap preserves context across boundaries but increases total tokens indexed.",
+      "category": "chunking",
+      "related": [],
+      "links": [],
+      "badges": []
     },
     {
       "term": "Parquet Include Column Names",
@@ -4706,6 +4919,15 @@
           "class": "warn"
         }
       ]
+    },
+    {
+      "term": "Recursive max depth",
+      "key": "RECURSIVE_MAX_DEPTH",
+      "definition": "Maximum recursion depth for separator-based (recursive) chunking. Higher values try more separators before falling back to hard token windows.",
+      "category": "chunking",
+      "related": [],
+      "links": [],
+      "badges": []
     },
     {
       "term": "Redis URL",
@@ -5322,6 +5544,24 @@
       ]
     },
     {
+      "term": "Separators (recursive chunking)",
+      "key": "SEPARATORS",
+      "definition": "Separator list used by recursive chunking, in priority order (e.g., <code>\\n\\n</code>, <code>\\n</code>, <code>. </code>, <code> </code>, <code>\"\"</code>). The empty separator is the hard fallback split.",
+      "category": "chunking",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "Separator keep",
+      "key": "SEPARATOR_KEEP",
+      "definition": "When splitting by separators in recursive chunking, controls whether the separator is kept as part of the left chunk (suffix), right chunk (prefix), or dropped (none).",
+      "category": "chunking",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
       "term": "Skip Dense Embeddings",
       "key": "SKIP_DENSE",
       "definition": "Skip vector embeddings and Qdrant during indexing to create a fast BM25-only (keyword-only) index. Useful for quick testing, CI/CD pipelines, or when Qdrant is unavailable. BM25-only mode is faster and uses less resources but loses semantic search capability - only exact keyword matches work. Not recommended for production use unless you have a purely keyword-based use case.",
@@ -5374,6 +5614,33 @@
           "class": "info"
         }
       ]
+    },
+    {
+      "term": "Sparse search engine",
+      "key": "SPARSE_SEARCH_ENGINE",
+      "definition": "Sparse retrieval engine.<br><br><b>postgres_fts</b>: built-in Postgres full text search (tsvector + tsquery).<br><b>pg_search_bm25</b>: ParadeDB pg_search BM25 index (requires extension). If unavailable, the system falls back to postgres_fts.",
+      "category": "retrieval",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "Sparse search highlight",
+      "key": "SPARSE_SEARCH_HIGHLIGHT",
+      "definition": "Experimental toggle for returning highlight snippets for sparse matches. Availability depends on the sparse engine and may be a no-op in some deployments.",
+      "category": "retrieval",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "Sparse search query mode",
+      "key": "SPARSE_SEARCH_QUERY_MODE",
+      "definition": "Controls how sparse queries are parsed.<br><br><b>plain</b>: simple keyword parsing.<br><b>phrase</b>: treat input as a phrase.<br><b>boolean</b>: allow boolean-style operators (implementation varies by engine).",
+      "category": "retrieval",
+      "related": [],
+      "links": [],
+      "badges": []
     },
     {
       "term": "Sparse Search Top-K",
@@ -5506,6 +5773,15 @@
       "badges": []
     },
     {
+      "term": "Target tokens",
+      "key": "TARGET_TOKENS",
+      "definition": "Target tokens per chunk for token-based chunking strategies. Smaller chunks improve retrieval granularity but increase index size.",
+      "category": "chunking",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
       "term": "GUI Theme",
       "key": "THEME_MODE",
       "definition": "Color theme for web GUI. Options: \"light\" (light mode), \"dark\" (dark mode), \"auto\" (follows system preference). Changes appearance immediately when toggled.",
@@ -5555,6 +5831,69 @@
           "class": "err"
         }
       ]
+    },
+    {
+      "term": "Tokenization estimate-only",
+      "key": "TOKENIZATION_ESTIMATE_ONLY",
+      "definition": "When enabled, token counts use a fast heuristic estimate instead of running a real tokenizer. Useful for huge corpora when exact token boundaries are not critical.",
+      "category": "chunking",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "Hugging Face tokenizer name",
+      "key": "TOKENIZATION_HF_TOKENIZER_NAME",
+      "definition": "Tokenizer name for <code>huggingface</code> tokenization strategy (e.g., <code>gpt2</code> or your embedding model’s tokenizer). Requires the backend to have Transformers installed.",
+      "category": "chunking",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "Tokenization lowercase",
+      "key": "TOKENIZATION_LOWERCASE",
+      "definition": "Lowercase text before tokenization and chunking. Keep off for legal dumps, names, or cases where capitalization carries meaning.",
+      "category": "chunking",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "Max tokens per chunk (hard)",
+      "key": "TOKENIZATION_MAX_TOKENS_PER_CHUNK_HARD",
+      "definition": "Hard ceiling on tokens per chunk used as a safety limit for chunking and embedding input budgeting. Prevents runaway chunk sizes.",
+      "category": "chunking",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "Tokenization normalize Unicode",
+      "key": "TOKENIZATION_NORMALIZE_UNICODE",
+      "definition": "Normalize Unicode to NFKC before tokenization. This improves consistency across visually similar characters and reduces tokenization surprises in messy corpora.",
+      "category": "chunking",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "Tokenization strategy",
+      "key": "TOKENIZATION_STRATEGY",
+      "definition": "Tokenizer implementation used for token-aware chunking and embedding input budgeting.<br><br><b>tiktoken</b>: fast + accurate for OpenAI-style tokenization (recommended).<br><b>whitespace</b>: simple word-ish tokens (fast, approximate).<br><b>huggingface</b>: uses a Hugging Face tokenizer (align with local embedding models).",
+      "category": "chunking",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "tiktoken encoding",
+      "key": "TOKENIZATION_TIKTOKEN_ENCODING",
+      "definition": "The tiktoken encoding name used for token counting, chunking, and input budgeting (e.g., <code>o200k_base</code>). If the encoding is unavailable, the backend falls back to a safe default.",
+      "category": "chunking",
+      "related": [],
+      "links": [],
+      "badges": []
     },
     {
       "term": "Top‑K Dense",

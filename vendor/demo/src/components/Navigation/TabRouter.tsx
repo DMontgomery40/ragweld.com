@@ -6,34 +6,11 @@ import { routes } from '../../config/routes';
 import { createElement, isValidElement } from 'react';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { SubtabErrorFallback } from '@/components/ui/SubtabErrorFallback';
-import GrafanaEmbed from '@/pages/GrafanaEmbed';
 
 export function TabRouter() {
   return (
     <Routes>
-        {/* Internal embed route used by the hosted /demo Grafana tab (same-origin iframe). */}
-  <Route
-    path="/d/:uid/:slug"
-    element={(
-      <ErrorBoundary
-        context="route:/d/:uid/:slug"
-        fallback={({ error, reset }) => (
-          <div className="p-6">
-            <SubtabErrorFallback
-              title="Grafana embed crashed"
-              context="Route path: /d/:uid/:slug"
-              error={error}
-              onRetry={reset}
-            />
-          </div>
-        )}
-      >
-        <GrafanaEmbed />
-      </ErrorBoundary>
-    )}
-  />
-
-<Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
       {routes.map(route => {
         // Handle both component types and elements
         const element = isValidElement(route.element)
@@ -65,4 +42,3 @@ export function TabRouter() {
     </Routes>
   );
 }
-
