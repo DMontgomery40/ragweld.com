@@ -69,7 +69,8 @@ It serves:
 
 ### Required env vars (Netlify)
 - Netlify DB injects `NETLIFY_DATABASE_URL` automatically.
-- Set `OPENAI_API_KEY` (or update the function to support Anthropic) for live chat.
+- Set `OPENROUTER_API_KEY` for live chat via OpenRouter (recommended).
+- Optional: set `OPENAI_API_KEY` to enable “cloud_direct” OpenAI models.
 
 ## Indexing (GitHub Actions → Neon)
 

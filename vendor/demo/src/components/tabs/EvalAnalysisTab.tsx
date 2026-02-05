@@ -362,7 +362,7 @@ export const EvalAnalysisTab: React.FC = () => {
               opacity: reposLoading ? 0.7 : 1,
             }}
           >
-            {repos.map((r) => (
+            {(Array.isArray(repos) ? repos : []).map((r) => (
               <option key={r.corpus_id} value={r.corpus_id}>
                 {r.name}
               </option>

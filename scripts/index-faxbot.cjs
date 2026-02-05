@@ -35,6 +35,54 @@ const DOCS_LIMIT = Number(process.env.FAXBOT_DOCS_LIMIT || '250');
 
 const MAX_FILE_BYTES = Number(process.env.RAGWELD_MAX_FILE_BYTES || String(2 * 1024 * 1024)); // 2MB
 
+// -----------------------------------------------------------------------------
+// Semantic KG (Concepts + Relations) — heuristic mode
+// -----------------------------------------------------------------------------
+// Enables extra concept nodes + RELATED_TO edges (and module->concept references)
+// derived from chunk text, with strict caps to avoid graph blowups.
+const SEMANTIC_KG_ENABLED = String(process.env.RAGWELD_SEMANTIC_KG || '0').trim() === '1';
+const SEMANTIC_KG_MODE = String(process.env.RAGWELD_SEMANTIC_KG_MODE || 'heuristic').trim().toLowerCase();
+const SEMANTIC_KG_MAX_CHUNKS = Math.max(0, Number(process.env.RAGWELD_SEMANTIC_KG_MAX_CHUNKS || '200') || 200);
+const SEMANTIC_KG_MAX_CONCEPTS_PER_CHUNK = Math.max(
+  0,
+  Number(process.env.RAGWELD_SEMANTIC_KG_MAX_CONCEPTS_PER_CHUNK || '8') || 8
+);
+
+const STOPWORDS = new Set([
+  'a','an','and','are','as','at','be','but','by','can','could','did','do','does','for','from','has','have','how','if','in','into',
+  'is','it','its','may','more','most','no','not','of','on','or','our','out','should','so','some','such','than','that','the','their',
+  'then','there','these','this','those','to','was','we','were','what','when','where','which','who','why','will','with','you','your',
+  // code-ish / noise
+  'true','false','null','none','undefined','return','async','await','import','export','default','const','let','var','class','function',
+  'def','self','new','type','types','string','number','bool','int','float','dict','list','set','tuple','object','json','http','https',
+  'get','post','put','patch','delete','select','insert','update','create','table',
+]);
+
+function canonicalConcept(s) {
+  return String(s || '').trim().toLowerCase();
+}
+
+function extractConceptsHeuristic(text, maxConcepts) {
+  const s = String(text || '');
+  const counts = new Map();
+  const re = /[A-Za-z][A-Za-z0-9_]{2,}/g;
+  let m;
+  while ((m = re.exec(s))) {
+    const raw = m[0];
+    const tok = canonicalConcept(raw);
+    if (!tok) continue;
+    if (tok.length < 3 || tok.length > 32) continue;
+    if (STOPWORDS.has(tok)) continue;
+    // Avoid near-pure numeric identifiers.
+    if (/^\d+$/.test(tok)) continue;
+    counts.set(tok, (counts.get(tok) || 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]))
+    .slice(0, Math.max(0, maxConcepts || 0))
+    .map(([tok]) => tok);
+}
+
 function sha1(input) {
   return crypto.createHash('sha1').update(String(input)).digest('hex');
 }
@@ -476,12 +524,46 @@ async function indexRepoCorpus(client) {
 
   const chunkRows = [];
   const entityRows = [];
-  const edgeRows = [];
 
   const seenEntities = new Set();
-  const seenEdges = new Set();
+
+  const edgeAgg = new Map();
+  const addEdge = (row) => {
+    const key = `${row.corpus_id}|${row.source_id}|${row.target_id}|${row.relation_type}`;
+    const existing = edgeAgg.get(key);
+    if (!existing) {
+      edgeAgg.set(key, {
+        ...row,
+        weight: row.weight == null ? 1.0 : row.weight,
+        properties: row.properties || {},
+      });
+      return;
+    }
+
+    // Default: keep first row (historical behavior) unless explicitly additive.
+    const additive = row.relation_type === 'related_to' || row.relation_type === 'references';
+    if (!additive) return;
+
+    existing.weight = (Number(existing.weight) || 0) + (Number(row.weight) || 1.0);
+    const props = existing.properties || {};
+    const next = row.properties || {};
+
+    const mergeList = (k, max = 25) => {
+      const a = Array.isArray(props[k]) ? props[k].map(String) : [];
+      const b = Array.isArray(next[k]) ? next[k].map(String) : [];
+      if (!a.length && !b.length) return;
+      const out = Array.from(new Set([...a, ...b])).slice(0, max);
+      props[k] = out;
+    };
+
+    mergeList('chunk_ids', 25);
+    mergeList('file_paths', 25);
+    existing.properties = props;
+  };
 
   const moduleEntityIdForFile = (rel) => `module:${rel}`;
+
+  let semanticChunksSeen = 0;
 
   for (const f of files) {
     const rel = f.rel;
@@ -517,6 +599,62 @@ async function indexRepoCorpus(client) {
         language,
         content: c.content,
       });
+
+      // Semantic KG: concept extraction + RELATED_TO edges (and module->concept references)
+      if (
+        SEMANTIC_KG_ENABLED &&
+        SEMANTIC_KG_MODE === 'heuristic' &&
+        semanticChunksSeen < SEMANTIC_KG_MAX_CHUNKS
+      ) {
+        semanticChunksSeen += 1;
+
+        const moduleId = moduleEntityIdForFile(rel);
+        const concepts = extractConceptsHeuristic(c.content, SEMANTIC_KG_MAX_CONCEPTS_PER_CHUNK);
+        if (concepts.length) {
+          const conceptIds = [];
+          for (const concept of concepts) {
+            const conceptId = `concept:${concept}`;
+            conceptIds.push(conceptId);
+
+            if (!seenEntities.has(conceptId)) {
+              seenEntities.add(conceptId);
+              entityRows.push({
+                corpus_id: 'faxbot',
+                entity_id: conceptId,
+                name: concept,
+                entity_type: 'concept',
+                file_path: null,
+                description: null,
+                properties: { kind: 'semantic_kg' },
+              });
+            }
+
+            addEdge({
+              corpus_id: 'faxbot',
+              source_id: moduleId,
+              target_id: conceptId,
+              relation_type: 'references',
+              weight: 1.0,
+              properties: { chunk_ids: [chunkId], file_paths: [rel] },
+            });
+          }
+
+          for (let i = 0; i < conceptIds.length; i++) {
+            for (let j = i + 1; j < conceptIds.length; j++) {
+              const a = conceptIds[i];
+              const b = conceptIds[j];
+              addEdge({
+                corpus_id: 'faxbot',
+                source_id: a,
+                target_id: b,
+                relation_type: 'related_to',
+                weight: 1.0,
+                properties: { chunk_ids: [chunkId], file_paths: [rel] },
+              });
+            }
+          }
+        }
+      }
     }
 
     // Graph entities (module + symbols)
@@ -556,18 +694,14 @@ async function indexRepoCorpus(client) {
             properties: {},
           });
         }
-        const edgeKey = `faxbot|${moduleId}|${id}|contains`;
-        if (!seenEdges.has(edgeKey)) {
-          seenEdges.add(edgeKey);
-          edgeRows.push({
-            corpus_id: 'faxbot',
-            source_id: moduleId,
-            target_id: id,
-            relation_type: 'contains',
-            weight: 1.0,
-            properties: {},
-          });
-        }
+        addEdge({
+          corpus_id: 'faxbot',
+          source_id: moduleId,
+          target_id: id,
+          relation_type: 'contains',
+          weight: 1.0,
+          properties: {},
+        });
       }
 
       for (const cls of symbols.classes) {
@@ -584,18 +718,14 @@ async function indexRepoCorpus(client) {
             properties: {},
           });
         }
-        const edgeKey = `faxbot|${moduleId}|${id}|contains`;
-        if (!seenEdges.has(edgeKey)) {
-          seenEdges.add(edgeKey);
-          edgeRows.push({
-            corpus_id: 'faxbot',
-            source_id: moduleId,
-            target_id: id,
-            relation_type: 'contains',
-            weight: 1.0,
-            properties: {},
-          });
-        }
+        addEdge({
+          corpus_id: 'faxbot',
+          source_id: moduleId,
+          target_id: id,
+          relation_type: 'contains',
+          weight: 1.0,
+          properties: {},
+        });
       }
 
       if (symbols.imports && symbols.imports.length) {
@@ -612,7 +742,7 @@ async function indexRepoCorpus(client) {
           if (typeof target === 'string') {
             targetId = moduleEntityIdForFile(target);
           } else if (target && target.concept) {
-            const name = String(target.concept).trim();
+            const name = canonicalConcept(target.concept);
             if (!name) continue;
             targetId = `concept:${name}`;
             if (!seenEntities.has(targetId)) {
@@ -631,22 +761,20 @@ async function indexRepoCorpus(client) {
             continue;
           }
 
-          const edgeKey = `faxbot|${moduleId}|${targetId}|imports`;
-          if (!seenEdges.has(edgeKey)) {
-            seenEdges.add(edgeKey);
-            edgeRows.push({
-              corpus_id: 'faxbot',
-              source_id: moduleId,
-              target_id: targetId,
-              relation_type: 'imports',
-              weight: 1.0,
-              properties: { spec },
-            });
-          }
+          addEdge({
+            corpus_id: 'faxbot',
+            source_id: moduleId,
+            target_id: targetId,
+            relation_type: 'imports',
+            weight: 1.0,
+            properties: { spec },
+          });
         }
       }
     }
   }
+
+  const edgeRows = Array.from(edgeAgg.values());
 
   console.log(`Repo chunks: ${chunkRows.length}`);
   console.log(`Graph entities: ${entityRows.length}`);
@@ -690,4 +818,3 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
-

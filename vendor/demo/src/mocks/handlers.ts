@@ -332,11 +332,91 @@ export const handlersFull = [
 
   http.get('/api/docker/containers', async () => {
     await delay(100);
-    return HttpResponse.json([
-      { name: 'tribrid-postgres', status: 'running', port: 5432 },
-      { name: 'tribrid-neo4j', status: 'running', port: 7687 },
-      { name: 'tribrid-api', status: 'running', port: 8012 },
-    ]);
+    return HttpResponse.json({
+      containers: [
+        {
+          id: 'tribrid-postgres-000000000000000000000000000000000000000000000000000000000000',
+          short_id: 'tribrid-postg',
+          name: 'tribrid-postgres',
+          image: 'postgres:16',
+          state: 'running',
+          status: 'Up 5 minutes',
+          ports: '5432->5432/tcp',
+          compose_project: 'tribrid',
+          compose_service: 'postgres',
+          tribrid_managed: true,
+        },
+        {
+          id: 'tribrid-neo4j-00000000000000000000000000000000000000000000000000000000000000',
+          short_id: 'tribrid-neo4',
+          name: 'tribrid-neo4j',
+          image: 'neo4j:5',
+          state: 'running',
+          status: 'Up 5 minutes',
+          ports: '7687->7687/tcp',
+          compose_project: 'tribrid',
+          compose_service: 'neo4j',
+          tribrid_managed: true,
+        },
+        {
+          id: 'tribrid-api-000000000000000000000000000000000000000000000000000000000000000',
+          short_id: 'tribrid-api',
+          name: 'tribrid-api',
+          image: 'tribrid/api:dev',
+          state: 'running',
+          status: 'Up 5 minutes',
+          ports: '8012->8012/tcp',
+          compose_project: 'tribrid',
+          compose_service: 'api',
+          tribrid_managed: true,
+        },
+      ],
+    });
+  }),
+
+  // Back-compat: newer frontend expects /api/docker/containers/all
+  http.get('/api/docker/containers/all', async () => {
+    await delay(100);
+    return HttpResponse.json({
+      containers: [
+        {
+          id: 'tribrid-postgres-000000000000000000000000000000000000000000000000000000000000',
+          short_id: 'tribrid-postg',
+          name: 'tribrid-postgres',
+          image: 'postgres:16',
+          state: 'running',
+          status: 'Up 5 minutes',
+          ports: '5432->5432/tcp',
+          compose_project: 'tribrid',
+          compose_service: 'postgres',
+          tribrid_managed: true,
+        },
+        {
+          id: 'tribrid-neo4j-00000000000000000000000000000000000000000000000000000000000000',
+          short_id: 'tribrid-neo4',
+          name: 'tribrid-neo4j',
+          image: 'neo4j:5',
+          state: 'running',
+          status: 'Up 5 minutes',
+          ports: '7687->7687/tcp',
+          compose_project: 'tribrid',
+          compose_service: 'neo4j',
+          tribrid_managed: true,
+        },
+        {
+          id: 'tribrid-api-000000000000000000000000000000000000000000000000000000000000000',
+          short_id: 'tribrid-api',
+          name: 'tribrid-api',
+          image: 'tribrid/api:dev',
+          state: 'running',
+          status: 'Up 5 minutes',
+          ports: '8012->8012/tcp',
+          compose_project: 'tribrid',
+          compose_service: 'api',
+          tribrid_managed: true,
+        },
+      ],
+    });
   }),
 
   http.get('/api/docker/redis/ping', async () => {
@@ -480,6 +560,15 @@ const passthroughHandlers = [
   http.get('/api/repos', () => passthrough()),
   http.get('/api/corpus', () => passthrough()),
   http.get('/api/corpus/:id', () => passthrough()),
+  // Config + provider metadata are supported by the ragweld demo backend.
+  http.get('/api/config', () => passthrough()),
+  http.put('/api/config', () => passthrough()),
+  http.patch('/api/config/:section', () => passthrough()),
+  http.post('/api/config/reset', () => passthrough()),
+  http.post('/api/config/reload', () => passthrough()),
+  http.get('/api/secrets/check', () => passthrough()),
+  http.get('/api/chat/models', () => passthrough()),
+  http.get('/api/chat/health', () => passthrough()),
   http.post('/api/search', () => passthrough()),
   http.post('/api/chat', () => passthrough()),
   http.post('/api/chat/stream', () => passthrough()),
@@ -492,6 +581,11 @@ const LIVE_HANDLER_PATHS = new Set([
   '/api/repos',
   '/api/corpus',
   '/api/corpus/:id',
+  '/api/config',
+  '/api/config/:section',
+  '/api/config/reset',
+  '/api/config/reload',
+  '/api/chat/models',
   '/api/search',
   '/api/chat',
   '/api/chat/stream',

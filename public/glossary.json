@@ -6181,11 +6181,8 @@
       "term": "Max tokens (response limit)",
       "key": "chat.max_tokens",
       "definition": "Hard cap on how long a single chat response is allowed to be. If the model hits this limit, the answer will end early even if it hasn’t finished the thought.<br><br>Raising this gives room for long explanations, multi-step reasoning, and larger code examples. It also tends to increase latency and cost, and it can crowd out retrieved context on smaller-context models.<br><br>If you notice answers cutting off mid-sentence or skipping important details, increase it. If you want snappier, shorter replies, decrease it.<br><br>Default: <span class=\"mono\">4096</span>. Range: <span class=\"mono\">100–16384</span>.",
-      "category": "generation",
-      "related": [
-        "Temperature (with retrieval)",
-        "Temperature (no retrieval)"
-      ],
+      "category": "general",
+      "related": [],
       "links": [],
       "badges": []
     },
@@ -6193,11 +6190,8 @@
       "term": "Vision enabled",
       "key": "chat.multimodal.vision_enabled",
       "definition": "Enables image attachments for chat messages. When on, the UI can send images along with your message to a vision-capable model.<br><br>If your selected model/provider doesn’t support vision, images won’t be useful (and may be ignored or rejected depending on the provider).<br><br>Images can increase latency and cost. If you don’t need screenshots/diagrams in chat, turning this off keeps the interface simpler.",
-      "category": "generation",
-      "related": [
-        "System prompt: Direct (no context)",
-        "Max tokens (response limit)"
-      ],
+      "category": "general",
+      "related": [],
       "links": [],
       "badges": []
     },
@@ -6205,12 +6199,8 @@
       "term": "Auto-index conversations",
       "key": "chat.recall.auto_index",
       "definition": "<span class=\"tt-strong\">Recall</span> is TriBridRAG’s persistent chat memory. It stores your conversation as a special internal corpus (typically <span class=\"mono\">recall_default</span>) so it can be searched like any other source.<br><br>When auto-indexing is enabled, TriBridRAG schedules a background indexing pass after each completed exchange so the latest messages become searchable Recall memory.<br><br>Indexing only runs when Recall is actually selected in Sources — that keeps Recall “opt-in” at the moment you’re using it.<br><br>If you disable this, existing Recall memory can still be queried, but new messages won’t be added automatically.",
-      "category": "retrieval",
-      "related": [
-        "Index delay (seconds)",
-        "Enable smart gating (Recall)",
-        "Recall intensity (next message)"
-      ],
+      "category": "general",
+      "related": [],
       "links": [],
       "badges": []
     },
@@ -6218,10 +6208,8 @@
       "term": "Index delay (seconds)",
       "key": "chat.recall.index_delay_seconds",
       "definition": "How long TriBridRAG waits before running the background Recall indexing job after a response completes.<br><br>A shorter delay makes it more likely that Recall can immediately “remember” the last exchange if your next message references it. A longer delay smooths out background work if you’re sending messages quickly (less embedding/DB churn right away).<br><br>Default: <span class=\"mono\">5</span>. Range: <span class=\"mono\">1–60</span>.",
-      "category": "retrieval",
-      "related": [
-        "Auto-index conversations"
-      ],
+      "category": "general",
+      "related": [],
       "links": [],
       "badges": []
     },
@@ -6231,8 +6219,8 @@
       "definition": "When enabled, the gate escalates to <span class=\"tt-strong\">deep</span> mode if your message explicitly references earlier conversation (“we discussed…”, “you mentioned…”, “last time…”, “remember when…”).<br><br>This is where Recall tends to pay for itself: you’re telling the assistant that the answer depends on prior context, so pulling more history is usually worth it.",
       "category": "retrieval",
       "related": [
-        "Deep top_k",
-        "Deep recency weight"
+        "Default Recall Intensity",
+        "Deep top_k"
       ],
       "links": [],
       "badges": []
@@ -6243,7 +6231,8 @@
       "definition": "Recency bias for deep Recall. Deep mode is often about retrieving decisions and conclusions from the recent thread, so this usually runs higher than the standard value.<br><br>Raise it if “what did we decide?” should strongly prefer the latest discussion. Lower it if deep mode should reach further back in time and not over-favor the last few turns.<br><br>Default: <span class=\"mono\">0.5</span>. Range: <span class=\"mono\">0.0–1.0</span>.",
       "category": "retrieval",
       "related": [
-        "Deep top_k"
+        "Deep top_k",
+        "Standard recency weight"
       ],
       "links": [],
       "badges": []
@@ -6254,7 +6243,8 @@
       "definition": "How many Recall snippets to include in <span class=\"tt-strong\">deep</span> mode.<br><br>Deep is designed for “look back” questions. Larger values help capture multi-message decisions and longer threads, but they can also crowd out code context if you’re using RAG at the same time.<br><br>Default: <span class=\"mono\">10</span>. Range: <span class=\"mono\">3–30</span>.",
       "category": "retrieval",
       "related": [
-        "Deep recency weight"
+        "Deep recency weight",
+        "Standard top_k"
       ],
       "links": [],
       "badges": []
@@ -6265,8 +6255,8 @@
       "definition": "The “no strong signal” fallback. When the gate doesn’t see a clear reason to skip/light/deep, it uses this intensity.<br><br>Choosing a default is mostly about what you want normal chat to feel like:<br>• <span class=\"tt-strong\">standard</span> is the balanced baseline<br>• <span class=\"tt-strong\">light</span> keeps Recall very cheap and avoids over-injecting history<br>• <span class=\"tt-strong\">deep</span> makes Recall more present, which can help long-running collaborations but can also flood the prompt with old context<br>• <span class=\"tt-strong\">skip</span> effectively disables Recall unless you manually override per message<br><br>This only affects Recall. Code corpora retrieval is unchanged.",
       "category": "retrieval",
       "related": [
-        "Enable smart gating (Recall)",
-        "Recall intensity (next message)"
+        "Recall Gate Enabled",
+        "Deep on Explicit Reference"
       ],
       "links": [],
       "badges": []
@@ -6277,9 +6267,8 @@
       "definition": "Recall is powerful, but querying it on every single message can add noise and slow chat down. Smart gating makes Recall <span class=\"tt-strong\">message-aware</span>: it looks at cheap signals (patterns + approximate word count) and decides when Recall is worth querying.<br><br>When enabled, each message gets an intensity:<br>• <span class=\"tt-strong\">skip</span>: don’t query Recall at all<br>• <span class=\"tt-strong\">light</span>: quick check using sparse-only Recall + small <span class=\"mono\">top_k</span><br>• <span class=\"tt-strong\">standard</span>: normal Recall query with balanced <span class=\"mono\">top_k</span> and recency bias<br>• <span class=\"tt-strong\">deep</span>: larger <span class=\"mono\">top_k</span> and stronger recency bias for “what did we decide?” moments<br><br>This gate only affects <span class=\"tt-strong\">Recall</span>. Any non-Recall corpora you’ve checked are still queried as usual.<br><br>If you turn gating off, TriBridRAG stops making per-message decisions and will query Recall whenever it’s checked, using the default intensity.",
       "category": "retrieval",
       "related": [
-        "Default intensity",
-        "Recall intensity (next message)",
-        "Show decision in status bar"
+        "Default Recall Intensity",
+        "Skip Greetings (Recall Gate)"
       ],
       "links": [],
       "badges": []
@@ -6290,9 +6279,8 @@
       "definition": "Enables a cheap Recall check for short questions that look like follow-ups (for example: “what about caching?” right after a discussion).<br><br>Light mode is intentionally minimal: it uses sparse-only Recall and a small <span class=\"mono\">top_k</span>, which is often enough to surface the one or two relevant prior messages without flooding the prompt.",
       "category": "retrieval",
       "related": [
-        "Max short-statement tokens",
         "Light top_k",
-        "Default intensity"
+        "Skip Standalone Questions (Recall Gate)"
       ],
       "links": [],
       "badges": []
@@ -6303,7 +6291,8 @@
       "definition": "How many Recall snippets to include when intensity is <span class=\"tt-strong\">light</span>.<br><br>Light is meant to be a quick sanity check. Keeping this small avoids pulling too much history into the prompt. If light mode feels like it’s “almost” finding the right memory, increasing this a bit is usually the first adjustment to try.<br><br>Default: <span class=\"mono\">3</span>. Range: <span class=\"mono\">1–10</span>.",
       "category": "retrieval",
       "related": [
-        "Light for short questions"
+        "Light for Short Questions",
+        "Standard top_k"
       ],
       "links": [],
       "badges": []
@@ -6314,8 +6303,8 @@
       "definition": "Shows the selected Recall intensity and a short human-readable reason in the chat status bar after each message (for example: “Greeting — skipping Recall”).<br><br>Useful when you’re tuning Recall behavior or trying to understand why a particular answer did (or didn’t) use chat memory. This does not change retrieval; it only makes the decision visible.",
       "category": "ui",
       "related": [
-        "Enable smart gating (Recall)",
-        "Recall intensity (next message)"
+        "Recall Gate Enabled",
+        "Show Raw Signals"
       ],
       "links": [],
       "badges": []
@@ -6326,7 +6315,8 @@
       "definition": "Adds a “signals” expander in the chat debug footer that dumps the full RecallPlan JSON (signals, decision, and overrides).<br><br>This is meant for tuning and debugging. It’s intentionally noisy and will expose internal heuristics like approximate token count and pattern matches.",
       "category": "ui",
       "related": [
-        "Show decision in status bar"
+        "Show Gate Decision",
+        "Recall Gate Enabled"
       ],
       "links": [],
       "badges": []
@@ -6337,7 +6327,8 @@
       "definition": "Skips Recall for “pure conversation glue” like “hi”, “thanks”, “ok”, “got it”, and quick farewells. These almost never need memory, and pulling Recall for them tends to add irrelevant snippets.<br><br>If your workflow uses very short messages as meaningful follow-ups (for example, you often say “yes” to confirm a technical plan and expect the assistant to remember it), you may prefer to disable this so Recall stays in play more often.",
       "category": "retrieval",
       "related": [
-        "Enable smart gating (Recall)"
+        "Recall Gate Enabled",
+        "Skip Max Tokens (Recall Gate)"
       ],
       "links": [],
       "badges": []
@@ -6348,8 +6339,8 @@
       "definition": "A small threshold used by the gate to decide when a very short <span class=\"tt-strong\">statement</span> should trigger a light Recall check.<br><br>Messages at or under this length (approximate word-count) and not phrased as questions are often follow-ups like “do that”, “use the second one”, “ship it”. A light Recall check can help the assistant stay aligned with what you were just discussing without doing a heavy memory pull.<br><br>Lower values make fewer short statements trigger Recall. Higher values make the gate more eager to do a light check.<br><br>Default: <span class=\"mono\">4</span>. Range: <span class=\"mono\">1–20</span>.",
       "category": "retrieval",
       "related": [
-        "Light for short questions",
-        "Light top_k"
+        "Skip Greetings (Recall Gate)",
+        "Light for Short Questions"
       ],
       "links": [],
       "badges": []
@@ -6360,7 +6351,8 @@
       "definition": "Skips Recall for questions that usually make sense without chat history (patterns like “what is…”, “how does…”, “explain…”, “where is…”). This keeps Recall from injecting unrelated older context into otherwise clean questions.<br><br>If your conversations frequently build on prior decisions and even “basic-looking” questions depend on earlier context, disable this and rely on intensity controls to manage how much Recall is pulled in.",
       "category": "retrieval",
       "related": [
-        "Enable smart gating (Recall)"
+        "Recall Gate Enabled",
+        "Deep on Explicit Reference"
       ],
       "links": [],
       "badges": []
@@ -6371,8 +6363,8 @@
       "definition": "When you already have one or more code corpora checked, you’re asking for repo-grounded answers. In that situation, Recall can sometimes crowd out code context or mix in old conversation threads.<br><br>Enabling this makes Recall “all-or-nothing”: if any non-Recall corpora are checked, Recall is skipped entirely. Leaving it off allows RAG + Recall to cooperate (code + prior decisions) when that’s useful.",
       "category": "retrieval",
       "related": [
-        "Enable smart gating (Recall)",
-        "System prompt: RAG + Recall"
+        "Recall Gate Enabled",
+        "Skip Standalone Questions (Recall Gate)"
       ],
       "links": [],
       "badges": []
@@ -6383,6 +6375,7 @@
       "definition": "Balances “most similar” vs “most recent” when ranking Recall results.<br><br>At <span class=\"mono\">0.0</span>, Recall ranking is purely similarity-based. As you raise it, newer messages get a stronger boost, which often matches how people reference conversations (“the thing we just talked about”).<br><br>If Recall keeps surfacing old-but-related snippets when you meant “the latest decision”, raise this. If it keeps over-prioritizing recent noise, lower it.<br><br>Default: <span class=\"mono\">0.3</span>. Range: <span class=\"mono\">0.0–1.0</span>.",
       "category": "retrieval",
       "related": [
+        "Deep recency weight",
         "Standard top_k"
       ],
       "links": [],
@@ -6395,7 +6388,7 @@
       "category": "retrieval",
       "related": [
         "Standard recency weight",
-        "Default intensity"
+        "Light top_k"
       ],
       "links": [],
       "badges": []
@@ -6404,11 +6397,32 @@
       "term": "System prompt (base)",
       "key": "chat.system_prompt_base",
       "definition": "This is the <span class=\"tt-strong\">legacy</span> system prompt path. TriBridRAG normally chooses one of the four “state” prompts (Direct / RAG / Recall / RAG+Recall) based on what context is actually present for the message.<br><br>If the selected state prompt is empty, TriBridRAG falls back to composing a prompt as:<br>• base prompt (this field)<br>• plus an internal Recall suffix when Recall context is present<br>• plus an internal RAG suffix when code context is present<br><br>Use the base prompt for the stable “personality” and hard constraints you always want. Keep it tight: every extra paragraph here competes with retrieved context and with the answer length.<br><br>If you want full control, fill in all four state prompts. If you want the old behavior for a specific state, leave that state prompt blank so this base+suffix fallback runs.",
+      "category": "general",
+      "related": [],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "System prompt suffix: Recall (legacy)",
+      "key": "chat.system_prompt_recall_suffix",
+      "definition": "This text is appended to the legacy base prompt <span class=\"tt-strong\">only when Recall context is present</span> and the selected four-state system prompt is blank (fallback mode). It’s meant to remind the model that conversation history snippets are available in <span class=\"mono\">&lt;recall_context&gt;...&lt;/recall_context&gt;</span> and to use them carefully.<br><br>Most users should prefer editing the four state prompts instead (Direct / RAG / Recall / RAG+Recall) and keep this suffix minimal.",
       "category": "generation",
       "related": [
-        "System prompt: Direct (no context)",
-        "System prompt: RAG only",
+        "System prompt (base)",
         "System prompt: Recall only",
+        "System prompt: RAG + Recall"
+      ],
+      "links": [],
+      "badges": []
+    },
+    {
+      "term": "System prompt suffix: RAG (legacy)",
+      "key": "chat.system_prompt_rag_suffix",
+      "definition": "This text is appended to the legacy base prompt <span class=\"tt-strong\">only when code retrieval (RAG) context is present</span> and the selected four-state system prompt is blank (fallback mode). It’s meant to keep the model grounded in retrieved code snippets and to cite file paths + line ranges.<br><br>Most users should prefer editing the four state prompts instead (Direct / RAG / Recall / RAG+Recall) and keep this suffix minimal.",
+      "category": "generation",
+      "related": [
+        "System prompt (base)",
+        "System prompt: RAG only",
         "System prompt: RAG + Recall"
       ],
       "links": [],
@@ -6420,9 +6434,9 @@
       "definition": "Used when the message is answered <span class=\"tt-strong\">without any retrieval context</span> — no code corpora results and no Recall snippets.<br><br>In this state the model only sees the user’s message, so this prompt should set expectations clearly: it can explain general concepts, but it should not pretend it has looked at the user’s repo unless sources are enabled.<br><br>A good Direct prompt usually encourages a tight feedback loop: if the user asks about “our code”, it should suggest enabling corpora (and/or Recall) or asking for a file path so the answer can be grounded.<br><br>If this prompt is blank, TriBridRAG falls back to the base prompt composition for this state.",
       "category": "generation",
       "related": [
-        "System prompt (base)",
-        "Temperature (no retrieval)",
-        "Temperature (with retrieval)"
+        "Chat System Prompt (RAG Only)",
+        "Chat System Prompt (Recall Only)",
+        "Chat System Prompt (RAG + Recall)"
       ],
       "links": [],
       "badges": []
@@ -6433,9 +6447,8 @@
       "definition": "Used when code corpora are queried and retrieval returns results. The model receives code snippets inside <span class=\"mono\">&lt;rag_context&gt;...&lt;/rag_context&gt;</span>.<br><br>Each snippet is labeled with a file path and line range (for example: <span class=\"mono\">server/auth/middleware.py:45-78</span>) and followed by a fenced code block.<br><br>This prompt should keep the model disciplined:<br>• treat retrieved code as the source of truth<br>• cite file paths and line ranges when making claims<br>• say what’s missing when the snippets don’t fully answer the question<br>• avoid inventing code that isn’t shown<br><br>If blank, TriBridRAG falls back to base prompt composition for this state.",
       "category": "generation",
       "related": [
-        "System prompt (base)",
-        "System prompt: RAG + Recall",
-        "Temperature (with retrieval)"
+        "Chat System Prompt (Direct)",
+        "Chat System Prompt (RAG + Recall)"
       ],
       "links": [],
       "badges": []
@@ -6446,9 +6459,9 @@
       "definition": "Used when both code context and Recall context are present. The model receives:<br>• <span class=\"mono\">&lt;rag_context&gt;...&lt;/rag_context&gt;</span> (code snippets)<br>• <span class=\"mono\">&lt;recall_context&gt;...&lt;/recall_context&gt;</span> (prior conversation)<br><br>This is the “ongoing collaboration” state: code context anchors what the repo does today, while Recall brings in decisions, preferences, and prior conclusions.<br><br>If the two disagree, the safest behavior is to acknowledge the mismatch and prioritize the retrieved code for implementation reality, while still honoring the user’s stated intent from Recall.<br><br>If blank, TriBridRAG falls back to base prompt composition for this state.",
       "category": "generation",
       "related": [
-        "System prompt (base)",
-        "System prompt: RAG only",
-        "System prompt: Recall only"
+        "Chat System Prompt (RAG Only)",
+        "Chat System Prompt (Recall Only)",
+        "Recall Gate Enabled"
       ],
       "links": [],
       "badges": []
@@ -6459,9 +6472,8 @@
       "definition": "Used when Recall (chat memory) is queried and returns results, but no code corpora results are present. The model receives conversation snippets inside <span class=\"mono\">&lt;recall_context&gt;...&lt;/recall_context&gt;</span>.<br><br>Recall is search-based: it returns the most relevant fragments, not a perfect transcript. This prompt should encourage the model to use the snippets as shared context while staying careful about uncertainty and missing history.<br><br>If blank, TriBridRAG falls back to base prompt composition for this state.",
       "category": "generation",
       "related": [
-        "System prompt (base)",
-        "System prompt: RAG + Recall",
-        "Recall intensity (next message)"
+        "Chat System Prompt (Direct)",
+        "Recall Gate Enabled"
       ],
       "links": [],
       "badges": []
@@ -6470,11 +6482,8 @@
       "term": "Temperature (with retrieval)",
       "key": "chat.temperature",
       "definition": "Controls how “random” generation is when <span class=\"tt-strong\">any sources are enabled</span> (RAG corpora and/or Recall). Retrieval decides what context is shown; temperature decides how strictly the model sticks to a single best continuation.<br><br>Lower values tend to produce more consistent, literal, citation-friendly answers. Higher values can be useful for exploring options, but they also make it easier for the model to drift away from the retrieved context.<br><br>Practical tuning:<br>• <span class=\"mono\">0.0–0.3</span>: precise code Q&A, fewer creative leaps (common default)<br>• <span class=\"mono\">0.4–0.7</span>: balanced explanations + light ideation<br>• <span class=\"mono\">0.8+</span>: brainstorming (expect more variance)<br><br>Default: <span class=\"mono\">0.3</span>. Range: <span class=\"mono\">0.0–2.0</span>.",
-      "category": "generation",
-      "related": [
-        "Temperature (no retrieval)",
-        "Max tokens (response limit)"
-      ],
+      "category": "general",
+      "related": [],
       "links": [],
       "badges": []
     },
@@ -6482,11 +6491,8 @@
       "term": "Temperature (no retrieval)",
       "key": "chat.temperature_no_retrieval",
       "definition": "Controls generation when the message is answered in “Direct chat” — no corpora checked (no retrieval context). This is intentionally separate so direct conversation can feel more fluid without making retrieval-grounded answers overly creative.<br><br>If you want direct-chat answers to stay conservative and literal, lower this. If you use Direct chat for exploration and planning, keeping it higher often feels better.<br><br>As soon as you enable corpora and/or Recall for a message, TriBridRAG uses <span class=\"mono\">chat.temperature</span> instead.<br><br>Default: <span class=\"mono\">0.7</span>. Range: <span class=\"mono\">0.0–2.0</span>.",
-      "category": "generation",
-      "related": [
-        "Temperature (with retrieval)",
-        "System prompt: Direct (no context)"
-      ],
+      "category": "general",
+      "related": [],
       "links": [],
       "badges": []
     },
@@ -6494,12 +6500,8 @@
       "term": "Recall intensity (next message)",
       "key": "chat_recall_intensity",
       "definition": "Per-message override for how aggressively to query <span class=\"tt-strong\">Recall</span> (chat memory) on the <span class=\"tt-strong\">next</span> send.<br><br>Options:<br>• <span class=\"tt-strong\">auto</span>: let the Recall gate decide per message<br>• <span class=\"tt-strong\">skip this message</span>: don’t query Recall at all<br>• <span class=\"tt-strong\">light</span>: sparse-only Recall with small <span class=\"mono\">top_k</span><br>• <span class=\"tt-strong\">standard</span>: normal Recall query<br>• <span class=\"tt-strong\">deep</span>: larger Recall pull with stronger recency bias<br><br>This only matters when Recall is checked as a source. After you send a message with a non-auto selection, the UI resets back to <span class=\"tt-strong\">auto</span>.",
-      "category": "retrieval",
-      "related": [
-        "Enable smart gating (Recall)",
-        "Default intensity",
-        "Show decision in status bar"
-      ],
+      "category": "general",
+      "related": [],
       "links": [],
       "badges": []
     },
@@ -6774,10 +6776,8 @@
       "term": "Streaming responses",
       "key": "ui.chat_streaming_enabled",
       "definition": "Streams tokens as they’re generated (instead of waiting for the full answer). This makes chat feel faster and lets you start reading immediately.<br><br>If streaming fails for a provider, the chat UI falls back to a normal non-streaming request automatically.<br><br>This is about delivery, not retrieval: it doesn’t change which sources are queried or what context is selected.",
-      "category": "ui",
-      "related": [
-        "Max tokens (response limit)"
-      ],
+      "category": "general",
+      "related": [],
       "links": [],
       "badges": []
     }

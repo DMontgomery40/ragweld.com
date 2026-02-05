@@ -69,7 +69,24 @@ export function useEvalDataset() {
         throw new Error(errorData.detail || `Failed to load entries: ${response.status}`);
       }
 
-      const entries: EvalDatasetItem[] = await response.json();
+      const payload = await response.json();
+      if (!Array.isArray(payload)) {
+        const msg =
+          typeof payload?.detail === 'string'
+            ? payload.detail
+            : typeof payload?.message === 'string'
+              ? payload.message
+              : 'Eval dataset endpoint unavailable';
+        setState((prev) => ({
+          ...prev,
+          entries: [],
+          loading: false,
+          error: msg,
+        }));
+        return;
+      }
+
+      const entries: EvalDatasetItem[] = payload;
 
       setState((prev) => ({
         ...prev,
@@ -121,7 +138,7 @@ export function useEvalDataset() {
 
         setState((prev) => ({
           ...prev,
-          entries: [...prev.entries, newEntry],
+          entries: [...(Array.isArray(prev.entries) ? prev.entries : []), newEntry],
           saving: false,
         }));
 
@@ -155,7 +172,7 @@ export function useEvalDataset() {
       setState((prev) => ({ ...prev, saving: true, error: null }));
 
       try {
-        const existing = state.entries.find((e) => e.entry_id === entryId);
+        const existing = (Array.isArray(state.entries) ? state.entries : []).find((e) => e.entry_id === entryId);
         if (!existing) {
           throw new Error(`Entry not found: ${entryId}`);
         }
@@ -184,9 +201,7 @@ export function useEvalDataset() {
 
         setState((prev) => ({
           ...prev,
-          entries: prev.entries.map((e) =>
-            e.entry_id === entryId ? updatedEntry : e
-          ),
+          entries: (Array.isArray(prev.entries) ? prev.entries : []).map((e) => (e.entry_id === entryId ? updatedEntry : e)),
           saving: false,
         }));
 
@@ -230,7 +245,7 @@ export function useEvalDataset() {
 
         setState((prev) => ({
           ...prev,
-          entries: prev.entries.filter((e) => e.entry_id !== entryId),
+          entries: (Array.isArray(prev.entries) ? prev.entries : []).filter((e) => e.entry_id !== entryId),
           saving: false,
         }));
 
@@ -253,8 +268,9 @@ export function useEvalDataset() {
    */
   const getEntriesByTags = useCallback(
     (tags: string[]): EvalDatasetItem[] => {
-      if (tags.length === 0) return state.entries;
-      return state.entries.filter((entry) =>
+      const safeEntries = Array.isArray(state.entries) ? state.entries : [];
+      if (tags.length === 0) return safeEntries;
+      return safeEntries.filter((entry) =>
         tags.some((tag) => entry.tags?.includes(tag))
       );
     },

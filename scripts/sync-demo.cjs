@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { execSync } = require('child_process');
 
 const sourceDir = process.argv[2] || '../tribrid-rag/web';
@@ -16,6 +17,44 @@ const targetDir = path.join(__dirname, '..', 'vendor', 'demo');
 if (!fs.existsSync(sourceDir)) {
   console.error(`Source directory not found: ${sourceDir}`);
   process.exit(1);
+}
+
+function copyDirIfExists(src, dest) {
+  if (!fs.existsSync(src)) return false;
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  execSync(`cp -R "${src}" "${dest}"`);
+  return true;
+}
+
+function copyFileIfExists(src, dest) {
+  if (!fs.existsSync(src)) return false;
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.copyFileSync(src, dest);
+  return true;
+}
+
+// Preserve ragweld demo-only assets across sync (source repo doesn't include them).
+const preserveDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ragweld-demo-sync-'));
+const preserved = {
+  mocks: copyDirIfExists(path.join(targetDir, 'src', 'mocks'), path.join(preserveDir, 'mocks')),
+  mockServiceWorker: copyFileIfExists(
+    path.join(targetDir, 'public', 'mockServiceWorker.js'),
+    path.join(preserveDir, 'mockServiceWorker.js')
+  ),
+  mswVersion: null,
+};
+
+try {
+  const existingPkgPath = path.join(targetDir, 'package.json');
+  if (fs.existsSync(existingPkgPath)) {
+    const existingPkg = JSON.parse(fs.readFileSync(existingPkgPath, 'utf-8'));
+    preserved.mswVersion =
+      existingPkg?.devDependencies?.msw ||
+      existingPkg?.dependencies?.msw ||
+      null;
+  }
+} catch {
+  // ignore
 }
 
 // Clean target (except node_modules)
@@ -33,6 +72,33 @@ for (const item of itemsToCopy) {
 }
 
 console.log(`Synced ${sourceDir} to ${targetDir}`);
+
+// Restore preserved demo-only assets
+if (preserved.mocks) {
+  copyDirIfExists(path.join(preserveDir, 'mocks'), path.join(targetDir, 'src', 'mocks'));
+}
+if (preserved.mockServiceWorker) {
+  copyFileIfExists(path.join(preserveDir, 'mockServiceWorker.js'), path.join(targetDir, 'public', 'mockServiceWorker.js'));
+}
+
+// Ensure MSW is available when mocks are present (keeps demo fallback working after sync)
+try {
+  const pkgPath = path.join(targetDir, 'package.json');
+  if (fs.existsSync(pkgPath)) {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+    const hasMocks = fs.existsSync(path.join(targetDir, 'src', 'mocks'));
+    if (hasMocks) {
+      const mswVersion = preserved.mswVersion || '^2.12.8';
+      pkg.devDependencies = pkg.devDependencies || {};
+      if (!pkg.devDependencies.msw && !(pkg.dependencies && pkg.dependencies.msw)) {
+        pkg.devDependencies.msw = mswVersion;
+      }
+      fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+    }
+  }
+} catch (e) {
+  console.warn('Warning: failed to ensure MSW dependency:', e?.message || e);
+}
 
 // Sync glossary.json for ragweld.com marketing site (pinned fallback for CI/Netlify)
 const sourceGlossaryPath = path.join(sourceDir, 'public', 'glossary.json');

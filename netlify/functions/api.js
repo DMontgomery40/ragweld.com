@@ -4,6 +4,177 @@ const { Pool } = pg;
 
 let pool = null;
 let schemaReady = null;
+const configByCorpus = new Map();
+
+const DEFAULT_OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+
+const DEFAULT_CONFIG = {
+  retrieval: {
+    default_k: 10,
+    max_k: 50,
+    enable_vector: true,
+    enable_sparse: true,
+    enable_graph: true,
+  },
+  fusion: {
+    method: 'rrf',
+    rrf_k: 60,
+    vector_weight: 0.4,
+    sparse_weight: 0.3,
+    graph_weight: 0.3,
+    normalize_scores: true,
+  },
+  reranking: {
+    enabled: true,
+    mode: 'local',
+    local_model: 'cross-encoder/ms-marco-MiniLM-L-6-v2',
+    top_n: 10,
+  },
+  chat: {
+    default_corpus_ids: ['recall_default'],
+    system_prompt_base: 'You are a helpful assistant.',
+    temperature: 0.3,
+    max_tokens: 4096,
+    show_source_dropdown: true,
+    send_shortcut: 'ctrl+enter',
+    openrouter: {
+      enabled: true,
+      base_url: DEFAULT_OPENROUTER_BASE_URL,
+      default_model: 'openai/gpt-4o-mini',
+    },
+    local_models: {
+      providers: [],
+      default_chat_model: '',
+    },
+  },
+  ui: {
+    theme: 'dark',
+    show_tooltips: true,
+    compact_mode: false,
+    chat_default_model: 'gpt-4o-mini',
+    chat_streaming_enabled: 1,
+  },
+};
+
+const FALLBACK_CHAT_MODELS = [
+  // Local (not available on ragweld.com, but keep picker parity)
+  {
+    id: 'llama3.2:latest',
+    provider: 'Ollama (Local)',
+    source: 'local',
+    provider_type: 'ollama',
+    base_url: 'http://localhost:11434',
+    supports_vision: false,
+  },
+
+  // OpenRouter
+  {
+    id: 'openai/gpt-4o-mini',
+    provider: 'OpenAI (via OpenRouter)',
+    source: 'openrouter',
+    provider_type: 'openrouter',
+    base_url: DEFAULT_OPENROUTER_BASE_URL,
+    supports_vision: true,
+  },
+  {
+    id: 'openai/gpt-4o',
+    provider: 'OpenAI (via OpenRouter)',
+    source: 'openrouter',
+    provider_type: 'openrouter',
+    base_url: DEFAULT_OPENROUTER_BASE_URL,
+    supports_vision: true,
+  },
+  {
+    id: 'anthropic/claude-3.5-sonnet',
+    provider: 'Anthropic (via OpenRouter)',
+    source: 'openrouter',
+    provider_type: 'openrouter',
+    base_url: DEFAULT_OPENROUTER_BASE_URL,
+    supports_vision: true,
+  },
+
+  // Cloud direct (requires OPENAI_API_KEY)
+  {
+    id: 'gpt-4o-mini',
+    provider: 'OpenAI',
+    source: 'cloud_direct',
+    provider_type: 'openai',
+    supports_vision: true,
+  },
+  {
+    id: 'gpt-4o',
+    provider: 'OpenAI',
+    source: 'cloud_direct',
+    provider_type: 'openai',
+    supports_vision: true,
+  },
+];
+
+let openRouterModelsCache = null;
+let openRouterModelsCacheTs = 0;
+const OPENROUTER_MODELS_TTL_MS = 15 * 60 * 1000;
+
+function cloneJson(obj) {
+  return JSON.parse(JSON.stringify(obj));
+}
+
+function isPlainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function mergeDeep(base, patch) {
+  const baseObj = isPlainObject(base) ? base : {};
+  const patchObj = isPlainObject(patch) ? patch : {};
+  const out = { ...baseObj };
+  for (const [key, value] of Object.entries(patchObj)) {
+    if (isPlainObject(value) && isPlainObject(baseObj[key])) {
+      out[key] = mergeDeep(baseObj[key], value);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+function getCorpusScopeFromUrl(url) {
+  try {
+    const scope =
+      String(url?.searchParams?.get('corpus_id') || '').trim() ||
+      String(url?.searchParams?.get('corpus') || '').trim() ||
+      String(url?.searchParams?.get('repo_id') || '').trim() ||
+      String(url?.searchParams?.get('repo') || '').trim();
+    return scope || 'global';
+  } catch {
+    return 'global';
+  }
+}
+
+function getConfig(scope) {
+  const key = String(scope || '').trim() || 'global';
+  if (configByCorpus.has(key)) return configByCorpus.get(key);
+  const cfg = cloneJson(DEFAULT_CONFIG);
+  configByCorpus.set(key, cfg);
+  return cfg;
+}
+
+function normalizeBaseUrl(url) {
+  const s = String(url || '').trim();
+  if (!s) return '';
+  return s.replace(/\/$/, '');
+}
+
+function parseModelOverride(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return { kind: null, model: '' };
+  const idx = s.indexOf(':');
+  if (idx === -1) return { kind: 'cloud_direct', model: s };
+  const prefix = s.slice(0, idx).trim();
+  const rest = s.slice(idx + 1).trim();
+  if (prefix === 'openrouter') return { kind: 'openrouter', model: rest };
+  if (prefix === 'local') return { kind: 'local', model: rest };
+  // Unknown prefix: treat as cloud-direct model id to avoid surprising routing.
+  return { kind: 'cloud_direct', model: s };
+}
 
 function json(statusCode, body, extraHeaders) {
   return {
@@ -231,11 +402,14 @@ function buildRagPrompt(userMessage, matches) {
   return { system, user };
 }
 
-async function callOpenAI(system, user) {
+async function callOpenAI(system, user, modelOverride) {
   const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
   if (!apiKey) throw new Error('Missing OPENAI_API_KEY');
 
-  const model = String(process.env.RAGWELD_CHAT_MODEL || 'gpt-4o-mini').trim() || 'gpt-4o-mini';
+  const model =
+    String(modelOverride || '').trim() ||
+    String(process.env.RAGWELD_CHAT_MODEL || 'gpt-4o-mini').trim() ||
+    'gpt-4o-mini';
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -264,6 +438,130 @@ async function callOpenAI(system, user) {
   return { content, tokensUsed };
 }
 
+async function callOpenRouter(system, user, modelOverride, baseUrlOverride) {
+  const apiKey = String(process.env.OPENROUTER_API_KEY || '').trim();
+  if (!apiKey) throw new Error('Missing OPENROUTER_API_KEY');
+
+  const baseUrl =
+    normalizeBaseUrl(baseUrlOverride) ||
+    normalizeBaseUrl(process.env.OPENROUTER_BASE_URL) ||
+    DEFAULT_OPENROUTER_BASE_URL;
+
+  const model =
+    String(modelOverride || '').trim() ||
+    String(process.env.RAGWELD_OPENROUTER_MODEL || 'openai/gpt-4o-mini').trim() ||
+    'openai/gpt-4o-mini';
+
+  const referer =
+    String(process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL || '').trim() ||
+    'https://ragweld.com';
+
+  const res = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      // OpenRouter recommends these for attribution/rate-limit friendliness.
+      'HTTP-Referer': referer,
+      'X-Title': 'ragweld demo',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+      temperature: 0.2,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`OpenRouter error (${res.status}): ${text || res.statusText}`);
+  }
+
+  const data = await res.json();
+  const content = String(data?.choices?.[0]?.message?.content || '').trim();
+  const tokensUsed = Number(data?.usage?.total_tokens) || 0;
+  return { content, tokensUsed, baseUrl, model };
+}
+
+function titleFromModelId(id) {
+  const raw = String(id || '').trim();
+  if (!raw) return '';
+  const vendor = raw.includes('/') ? raw.split('/')[0] : '';
+  if (!vendor) return '';
+  const normalized = vendor.replace(/[_-]+/g, ' ').trim();
+  return normalized
+    .split(' ')
+    .filter(Boolean)
+    .map((w) => w.slice(0, 1).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+async function listOpenRouterModels() {
+  const apiKey = String(process.env.OPENROUTER_API_KEY || '').trim();
+  if (!apiKey) return null;
+
+  const now = Date.now();
+  if (openRouterModelsCache && now - openRouterModelsCacheTs < OPENROUTER_MODELS_TTL_MS) {
+    return openRouterModelsCache;
+  }
+
+  const baseUrl =
+    normalizeBaseUrl(process.env.OPENROUTER_BASE_URL) || DEFAULT_OPENROUTER_BASE_URL;
+
+  try {
+    const referer =
+      String(process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL || '').trim() ||
+      'https://ragweld.com';
+
+    const res = await fetch(`${baseUrl}/models`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'HTTP-Referer': referer,
+        'X-Title': 'ragweld demo',
+      },
+    });
+
+    if (!res.ok) {
+      openRouterModelsCache = null;
+      openRouterModelsCacheTs = now;
+      return null;
+    }
+
+    const data = await res.json().catch(() => null);
+    const items = Array.isArray(data?.data) ? data.data : [];
+    const mapped = items
+      .map((m) => {
+        const id = String(m?.id || '').trim();
+        if (!id) return null;
+        const providerTitle = titleFromModelId(id) || 'OpenRouter';
+        return {
+          id,
+          provider: `${providerTitle} (via OpenRouter)`,
+          source: 'openrouter',
+          provider_type: 'openrouter',
+          base_url: baseUrl,
+          supports_vision: false,
+        };
+      })
+      .filter(Boolean);
+
+    // Keep ordering deterministic.
+    mapped.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+
+    openRouterModelsCache = mapped;
+    openRouterModelsCacheTs = now;
+    return mapped;
+  } catch {
+    openRouterModelsCache = null;
+    openRouterModelsCacheTs = now;
+    return null;
+  }
+}
+
 async function handleChat(sql, request) {
   const startedAtMs = Date.now();
   const message = String(request?.message || '').trim();
@@ -287,13 +585,61 @@ async function handleChat(sql, request) {
 
   let assistant = '';
   let tokensUsed = 0;
+  let provider = null;
   try {
-    const result = await callOpenAI(system, user);
-    assistant = result.content || 'No response generated.';
-    tokensUsed = result.tokensUsed;
+    const scope = String(request?.corpus_id || '').trim() || null;
+    const cfg = getConfig(scope || 'global');
+
+    const overrideRaw = String(request?.model_override || '').trim();
+    const parsed = parseModelOverride(overrideRaw);
+
+    // Resolve provider route:
+    // - Explicit prefixes win (openrouter:/local:)
+    // - Otherwise fall back to config defaults.
+    let kind = parsed.kind;
+    let model = parsed.model;
+
+    if (!kind) {
+      const orEnabled = Boolean(cfg?.chat?.openrouter?.enabled);
+      if (orEnabled) {
+        kind = 'openrouter';
+        model = String(cfg?.chat?.openrouter?.default_model || '').trim() || model;
+      } else {
+        kind = 'cloud_direct';
+        model = String(cfg?.ui?.chat_default_model || '').trim() || model;
+      }
+    }
+
+    if (kind === 'local') {
+      throw new Error('Local providers are not available in the hosted demo. Choose an OpenRouter model instead.');
+    }
+
+    if (kind === 'openrouter') {
+      const baseUrl = String(cfg?.chat?.openrouter?.base_url || '').trim();
+      const result = await callOpenRouter(system, user, model, baseUrl);
+      assistant = result.content || 'No response generated.';
+      tokensUsed = result.tokensUsed;
+      provider = {
+        kind: 'openrouter',
+        provider_name: 'OpenRouter',
+        model: String(result.model || model || '').trim(),
+        base_url: result.baseUrl || baseUrl || DEFAULT_OPENROUTER_BASE_URL,
+      };
+    } else {
+      const result = await callOpenAI(system, user, model);
+      assistant = result.content || 'No response generated.';
+      tokensUsed = result.tokensUsed;
+      provider = {
+        kind: 'cloud_direct',
+        provider_name: 'OpenAI',
+        model: String(model || '').trim() || String(process.env.RAGWELD_CHAT_MODEL || 'gpt-4o-mini').trim(),
+        base_url: null,
+      };
+    }
   } catch (e) {
     assistant = `Demo backend is not fully configured.\n\n${String(e?.message || e)}`;
     tokensUsed = 0;
+    provider = provider || null;
   }
 
   const endedAtMs = Date.now();
@@ -306,6 +652,7 @@ async function handleChat(sql, request) {
     ended_at_ms: endedAtMs,
     debug: {
       confidence: matches.length ? 0.8 : 0.4,
+      provider,
       include_vector: Boolean(request?.include_vector ?? true),
       include_sparse: Boolean(request?.include_sparse ?? true),
       include_graph: Boolean(request?.include_graph ?? true),
@@ -349,6 +696,8 @@ async function handleChatStream(sql, request) {
 async function handleGraphStats(sql, corpusId) {
   const entitiesCount = await sql.query(`SELECT COUNT(*)::int AS n FROM graph_entities WHERE corpus_id = $1;`, [corpusId]);
   const edgesCount = await sql.query(`SELECT COUNT(*)::int AS n FROM graph_edges WHERE corpus_id = $1;`, [corpusId]);
+  const chunksCount = await sql.query(`SELECT COUNT(*)::int AS n FROM chunks WHERE corpus_id = $1;`, [corpusId]);
+  const docsCount = await sql.query(`SELECT COUNT(DISTINCT file_path)::int AS n FROM chunks WHERE corpus_id = $1;`, [corpusId]);
 
   const entityBreakdownRows = await sql.query(
     `SELECT entity_type, COUNT(*)::int AS n
@@ -381,6 +730,8 @@ async function handleGraphStats(sql, corpusId) {
     total_entities: Number(entitiesCount.rows?.[0]?.n) || 0,
     total_relationships: Number(edgesCount.rows?.[0]?.n) || 0,
     total_communities: 0,
+    total_documents: Number(docsCount.rows?.[0]?.n) || 0,
+    total_chunks: Number(chunksCount.rows?.[0]?.n) || 0,
     entity_breakdown,
     relationship_breakdown,
   });
@@ -580,6 +931,122 @@ export const handler = async (event) => {
 
   const url = new URL(event.rawUrl || `https://ragweld.local${path}`);
   const body = safeJsonParse(event.body || null);
+  const scope = getCorpusScopeFromUrl(url);
+
+  if (path === '/api/config') {
+    if (method === 'GET') {
+      return json(200, getConfig(scope));
+    }
+    if (method === 'PUT') {
+      const next = isPlainObject(body) ? body : {};
+      configByCorpus.set(scope, cloneJson(next));
+      return json(200, getConfig(scope));
+    }
+    return json(405, { error: 'Method not allowed' });
+  }
+
+  if (method === 'PATCH' && path.startsWith('/api/config/')) {
+    const section = decodeURIComponent(path.slice('/api/config/'.length));
+    const cfg = getConfig(scope);
+    const curSection = isPlainObject(cfg?.[section]) ? cfg[section] : {};
+    const updates = isPlainObject(body) ? body : {};
+    cfg[section] = mergeDeep(curSection, updates);
+    configByCorpus.set(scope, cfg);
+    return json(200, cfg);
+  }
+
+  if (method === 'POST' && path === '/api/config/reset') {
+    configByCorpus.set(scope, cloneJson(DEFAULT_CONFIG));
+    return json(200, getConfig(scope));
+  }
+
+  if (method === 'POST' && path === '/api/config/reload') {
+    // No disk-backed config in the demo backend; treat as a no-op.
+    return json(200, { ok: true });
+  }
+
+  if (method === 'GET' && path === '/api/secrets/check') {
+    const keysRaw = String(url.searchParams.get('keys') || '').trim();
+    const keys = keysRaw
+      .split(',')
+      .map((k) => String(k || '').trim())
+      .filter(Boolean);
+    const out = {};
+    for (const k of keys) {
+      out[k] = Boolean(String(process.env[k] || '').trim());
+    }
+    return json(200, out);
+  }
+
+  if (method === 'GET' && (path === '/api/chat/models' || path === '/api/models/chat')) {
+    const openrouter = await listOpenRouterModels();
+    const openaiKey = String(process.env.OPENAI_API_KEY || '').trim();
+    const allowLocal = String(process.env.RAGWELD_DEMO_ALLOW_LOCAL_MODELS || '').trim() === '1';
+
+    const openrouterModels = openrouter && openrouter.length
+      ? openrouter
+      : FALLBACK_CHAT_MODELS.filter((m) => m.source === 'openrouter');
+
+    const cloudDirect = openaiKey ? FALLBACK_CHAT_MODELS.filter((m) => m.source === 'cloud_direct') : [];
+    const local = allowLocal ? FALLBACK_CHAT_MODELS.filter((m) => m.source === 'local') : [];
+
+    const models = [...openrouterModels, ...cloudDirect, ...local];
+    return json(200, models);
+  }
+
+  if (method === 'GET' && path === '/api/chat/health') {
+    const cfg = getConfig(scope);
+    const baseUrl = normalizeBaseUrl(cfg?.chat?.openrouter?.base_url) || DEFAULT_OPENROUTER_BASE_URL;
+    const apiKey = String(process.env.OPENROUTER_API_KEY || '').trim();
+    const providers = [];
+    if (!apiKey) {
+      providers.push({
+        provider: 'OpenRouter',
+        kind: 'openrouter',
+        base_url: baseUrl,
+        reachable: false,
+        detail: 'OPENROUTER_API_KEY is not set',
+      });
+      return json(200, { providers });
+    }
+
+    try {
+      const referer =
+        String(process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL || '').trim() ||
+        'https://ragweld.com';
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3500);
+      const res = await fetch(`${baseUrl}/models`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'HTTP-Referer': referer,
+          'X-Title': 'ragweld demo',
+        },
+        signal: controller.signal,
+      }).catch(() => null);
+      clearTimeout(timeout);
+      const ok = Boolean(res && res.ok);
+      providers.push({
+        provider: 'OpenRouter',
+        kind: 'openrouter',
+        base_url: baseUrl,
+        reachable: ok,
+        detail: ok ? null : `HTTP ${res?.status || 0}`,
+      });
+    } catch (e) {
+      providers.push({
+        provider: 'OpenRouter',
+        kind: 'openrouter',
+        base_url: baseUrl,
+        reachable: false,
+        detail: String(e?.message || e),
+      });
+    }
+
+    return json(200, { providers });
+  }
 
   if (method === 'GET' && path === '/api/health') {
     try {

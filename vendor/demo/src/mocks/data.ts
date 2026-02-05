@@ -54,6 +54,30 @@ export const mockChatModels: ChatModelInfo[] = [
     supports_vision: true,
   },
   {
+    id: 'openai/gpt-4o-mini',
+    provider: 'OpenAI (via OpenRouter)',
+    source: 'openrouter',
+    provider_type: 'openrouter',
+    base_url: 'https://openrouter.ai/api/v1',
+    supports_vision: true,
+  },
+  {
+    id: 'openai/gpt-4o',
+    provider: 'OpenAI (via OpenRouter)',
+    source: 'openrouter',
+    provider_type: 'openrouter',
+    base_url: 'https://openrouter.ai/api/v1',
+    supports_vision: true,
+  },
+  {
+    id: 'anthropic/claude-3.5-sonnet',
+    provider: 'Anthropic (via OpenRouter)',
+    source: 'openrouter',
+    provider_type: 'openrouter',
+    base_url: 'https://openrouter.ai/api/v1',
+    supports_vision: true,
+  },
+  {
     id: 'claude-3-5-sonnet-20241022',
     provider: 'Anthropic',
     source: 'cloud_direct',
@@ -107,11 +131,22 @@ export const mockConfig: TriBridConfig = {
     max_tokens: 4096,
     show_source_dropdown: true,
     send_shortcut: 'ctrl+enter',
+    openrouter: {
+      enabled: true,
+      base_url: 'https://openrouter.ai/api/v1',
+      default_model: 'openai/gpt-4o-mini',
+    },
+    local_models: {
+      providers: [],
+      default_chat_model: '',
+    },
   },
   ui: {
     theme: 'dark',
     show_tooltips: true,
     compact_mode: false,
+    chat_default_model: 'gpt-4o-mini',
+    chat_streaming_enabled: 1,
   },
 };
 

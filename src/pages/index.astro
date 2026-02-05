@@ -70,10 +70,16 @@ import Footer from '../components/Footer.astro';
 
           <div class="rounded-xl border border-[#222] bg-[#0f0f0f] p-6">
             <div class="text-sm font-semibold text-gray-300">Reranker</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Learning loop built in</h3>
+            <h3 class="mt-2 text-lg font-bold text-white">Trainable SOTA reranking</h3>
             <p class="mt-2 text-sm text-gray-400">
-              Cross-encoder reranking with a feedback workflow: capture tuples, mine triplets, and compare/promote runs.
-              Automation is first-class (cron/CI) because production doesn’t wait for a button click.
+              Most teams are still fine-tuning cross-encoders. ragweld’s learning reranker trains LoRA adapters and scores with
+              <span class="text-gray-300">yes/no logits</span> (MLX-native on Apple Silicon, with safe fallbacks elsewhere) — plus
+              compare/promote gating so you only ship real improvements.
+            </p>
+            <p class="mt-3 text-sm text-gray-500">
+              <a href="/blog/posts/cross-encoder-paradigm-shift-qwen3-mlx/" class="text-[#00ff88] hover:underline">
+                Read the reranking paradigm shift →
+              </a>
             </p>
           </div>
 
@@ -110,6 +116,11 @@ import Footer from '../components/Footer.astro';
             <p class="mt-2 text-sm text-gray-400">
               Multi-model chat (including vision inputs), persistent memory (sparse + dense), multi-corpus querying, and
               per-corpus embeddings/tokenization when your data demands it.
+            </p>
+            <p class="mt-3 text-sm text-gray-500">
+              <a href="/blog/posts/when-to-query-chat-memory-vs-your-corpus/" class="text-[#00ff88] hover:underline">
+                Read the chat memory routing policy →
+              </a>
             </p>
           </div>
 
