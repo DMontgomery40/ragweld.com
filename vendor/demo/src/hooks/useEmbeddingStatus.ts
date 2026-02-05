@@ -6,7 +6,7 @@
  * embeddings will cause search to return completely irrelevant results.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAPI } from '@/hooks/useAPI';
 import { useConfig } from '@/hooks/useConfig';
 import { useRepoStore } from '@/stores/useRepoStore';
@@ -72,7 +72,20 @@ export function useEmbeddingStatus(): UseEmbeddingStatusResult {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Avoid noisy console errors when the SPA navigates quickly (Playwright + real users).
+  // Aborted fetches are expected during navigation/unmount.
+  const abortRef = useRef<AbortController | null>(null);
+
   const checkStatus = useCallback(async () => {
+    // Cancel any in-flight check
+    try {
+      abortRef.current?.abort();
+    } catch {
+      // ignore
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
       setLoading(true);
       setError(null);
@@ -93,7 +106,7 @@ export function useEmbeddingStatus(): UseEmbeddingStatusResult {
       if (provider === 'local' || provider === 'huggingface') configModel = String(emb?.embedding_model_local || '');
 
       // Index config (from Postgres corpus metadata via /api/index/{corpus_id}/stats)
-      const response = await fetch(api(`index/${encodeURIComponent(corpusId)}/stats`));
+      const response = await fetch(api(`index/${encodeURIComponent(corpusId)}/stats`), { signal: controller.signal });
       if (response.status === 404) {
         setStatus({
           configType,
@@ -143,8 +156,17 @@ export function useEmbeddingStatus(): UseEmbeddingStatusResult {
         totalChunks,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error checking embedding status');
-      console.error('[useEmbeddingStatus] Error:', err);
+      // Ignore expected navigation aborts.
+      const name = (err as any)?.name ? String((err as any).name) : '';
+      const message = err instanceof Error ? err.message : String(err || '');
+      const aborted = controller.signal.aborted || name === 'AbortError' || message.includes('net::ERR_ABORTED');
+      if (aborted) return;
+
+      setError(message || 'Unknown error checking embedding status');
+      // Avoid console.error in production; consumers already surface warnings when needed.
+      if (import.meta.env.DEV) {
+        console.warn('[useEmbeddingStatus] Error:', err);
+      }
     } finally {
       setLoading(false);
     }
@@ -182,6 +204,11 @@ export function useEmbeddingStatus(): UseEmbeddingStatusResult {
     window.addEventListener('tribrid-corpus-changed', handleConfigChange as EventListener);
 
     return () => {
+      try {
+        abortRef.current?.abort();
+      } catch {
+        // ignore
+      }
       window.removeEventListener('config-updated', handleConfigChange);
       window.removeEventListener('index-completed', handleConfigChange);
       window.removeEventListener('dashboard-refresh', handleConfigChange);
@@ -196,4 +223,3 @@ export function useEmbeddingStatus(): UseEmbeddingStatusResult {
     refresh: checkStatus,
   };
 }
-

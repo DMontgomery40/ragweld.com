@@ -83,7 +83,7 @@ export const handlersFull = [
 
   http.get('/api/chat/models', async () => {
     await delay(200);
-    return HttpResponse.json(mockChatModels);
+    return HttpResponse.json({ models: mockChatModels });
   }),
 
   // Chat streaming endpoint - the core demo feature
