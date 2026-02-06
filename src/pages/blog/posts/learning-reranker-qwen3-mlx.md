@@ -1,11 +1,11 @@
 ---
 layout: ../../../layouts/BlogPostLayout.astro
-title: "Cross-Encoders Are Dead. We're Scoring With Yes/No Logits Now."
+title: "Qwen3 LoRA Learning Reranker on Apple Silicon"
 date: 2026-02-04
-slug: cross-encoder-paradigm-shift-qwen3-mlx
+slug: learning-reranker-qwen3-mlx
 author: RagWeld Team
-tags: [reranking, mlx, apple-silicon, qwen3, lora, cross-encoder, production-rag]
-summary: "We went looking for a trainable cross-encoder for Apple Silicon and discovered the entire reranking paradigm shifted under our feet. Here's what replaced it, the 5 bugs that will silently corrupt your scores, and why 0.6B parameters now beats models 4× its size."
+tags: [reranking, mlx, apple-silicon, qwen3, lora, production-rag]
+summary: "How we implemented a Qwen3 LoRA learning reranker with yes/no logits on Apple Silicon, plus the five implementation bugs that silently degrade scoring quality."
 ---
 
 We needed a reranker that *trains* on Apple Silicon. Not inference-only, not “export to CoreML and hope” — actually trains LoRA adapters locally so it learns from user feedback and improves over time.
@@ -20,7 +20,7 @@ So we went looking. What we found changed how we think about reranking entirely.
 
 We surveyed what was available in early 2026: `jina-ai/mlx-retrieval`, ModernBERT MLX ports, Jina Reranker v3 MLX, PyTorch MPS fallback paths. What we kept running into was a fork in the road that didn’t exist two years ago.
 
-The traditional cross-encoder architecture — `BERT([CLS] query [SEP] document) → linear head → score` — is being abandoned by teams producing SOTA reranking results.
+The older encoder-classifier architecture — `BERT([CLS] query [SEP] document) → linear head → score` — has increasingly been replaced by decoder-style reranking in many newer systems.
 
 The new approach: format the query-document pair as a chat prompt, feed it through a small language model, and compare the logit for **"yes"** against the logit for **"no"**.
 
@@ -40,7 +40,7 @@ We score a candidate with:
 score = P("yes") / (P("yes") + P("no"))
 ```
 
-Qwen3-Reranker-0.6B (using this approach) is the model that convinced us the cross-encoder era was over: a 0.6B parameter decoder beating cross-encoders several times its size.
+Qwen3-Reranker-0.6B (using this approach) gave us the quality/latency tradeoff we wanted for a trainable learning reranker on Apple Silicon.
 
 The reason is almost embarrassingly intuitive: even a small language model has richer semantic understanding than a BERT encoder with a bolted-on classification head, because it was trained to *reason* about text, not just encode it.
 
@@ -123,4 +123,3 @@ If you’re still fine-tuning `cross-encoder/ms-marco-MiniLM-L-6-v2`, you’re l
 The adapter is ~2MB. The base model is ~1.2GB. Training takes minutes, not hours. And it actually learns your domain.
 
 Built in the open at RagWeld. TriBridRAG source on GitHub: https://github.com/DMontgomery40/tribrid-rag
-

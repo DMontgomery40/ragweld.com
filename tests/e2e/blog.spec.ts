@@ -6,14 +6,14 @@ test('blog index lists the latest post and post page renders', async ({ page }) 
   await expect(page.getByRole('heading', { name: 'Blog' })).toBeVisible();
 
   const postLink = page.getByRole('link', {
-    name: /cross-encoders are dead\. we're scoring with yes\/no logits now\./i,
+    name: /qwen3 lora learning reranker on apple silicon/i,
   });
   await expect(postLink).toBeVisible();
 
   await postLink.click();
-  await expect(page).toHaveURL(/\/blog\/posts\/cross-encoder-paradigm-shift-qwen3-mlx\/?/);
+  await expect(page).toHaveURL(/\/blog\/posts\/learning-reranker-qwen3-mlx\/?/);
 
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(
-    "Cross-Encoders Are Dead. We're Scoring With Yes/No Logits Now."
+    'Qwen3 LoRA Learning Reranker on Apple Silicon'
   );
 });
