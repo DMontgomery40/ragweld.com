@@ -11,7 +11,7 @@ export interface Props {
 }
 
 const {
-  title = 'ragweld - Tribrid RAG: Vector + Sparse + Graph',
+  title = 'ragweld — See inside your RAG pipeline. Then fix it.',
   description = 'ragweld combines vector search, sparse retrieval (BM25), and GraphRAG into one unified retrieval system.',
   keywords = 'RAG, retrieval augmented generation, vector search, BM25, GraphRAG, LLM, AI',
   canonical,
@@ -37,16 +37,19 @@ const canonicalUrl = canonical ?? new URL(Astro.url.pathname, site).toString();
     <meta property="og:description" content={description} />
     <meta property="og:type" content={ogType} />
     <meta property="og:url" content={canonicalUrl} />
-    <meta property="og:image" content={ogImage} />
+    <meta property="og:image" content={new URL(ogImage, site).toString()} />
 
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
-    <meta name="twitter:image" content={ogImage} />
+    <meta name="twitter:image" content={new URL(ogImage, site).toString()} />
 
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="canonical" href={canonicalUrl} />
+
+    <!-- Per-page head injection (JSON-LD, etc.) -->
+    <slot name="head" />
 
     <!-- Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />

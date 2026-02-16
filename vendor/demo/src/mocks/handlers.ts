@@ -10,16 +10,24 @@ import {
   mockCorpora,
   mockChatModels,
   mockConfig,
+  mockPromptDefaults,
+  mockPromptMetadata,
   mockChunkMatches,
   mockGraphByCorpus,
   mockHealthResponse,
   generateChatChunks,
+  mockEvalDataset,
+  mockEvalRuns,
 } from './data';
 
 const getGraph = (corpusId: string) => {
   const key = String(corpusId || '').trim();
   return mockGraphByCorpus[key] || null;
 };
+
+let promptValues: Record<string, string> = { ...mockPromptDefaults };
+
+let evalDatasetEntries = [...mockEvalDataset];
 
 export const handlersFull = [
   // Health check
@@ -222,11 +230,141 @@ export const handlersFull = [
       reranker_mode: 'none',
       latency_ms: 150 + Math.random() * 100,
       debug: {
-        corpus_id: body.corpus_id || 'faxbot',
+        corpus_id: body.corpus_id || 'epstein-files-1',
         include_vector: true,
         include_sparse: true,
         include_graph: true,
       },
+    });
+  }),
+
+
+  // Eval dataset endpoints
+  http.get('/api/dataset', async () => {
+    await delay(120);
+    return HttpResponse.json(evalDatasetEntries);
+  }),
+
+  http.post('/api/dataset', async ({ request }) => {
+    await delay(120);
+    const body = await request.json();
+    const entry = {
+      entry_id: String(Date.now()),
+      question: String(body?.question || ''),
+      expected_paths: Array.isArray(body?.expected_paths) ? body.expected_paths : [],
+      expected_answer: body?.expected_answer ?? null,
+      tags: Array.isArray(body?.tags) ? body.tags : [],
+      created_at: new Date().toISOString(),
+    };
+    evalDatasetEntries = [...evalDatasetEntries, entry];
+    return HttpResponse.json(entry);
+  }),
+
+  http.put('/api/dataset/:entryId', async ({ request, params }) => {
+    await delay(120);
+    const body = await request.json();
+    const entryId = String(params.entryId);
+    const idx = evalDatasetEntries.findIndex((e) => e.entry_id === entryId);
+    if (idx === -1) return new HttpResponse(null, { status: 404 });
+    const updated = {
+      ...evalDatasetEntries[idx],
+      question: String(body?.question || evalDatasetEntries[idx].question),
+      expected_paths: Array.isArray(body?.expected_paths) ? body.expected_paths : evalDatasetEntries[idx].expected_paths,
+      expected_answer: body?.expected_answer ?? evalDatasetEntries[idx].expected_answer ?? null,
+      tags: Array.isArray(body?.tags) ? body.tags : evalDatasetEntries[idx].tags,
+    };
+    evalDatasetEntries = [...evalDatasetEntries.slice(0, idx), updated, ...evalDatasetEntries.slice(idx + 1)];
+    return HttpResponse.json(updated);
+  }),
+
+  http.delete('/api/dataset/:entryId', async ({ params }) => {
+    await delay(120);
+    const entryId = String(params.entryId);
+    const before = evalDatasetEntries.length;
+    evalDatasetEntries = evalDatasetEntries.filter((e) => e.entry_id !== entryId);
+    if (evalDatasetEntries.length === before) return new HttpResponse(null, { status: 404 });
+    return HttpResponse.json({ ok: true, deleted: before - evalDatasetEntries.length });
+  }),
+
+  // Eval run endpoints
+  http.get('/api/eval/runs', async () => {
+    await delay(150);
+    const runs = mockEvalRuns.map((run) => ({
+      run_id: run.run_id,
+      top1_accuracy: run.top1_accuracy ?? 0,
+      topk_accuracy: run.topk_accuracy ?? 0,
+      mrr: run.metrics?.mrr ?? null,
+      total: run.total ?? 0,
+      duration_secs: run.duration_secs ?? 0,
+      has_config: true,
+    }));
+    return HttpResponse.json({ ok: true, runs });
+  }),
+
+  http.get('/api/eval/results', async () => {
+    await delay(150);
+    return HttpResponse.json(mockEvalRuns[0]);
+  }),
+
+  http.get('/api/eval/results/:runId', async ({ params }) => {
+    await delay(150);
+    const runId = String(params.runId);
+    const run = mockEvalRuns.find((r) => r.run_id === runId) || mockEvalRuns[0];
+    return HttpResponse.json(run);
+  }),
+
+  http.post('/api/eval/run', async () => {
+    await delay(150);
+    return HttpResponse.json(mockEvalRuns[0]);
+  }),
+
+  http.get('/api/eval/run/stream', async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        const events = [
+          { type: 'log', message: '🧪 Starting evaluation run' },
+          { type: 'progress', percent: 20, message: 'Loading eval dataset' },
+          { type: 'progress', percent: 60, message: 'Scoring retrieval results' },
+          { type: 'log', message: `Results saved: ${mockEvalRuns[0].run_id}` },
+          { type: 'progress', percent: 95, message: 'Finalizing metrics' },
+          { type: 'complete' },
+        ];
+        for (const evt of events) {
+          await delay(120);
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}
+
+`));
+        }
+        controller.close();
+      },
+    });
+    return new HttpResponse(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      },
+    });
+  }),
+
+  http.post('/api/eval/analyze_comparison', async () => {
+    await delay(200);
+    return HttpResponse.json({
+      ok: true,
+      analysis: [
+        '# Eval Comparison',
+        '',
+        '## Summary',
+        '- Top-1 accuracy improved by +50% (0.50 → 1.00)',
+        '- MRR improved by +0.25',
+        '',
+        '## Config Diffs',
+        '- fusion.method: "rrf" → "rrf" (no change)',
+        '- retrieval.final_k: 5 → 5 (no change)',
+      ].join('\n'),
+      model_used: 'demo-analysis',
+      error: null,
     });
   }),
 
@@ -426,7 +564,7 @@ export const handlersFull = [
   http.get('/api/index/status', async ({ request }) => {
     await delay(100);
     const url = new URL(request.url);
-    const corpusId = url.searchParams.get('corpus_id') || 'faxbot';
+    const corpusId = url.searchParams.get('corpus_id') || 'epstein-files-1';
     const corpus = mockCorpora.find((c) => c.corpus_id === corpusId) || mockCorpora[0];
     return HttpResponse.json({
       lines: [
@@ -468,7 +606,7 @@ export const handlersFull = [
   // Indexing hook uses /api/index/:corpusId/status (IndexStatus)
   http.get('/api/index/:corpusId/status', async ({ params }) => {
     await delay(100);
-    const corpusId = String(params.corpusId || 'faxbot');
+    const corpusId = String(params.corpusId || 'epstein-files-1');
     const corpus = mockCorpora.find((c) => c.corpus_id === corpusId) || mockCorpora[0];
     return HttpResponse.json({
       corpus_id: corpus?.corpus_id || corpusId,
@@ -483,7 +621,7 @@ export const handlersFull = [
 
   http.get('/api/index/:corpusId/stats', async ({ params }) => {
     await delay(100);
-    const corpusId = String(params.corpusId || 'faxbot');
+    const corpusId = String(params.corpusId || 'epstein-files-1');
     const corpus = mockCorpora.find((c) => c.corpus_id === corpusId) || mockCorpora[0];
     return HttpResponse.json({
       corpus_id: corpus?.corpus_id || corpusId,
@@ -501,7 +639,7 @@ export const handlersFull = [
   http.get('/api/index/stats', async ({ request }) => {
     await delay(100);
     const url = new URL(request.url);
-    const corpusId = url.searchParams.get('corpus_id') || 'faxbot';
+    const corpusId = url.searchParams.get('corpus_id') || 'epstein-files-1';
     return HttpResponse.json({
       corpus_id: corpusId,
       storage_breakdown: {
@@ -522,7 +660,7 @@ export const handlersFull = [
   http.post('/api/index', async ({ request }) => {
     await delay(100);
     const body = (await request.json()) as any;
-    const corpusId = String(body?.corpus_id || '').trim() || 'faxbot';
+    const corpusId = String(body?.corpus_id || '').trim() || 'epstein-files-1';
     return HttpResponse.json({
       corpus_id: corpusId,
       status: 'error',
@@ -536,7 +674,7 @@ export const handlersFull = [
 
   http.delete('/api/index/:corpusId', async ({ params }) => {
     await delay(100);
-    const corpusId = String(params.corpusId || 'faxbot');
+    const corpusId = String(params.corpusId || 'epstein-files-1');
     return HttpResponse.json({
       corpus_id: corpusId,
       status: 'error',
@@ -548,10 +686,63 @@ export const handlersFull = [
     });
   }),
 
-  // Eval datasets (empty for demo)
+  // Eval datasets (legacy alias)
   http.get('/api/eval/datasets', async () => {
     await delay(100);
-    return HttpResponse.json([]);
+    return HttpResponse.json(evalDatasetEntries);
+  }),
+
+  // System prompts editor (used by Eval → System Prompts)
+  http.get('/api/prompts', async () => {
+    await delay(120);
+    return HttpResponse.json({
+      prompts: { ...promptValues },
+      metadata: mockPromptMetadata,
+    });
+  }),
+
+  http.put('/api/prompts/:promptKey', async ({ params, request }) => {
+    await delay(120);
+    const promptKey = String(params.promptKey || '').trim();
+    if (!promptKey || !(promptKey in promptValues)) {
+      return HttpResponse.json(
+        {
+          ok: false,
+          prompt_key: promptKey,
+          message: `Unknown prompt key: ${promptKey || '(empty)'}`,
+        },
+        { status: 404 }
+      );
+    }
+    const body = (await request.json().catch(() => ({}))) as { value?: string };
+    const value = String(body?.value ?? '');
+    promptValues[promptKey] = value;
+    return HttpResponse.json({
+      ok: true,
+      prompt_key: promptKey,
+      message: 'Prompt updated',
+    });
+  }),
+
+  http.post('/api/prompts/reset/:promptKey', async ({ params }) => {
+    await delay(120);
+    const promptKey = String(params.promptKey || '').trim();
+    if (!promptKey || !(promptKey in promptValues)) {
+      return HttpResponse.json(
+        {
+          ok: false,
+          prompt_key: promptKey,
+          message: `Unknown prompt key: ${promptKey || '(empty)'}`,
+        },
+        { status: 404 }
+      );
+    }
+    promptValues[promptKey] = mockPromptDefaults[promptKey] ?? '';
+    return HttpResponse.json({
+      ok: true,
+      prompt_key: promptKey,
+      message: 'Prompt reset to default',
+    });
   }),
 
   // Recall (conversation memory) - always returns empty for demo
@@ -659,6 +850,9 @@ const passthroughHandlers = [
   http.patch('/api/config/:section', () => passthrough()),
   http.post('/api/config/reset', () => passthrough()),
   http.post('/api/config/reload', () => passthrough()),
+  http.get('/api/prompts', () => passthrough()),
+  http.put('/api/prompts/:promptKey', () => passthrough()),
+  http.post('/api/prompts/reset/:promptKey', () => passthrough()),
   http.get('/api/secrets/check', () => passthrough()),
   http.get('/api/chat/models', () => passthrough()),
   http.get('/api/chat/health', () => passthrough()),
@@ -682,6 +876,16 @@ const passthroughHandlers = [
   http.post('/api/chat', () => passthrough()),
   http.post('/api/chat/stream', () => passthrough()),
   http.get('/api/graph/*', () => passthrough()),
+  http.get('/api/eval/runs', () => passthrough()),
+  http.get('/api/eval/results', () => passthrough()),
+  http.get('/api/eval/results/:runId', () => passthrough()),
+  http.post('/api/eval/run', () => passthrough()),
+  http.get('/api/eval/run/stream', () => passthrough()),
+  http.post('/api/eval/analyze_comparison', () => passthrough()),
+  http.get('/api/dataset', () => passthrough()),
+  http.post('/api/dataset', () => passthrough()),
+  http.put('/api/dataset/:entryId', () => passthrough()),
+  http.delete('/api/dataset/:entryId', () => passthrough()),
 ];
 
 const LIVE_HANDLER_PATHS = new Set([
@@ -694,6 +898,9 @@ const LIVE_HANDLER_PATHS = new Set([
   '/api/config/:section',
   '/api/config/reset',
   '/api/config/reload',
+  '/api/prompts',
+  '/api/prompts/:promptKey',
+  '/api/prompts/reset/:promptKey',
   '/api/chat/models',
   '/api/chat/health',
   '/api/secrets/check',
@@ -716,6 +923,14 @@ const LIVE_HANDLER_PATHS = new Set([
   '/api/chat',
   '/api/chat/stream',
   '/api/graph/*',
+  '/api/eval/runs',
+  '/api/eval/results',
+  '/api/eval/results/:runId',
+  '/api/eval/run',
+  '/api/eval/run/stream',
+  '/api/eval/analyze_comparison',
+  '/api/dataset',
+  '/api/dataset/:entryId',
 ]);
 
 export const handlersPartial = [

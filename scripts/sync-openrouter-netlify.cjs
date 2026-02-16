@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 /**
- * Sync OPENROUTER_API_KEY from ../tribrid-rag/.env into the linked Netlify site.
+ * Sync OPENROUTER_API_KEY from ../ragweld/.env into the linked Netlify site.
  *
  * This avoids copying secrets into this repo (even gitignored).
  *
  * Usage:
- *   node scripts/sync-openrouter-netlify.cjs [path/to/tribrid-rag/.env]
+ *   node scripts/sync-openrouter-netlify.cjs [path/to/ragweld/.env]
  */
 
 const fs = require('fs');
@@ -42,7 +42,7 @@ function main() {
   const envPath =
     process.argv[2] ||
     process.env.TRIBRID_ENV_PATH ||
-    path.resolve(repoRoot, '..', 'tribrid-rag', '.env');
+    path.resolve(repoRoot, '..', 'ragweld', '.env');
 
   if (!fs.existsSync(envPath)) {
     console.error(`Could not find .env file at: ${envPath}`);

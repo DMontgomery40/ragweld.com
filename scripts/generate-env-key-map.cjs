@@ -66,7 +66,7 @@ function main() {
   const repoRoot = process.cwd();
   const sourcePath =
     process.argv[2] ||
-    path.resolve(repoRoot, '..', 'tribrid-rag', 'server', 'models', 'tribrid_config_model.py');
+    path.resolve(repoRoot, '..', 'ragweld', 'server', 'models', 'tribrid_config_model.py');
   const outPath = process.argv[3] || path.resolve(repoRoot, 'src', 'data', 'env-key-map.json');
 
   const pythonSource = fs.readFileSync(sourcePath, 'utf8');

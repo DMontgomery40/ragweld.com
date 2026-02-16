@@ -12,9 +12,34 @@ const publishedAt = frontmatter?.date ? new Date(frontmatter.date) : null;
 const dateLabel = publishedAt
   ? new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'long', day: 'numeric' }).format(publishedAt)
   : null;
+
+const blogPostJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": title,
+  "description": description,
+  ...(publishedAt ? { "datePublished": publishedAt.toISOString().split('T')[0] } : {}),
+  "author": {
+    "@type": "Person",
+    "name": frontmatter?.author ?? "David Montgomery",
+    "url": "https://github.com/DMontgomery40"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "ragweld",
+    "url": "https://ragweld.com"
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": new URL(Astro.url.pathname, Astro.site ?? 'https://ragweld.com').toString()
+  }
+};
 ---
 
 <BaseLayout title={`${title} — ragweld blog`} description={description} ogType="article">
+  <Fragment slot="head">
+    <script type="application/ld+json" set:html={JSON.stringify(blogPostJsonLd)} />
+  </Fragment>
   <Nav />
   <main class="bg-[#09090b] pt-28 pb-16">
     <div class="mx-auto max-w-3xl px-4">

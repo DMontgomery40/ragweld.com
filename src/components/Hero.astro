@@ -7,7 +7,7 @@
         rag<span class="text-[#64748b]">weld</span>
       </h1>
       <p class="mt-4 text-xl text-gray-400 max-w-2xl mx-auto">
-        A tribrid RAG workbench: benchmark, debug, and ship.
+        An open-source RAG workbench: benchmark, debug, and ship.
       </p>
       <p class="mt-2 text-gray-500">
         Hybrid retrieval (vector + sparse + graph) with the engineering surface area you actually need in production.
@@ -17,7 +17,7 @@
       </p>
       <div class="mt-8 flex justify-center gap-4 flex-wrap">
         <a
-          href="https://github.com/DMontgomery40/tribrid-rag"
+          href="https://github.com/DMontgomery40/ragweld"
           target="_blank"
           rel="noopener noreferrer"
           class="px-6 py-3 bg-[#64748b] text-white font-semibold rounded-lg hover:bg-[#475569] transition-colors"
@@ -25,7 +25,7 @@
           View on GitHub
         </a>
         <a
-          href="https://dmontgomery40.github.io/tribrid-rag/"
+          href="https://dmontgomery40.github.io/ragweld/latest/configuration/"
           target="_blank"
           rel="noopener noreferrer"
           class="px-6 py-3 border border-[#27272a] text-white font-semibold rounded-lg hover:bg-[#18181b] transition-colors"
@@ -33,7 +33,7 @@
           Docs
         </a>
         <a
-          href="https://github.com/DMontgomery40/tribrid-rag#quick-start"
+          href="https://github.com/DMontgomery40/ragweld#quick-start"
           target="_blank"
           rel="noopener noreferrer"
           class="px-6 py-3 border border-[#27272a] text-white font-semibold rounded-lg hover:bg-[#18181b] transition-colors"
@@ -86,25 +86,19 @@
             <div class="w-3 h-3 rounded-full bg-[#ffbd2e]"></div>
             <div class="w-3 h-3 rounded-full bg-[#27c93f]"></div>
           </div>
-          <span class="ml-4 text-gray-500 text-sm">Live Demo (Faxbot + Vivified corpora)</span>
+          <span class="ml-4 text-gray-500 text-sm">Live Demo (Epstein Files 1 corpus)</span>
         </div>
         <div class="flex items-center gap-3">
           <div class="flex items-center gap-2">
             <a
-              href="/demo/?corpus=faxbot"
+              href="/demo/?corpus=epstein-files-1"
               class="rounded-md border border-[#27272a] px-2.5 py-1 text-xs text-white hover:bg-[#18181b] transition-colors"
             >
-              Faxbot
-            </a>
-            <a
-              href="/demo/?corpus=vivified"
-              class="rounded-md border border-[#27272a] px-2.5 py-1 text-xs text-white hover:bg-[#18181b] transition-colors"
-            >
-              Vivified
+              Epstein Files 1
             </a>
           </div>
           <a
-            href="/demo/?corpus=faxbot"
+            href="/demo/?corpus=epstein-files-1"
             target="_blank"
             rel="noopener"
             class="rounded-md border border-[#27272a] px-3 py-1.5 text-xs text-white hover:bg-[#18181b] transition-colors"
@@ -113,17 +107,52 @@
           </a>
         </div>
       </div>
-      <iframe
-        title="ragweld Demo"
-        src="/demo/?corpus=faxbot"
-        loading="lazy"
-        class="w-full h-[70vh] min-h-[520px] md:h-[80vh] md:min-h-[640px] md:max-h-[980px] border-0"
-        sandbox="allow-scripts allow-same-origin allow-forms"
-      ></iframe>
+      <div class="demo-scale-wrapper">
+        <iframe
+          title="ragweld Demo"
+          src="/demo/?corpus=epstein-files-1"
+          loading="lazy"
+          class="demo-iframe border-0"
+          sandbox="allow-scripts allow-same-origin allow-forms"
+        ></iframe>
+      </div>
     </div>
 
+    <style>
+      /* Render the iframe at a larger internal viewport, then scale down
+         so the demo UI looks "zoomed out" and the dock isn't cramped. */
+      .demo-scale-wrapper {
+        position: relative;
+        width: 100%;
+        overflow: hidden;
+        /* Ultrawide ratio — matches the demo's actual content height after scaling */
+        aspect-ratio: 21 / 9;
+      }
+
+      .demo-iframe {
+        position: absolute;
+        top: 0;
+        left: 0;
+        /* Render at ~143% of container → effective ~1830px at max-w-7xl.
+           Then scale(0.7) shrinks it back to fit, giving a "zoomed out" look. */
+        width: 142.857%;
+        height: 142.857%;
+        transform: scale(0.7);
+        transform-origin: top left;
+      }
+
+      /* Slightly less aggressive zoom on smaller screens */
+      @media (max-width: 768px) {
+        .demo-iframe {
+          width: 125%;
+          height: 125%;
+          transform: scale(0.8);
+        }
+      }
+    </style>
+
     <p class="mt-4 text-center text-gray-500 text-sm">
-      Live search + chat are backed by the open-source Faxbot + Vivified corpora. Add <span class="text-gray-400">?mock=1</span> for offline demo mode.
+      Live search + chat are backed by the Epstein Files 1 corpus. Add <span class="text-gray-400">?mock=1</span> for offline demo mode.
     </p>
   </div>
 </section>

@@ -28,6 +28,16 @@
   to = "/glossary/"
   status = 301
 
+[[redirects]]
+  from = "/blog/posts/cross-encoder-paradigm-shift-qwen3-mlx/"
+  to = "/blog/posts/learning-reranker-qwen3-mlx/"
+  status = 301
+
+[[redirects]]
+  from = "/blog/posts/cross-encoder-paradigm-shift-qwen3-mlx"
+  to = "/blog/posts/learning-reranker-qwen3-mlx/"
+  status = 301
+
 [[headers]]
   for = "/demo/mockServiceWorker.js"
   [headers.values]

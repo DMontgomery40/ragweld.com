@@ -1,144 +1,101 @@
 # ragweld.com
 
-Landing page for [ragweld](https://github.com/DMontgomery40/tribrid-rag) - the tribrid RAG engine.
+> See inside your RAG pipeline. Then fix it.
 
-**Live site:** https://ragweld.netlify.app
+This repo powers the public ragweld site and live hosted demo. It is the product-facing surface for the open-source ragweld workbench: tri-brid retrieval (vector + sparse + graph), evaluation and run diffs, learning reranker training, observability, and operations tooling.
 
-## Features
+## Live Surfaces
 
-- Minimal landing page built with Astro + Tailwind
-- Live demo with the full tribrid-rag GUI
-- Netlify Functions + Netlify DB (Neon Postgres) back the live demo API
-- MSW (Mock Service Worker) provides a demo-only fallback (`?mock=1`) and stubs non-live tabs
-- Auto-sync from tribrid-rag/web via GitHub Actions
+- Local workspace: `../ragweld.com` or `ragweld.com`
+- Live site: [https://ragweld.com/](https://ragweld.com/)
+- Live demo: [https://ragweld.com/demo/](https://ragweld.com/demo/)
+- Glossary: [https://ragweld.com/glossary/](https://ragweld.com/glossary/)
+- Learning Ranker deep link: [https://ragweld.com/demo/rag?subtab=learning-ranker](https://ragweld.com/demo/rag?subtab=learning-ranker)
+- Docs (default settings/config view): [https://dmontgomery40.github.io/ragweld/latest/configuration/](https://dmontgomery40.github.io/ragweld/latest/configuration/)
 
-## Development
+## What ragweld is (from the website)
+
+- Three retrieval legs, independently tunable: vector + sparse (BM25) + graph.
+- Benchmark + eval workflow: run, compare, drill down, and ship changes based on evidence.
+- Learning reranker: Qwen3-style yes/no logits scoring plus LoRA training from feedback.
+- Embedded observability: Grafana split-view inside the workbench.
+- Alerting hooks: threshold-based webhook alerts for quality and latency regressions.
+- MCP-native: use ragweld capabilities from IDEs, agents, and automation clients.
+- Parameter glossary: searchable reference for the full config surface.
+
+## Quickstart
 
 ```bash
-# Install dependencies
+# Install root dependencies
 npm install
 
-# Install demo dependencies
-npm --prefix vendor/demo install
+# Install demo dependencies (vendored React app)
+npm run deps:demo
 
-# Start dev server
+# Start Astro site in dev mode
 npm run dev
 
-# (Recommended) Run the full site with Functions locally
+# Run full local stack (Astro + Netlify Functions)
 netlify dev
 
-# Build for production
+# Build demo + site for production
 npm run build
 
-# Preview production build
-npx serve dist
+# Preview production output
+npm run preview
 ```
 
-## Demo
+## Demo Behavior
 
-The demo at `/demo/` runs the actual tribrid-rag React app.
+The hosted demo at `/demo/` runs the vendored React app in `vendor/demo`.
 
-- Default: core RAG endpoints hit the live Netlify Functions backend (`/api/*`), backed by Netlify DB (Neon).
-- Fallback: add `?mock=1` to force MSW full-mock mode.
+- Default mode: core RAG endpoints call live backend routes under `/api/*`.
+- Mock fallback: append `?mock=1` to force full MSW demo mocks.
 
-### Mock Data
+Useful URLs:
 
-- **Corpora**: Faxbot, Vivified (cross-promotion)
-- **Models**: GPT-4o, Claude 3.5 Sonnet, Ollama local
-- **Chat**: Streaming responses with simulated latency
-
-### MSW Mocks
-
-The MSW handlers are in `vendor/demo/src/mocks/`:
-- `browser.ts` - Worker setup
-- `handlers.ts` - API endpoint handlers
-- `data.ts` - Mock response data
-
-## Netlify backend (live)
-
-The live demo backend is implemented as a single Netlify Function:
-
-- `netlify/functions/api.ts` (routes `/api/*`)
-
-It serves:
-- `/api/health`
-- `/api/corpora` (Faxbot repo + Faxbot docs)
-- `/api/search` (sparse/FTS)
-- `/api/chat` and `/api/chat/stream` (RAG + citations)
-- `/api/graph/*` (graph visualizer data, Neo4j-free)
-
-### Required env vars (Netlify)
-- Netlify DB injects `NETLIFY_DATABASE_URL` automatically.
-- Set `OPENROUTER_API_KEY` for live chat via OpenRouter (recommended).
-- Optional: set `OPENAI_API_KEY` to enable “cloud_direct” OpenAI models.
-
-## Indexing (GitHub Actions → Neon)
-
-The indexing workflow populates Neon with chunks and a repo graph:
-- `.github/workflows/index-faxbot.yml`
-- `scripts/index-faxbot.cjs`
-
-You must add a GitHub Actions secret:
-- `RAGWELD_DATABASE_URL` = the Neon Postgres connection string.
-
-## CI/CD Setup
-
-### 1. Connect Netlify to GitHub (one-time)
-
-1. Go to https://app.netlify.com/projects/ragweld/configuration/deploys
-2. Click "Link to Git provider"
-3. Select GitHub and authorize
-4. Choose `DMontgomery40/ragweld.com`
-5. Set build command: `npm run build && node scripts/validate-demo.cjs`
-6. Set publish directory: `dist`
-
-### 2. Setup Auto-Sync from tribrid-rag (one-time)
-
-In the **tribrid-rag** repo:
-
-1. Create a GitHub Personal Access Token (PAT):
-   - Go to https://github.com/settings/tokens
-   - Generate new token (classic) with `repo` scope
-   - Copy the token
-
-2. Add the secret to tribrid-rag:
-   - Go to https://github.com/DMontgomery40/tribrid-rag/settings/secrets/actions
-   - Click "New repository secret"
-   - Name: `RAGWELD_DEPLOY_TOKEN`
-   - Value: (paste the PAT)
-
-Now when you push changes to `tribrid-rag/web/`, the GitHub Action will:
-1. Copy updated files to ragweld.com/vendor/demo/
-2. Preserve MSW mocks
-3. Patch paths for /demo/ base + MSW bootstrap
-4. Commit and push to ragweld.com
-5. Netlify auto-deploys from the push
-
-## Manual Sync
-
-To manually sync changes from tribrid-rag:
-
-```bash
-# From ragweld.com directory
-node scripts/sync-demo.cjs ../tribrid-rag/web
-npm --prefix vendor/demo install
-npm run build
-```
+- `/demo/?corpus=epstein-files-1`
+- `/demo/rag?subtab=learning-ranker&corpus=epstein-files-1`
+- `/demo/start`
+- `/glossary/`
 
 ## Architecture
 
+- Astro landing site: `src/`
+- Vendored demo app: `vendor/demo/` (built with Vite, served at `/demo/`)
+- Hosted API: `netlify/functions/api.js` (mapped from `/api/*`)
+- Deploy/runtime config: `netlify.toml`
+
+High-level flow:
+
+1. Astro renders marketing pages and embeds/links the live demo.
+2. `/demo/*` serves the vendored React GUI.
+3. GUI calls same-origin `/api/*` endpoints.
+4. Netlify Function routes and serves backend responses (Neon-backed via Netlify DB).
+
+## Sync + Deploy (concise)
+
+```bash
+# Sync demo UI from sibling ragweld repo
+npm run sync:demo
+
+# Build and validate distributable output
+npm run build
 ```
-ragweld.com/
-├── src/                    # Astro landing page
-│   └── pages/index.astro   # Main page with iframe to /demo/
-├── vendor/
-│   └── demo/               # Vendored tribrid-rag/web
-│       ├── src/
-│       │   └── mocks/      # MSW handlers (ragweld-specific)
-│       └── vite.config.ts  # Patched: base='/demo/'
-└── dist/                   # Built output
-    ├── index.html          # Landing page
-    └── demo/               # Built React app
+
+Netlify build config in this repo uses:
+
+- Build command: `npm run build && node scripts/validate-demo.cjs`
+- Publish directory: `dist`
+
+## Quality Checks
+
+```bash
+# End-to-end tests
+npm run test:e2e
+
+# Single spec
+npx playwright test tests/e2e/landing.spec.ts
 ```
 
 ## License

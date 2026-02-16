@@ -1,4 +1,4 @@
-// TriBridRAG - Chat Interface Component
+// ragweld - Chat Interface Component
 // Main chat UI with message list, input, streaming, and trace panel
 // Reference: /assets/chat tab.png, /assets/chat_built_in.png
 
@@ -38,60 +38,60 @@ const TRIBRID_TIPS = [
   { tip: "Try asking 'Where is X implemented?' rather than 'What is X?' for more precise code locations.", category: "search" },
   { tip: "Multi-query expansion rewrites your question multiple ways to find more relevant results.", category: "rag" },
   { tip: "The reranker scores results by semantic similarity - higher confidence means better matches.", category: "rag" },
-  { tip: "BM25 finds keyword matches while dense search finds semantic meaning - Tri-Brid RAG uses both.", category: "rag" },
+  { tip: "BM25 finds keyword matches while dense search finds semantic meaning - ragweld uses both.", category: "rag" },
   { tip: "Click any citation to open the file directly in VS Code at the exact line number.", category: "ux" },
   { tip: "Fast mode skips reranking for quicker results when you need speed over precision.", category: "rag" },
   { tip: "The confidence score reflects how well the retrieved documents match your query.", category: "rag" },
-  
+
   // Learning Reranker
   { tip: "Every thumbs up/down you give trains the Learning Reranker to better understand your codebase.", category: "feedback" },
   { tip: "The Learning Reranker trains from your mined triplets to improve result ordering over time (MLX Qwen3 when available, otherwise transformers).", category: "feedback" },
-  { tip: "Consistent feedback helps Tri-Brid RAG learn your codebase's unique terminology and patterns.", category: "feedback" },
+  { tip: "Consistent feedback helps ragweld learn your codebase's unique terminology and patterns.", category: "feedback" },
   { tip: "The reranker model checkpoints are saved automatically - your feedback is never lost.", category: "feedback" },
-  
+
   // Prompts & Models
-  { tip: "Custom system prompts let you tailor Tri-Brid RAG's response style to your team's preferences.", category: "config" },
+  { tip: "Custom system prompts let you tailor ragweld's response style to your team's preferences.", category: "config" },
   { tip: "Lower temperature (0.0-0.3) gives more focused answers; higher (0.7+) allows more creativity.", category: "config" },
   { tip: "You can use local models via Ollama for air-gapped environments or cost savings.", category: "config" },
   { tip: "The model automatically fails over to cloud APIs if local inference isn't available.", category: "config" },
-  
+
   // Indexing
-  { tip: "Re-index after major refactors to keep Tri-Brid RAG's understanding of your code current.", category: "indexing" },
+  { tip: "Re-index after major refactors to keep ragweld's understanding of your code current.", category: "indexing" },
   { tip: "The AST chunker preserves function boundaries - results always show complete code blocks.", category: "indexing" },
   { tip: "Chunk summaries provide fast, high-level context about files and classes.", category: "indexing" },
   { tip: "Index stats show when your codebase was last indexed - check Dashboard for details.", category: "indexing" },
-  
+
   // Evaluation & Quality
   { tip: "Run evals regularly to track retrieval quality as your codebase evolves.", category: "eval" },
   { tip: "Eval datasets are your benchmark - add questions that matter to your team.", category: "eval" },
-  { tip: "MRR (Mean Reciprocal Rank) measures how quickly Tri-Brid RAG finds the right answer.", category: "eval" },
+  { tip: "MRR (Mean Reciprocal Rank) measures how quickly ragweld finds the right answer.", category: "eval" },
   { tip: "Compare eval runs to see if config changes improved or regressed retrieval quality.", category: "eval" },
-  
+
   // Tracing & Debugging
-  { tip: "Enable the Routing Trace to see exactly how Tri-Brid RAG found and ranked your results.", category: "debug" },
+  { tip: "Enable the Routing Trace to see exactly how ragweld found and ranked your results.", category: "debug" },
   { tip: "Trace steps show timing for each stage: retrieval, reranking, and generation.", category: "debug" },
-  { tip: "The provider failover trace shows when Tri-Brid RAG switched between local and cloud models.", category: "debug" },
+  { tip: "The provider failover trace shows when ragweld switched between local and cloud models.", category: "debug" },
   { tip: "Use LangSmith integration for detailed traces of the full RAG pipeline.", category: "debug" },
-  
+
   // Keyboard & UX
   { tip: "Press Ctrl+Enter to send messages without clicking the button.", category: "ux" },
   { tip: "Use Ctrl+K anywhere to quickly search settings and jump to any configuration.", category: "ux" },
   { tip: "Export your conversation to JSON for documentation or sharing with teammates.", category: "ux" },
   { tip: "Toggle the side panel to access quick settings without leaving the chat.", category: "ux" },
-  
+
   // Infrastructure
   { tip: "Postgres/pgvector stores your vectors locally - no data leaves your machine unless you use cloud models.", category: "infra" },
   { tip: "Caching can speed up repeated queries (depending on your configuration).", category: "infra" },
   { tip: "The embedded Grafana dashboard shows real-time metrics and query patterns.", category: "infra" },
   { tip: "Docker containers can be configured for different deployment scenarios.", category: "infra" },
-  
+
   // Best Practices
-  { tip: "Ask follow-up questions - Tri-Brid RAG maintains context from your conversation history.", category: "best" },
+  { tip: "Ask follow-up questions - ragweld maintains context from your conversation history.", category: "best" },
   { tip: "Be specific about what you're looking for: 'error handling in auth' beats 'auth code'.", category: "best" },
   { tip: "If results seem off, try rephrasing - different words can surface different code.", category: "best" },
-  { tip: "Check citations to verify the answer - Tri-Brid RAG shows exactly where information came from.", category: "best" },
+  { tip: "Check citations to verify the answer - ragweld shows exactly where information came from.", category: "best" },
   { tip: "Use the repo selector to focus on specific repositories in multi-repo setups.", category: "best" },
-  
+
   // Advanced
   { tip: "Each corpus has isolated storage + graph + configuration - switch corpora to change context.", category: "advanced" },
   { tip: "The MCP server enables IDE integrations - ask your editor about your code.", category: "advanced" },
@@ -733,7 +733,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
 
   // Chat 2.0: composable sources + model picker
   const sourcesInitRef = useRef(false);
-  const [activeSources, setActiveSources] = useState<ActiveSources>({ corpus_ids: ['recall_default'] });
+  const [activeSources, setActiveSources] = useState<ActiveSources>({ corpus_ids: ['epstein-files-1'] });
   const handleSourcesChange = useCallback(
     (next: ActiveSources) => {
       setActiveSources(next);
@@ -768,7 +768,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
     if (sourcesInitRef.current) return;
     if (!config) return;
     sourcesInitRef.current = true;
-    const defaults = config.chat?.default_corpus_ids ?? ['recall_default'];
+    const defaults = config.chat?.default_corpus_ids ?? ['epstein-files-1'];
     setActiveSources({ corpus_ids: defaults });
   }, [config]);
 
@@ -1067,7 +1067,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
       setConversationId(id);
       setMessages(clampChatHistory(Array.isArray(session?.messages) ? session.messages : []));
       setModelOverride(String(session?.model_override || '').trim());
-      setActiveSources((session?.sources || { corpus_ids: ['recall_default'] }) as ActiveSources);
+      setActiveSources((session?.sources || { corpus_ids: ['epstein-files-1'] }) as ActiveSources);
       setLastMatches([]);
       setLastLatencyMs(null);
       setLastRecallPlan(null);
@@ -1147,7 +1147,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
         title: deriveSessionTitle(legacy),
         messages: clampChatHistory(legacy),
         model_override: '',
-        sources: { corpus_ids: ['recall_default'] },
+        sources: { corpus_ids: ['epstein-files-1'] },
       };
       setChatSessions([session]);
       sessionsLoadedRef.current = true;
@@ -1180,7 +1180,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
             title,
             messages: trimmed,
             model_override: String(modelOverride || cur.model_override || '').trim(),
-            sources: (activeSources || cur.sources || { corpus_ids: ['recall_default'] }) as ActiveSources,
+            sources: (activeSources || cur.sources || { corpus_ids: ['epstein-files-1'] }) as ActiveSources,
           };
         } else {
           next = [
@@ -1191,7 +1191,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
               title: deriveSessionTitle(trimmed),
               messages: trimmed,
               model_override: String(modelOverride || '').trim(),
-              sources: (activeSources || { corpus_ids: ['recall_default'] }) as ActiveSources,
+              sources: (activeSources || { corpus_ids: ['epstein-files-1'] }) as ActiveSources,
             },
             ...next,
           ];
@@ -1701,7 +1701,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
       title: 'New chat',
       messages: [],
       model_override: String(modelOverride || '').trim(),
-      sources: (activeSources || { corpus_ids: ['recall_default'] }) as ActiveSources,
+      sources: (activeSources || { corpus_ids: ['epstein-files-1'] }) as ActiveSources,
     };
 
     setChatSessions((prev) => {
@@ -1739,7 +1739,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
         title: 'New chat',
         messages: [],
         model_override: String(modelOverride || '').trim(),
-        sources: (activeSources || { corpus_ids: ['recall_default'] }) as ActiveSources,
+        sources: (activeSources || { corpus_ids: ['epstein-files-1'] }) as ActiveSources,
       };
       remaining = [session];
     }

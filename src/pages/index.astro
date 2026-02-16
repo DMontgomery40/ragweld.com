@@ -9,15 +9,38 @@ import Footer from '../components/Footer.astro';
 ---
 
 <BaseLayout
-  title="ragweld — Tribrid RAG Workbench"
-  description="ragweld is a tribrid RAG workbench: vector+sparse+graph retrieval, benchmarks + eval drilldowns, run diffs across hundreds of parameters, deep configuration + glossary, observability + alerting hooks, and MCP server support."
+  title="ragweld — See inside your RAG pipeline. Then fix it."
+  description="ragweld is an open-source RAG workbench: vector+sparse+graph retrieval, benchmarks + eval drilldowns, run diffs across hundreds of parameters, deep configuration + glossary, observability + alerting hooks, and MCP server support."
   canonical="https://ragweld.com/"
   ogImage="/og-image.png"
 >
+  <Fragment slot="head">
+    <script type="application/ld+json" set:html={JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "ragweld",
+      "description": "Open-source RAG workbench combining vector search, sparse retrieval (BM25), and GraphRAG into one unified system with trainable LoRA reranking, embedded Grafana observability, and 396 configurable parameters.",
+      "url": "https://ragweld.com",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "Linux, macOS, Windows (Docker)",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD",
+        "description": "Free self-hosted (MIT license)"
+      },
+      "author": {
+        "@type": "Person",
+        "name": "David Montgomery",
+        "url": "https://github.com/DMontgomery40"
+      },
+      "codeRepository": "https://github.com/DMontgomery40/ragweld",
+      "license": "https://opensource.org/licenses/MIT"
+    })} />
+  </Fragment>
   <Nav />
   <main>
     <Hero />
-    <LandingScreenshots />
     <section id="what" class="bg-[#09090b] pb-16">
       <div class="mx-auto max-w-7xl px-4">
         <div class="mx-auto max-w-3xl text-center">
@@ -41,107 +64,150 @@ import Footer from '../components/Footer.astro';
         </div>
 
         <div class="mt-10 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+
           <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
             <div class="text-sm font-semibold text-[#64748b]">Retrieval</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Hybrid + graph, fused and inspectable</h3>
+            <h3 class="mt-2 text-lg font-bold text-white">Three retrieval legs, independently tunable</h3>
             <p class="mt-2 text-sm text-gray-400">
-              Tribrid retrieval: vector + sparse + graph legs. Fuse signals, inspect sources, and tune each leg instead
-              of treating retrieval like a black box.
+              Vector, sparse (BM25), and graph — each with its own weights, top-k, similarity thresholds, and fusion
+              parameters. Inspect which leg surfaced each result. Not a black box with one slider.
             </p>
           </div>
 
           <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-[#64748b]">Benchmarks</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Measure regressions, not vibes</h3>
+            <div class="text-sm font-semibold text-[#64748b]">Configuration</div>
+            <h3 class="mt-2 text-lg font-bold text-white">500+ knobs. Every single one tunable.</h3>
             <p class="mt-2 text-sm text-gray-400">
-              Run benchmarks and eval suites, then compare runs to see what changed — with drilldowns and evidence
-              instead of guesswork.
+              Chunking strategy, embedding dimensions, BM25 stemmer language, graph hop depth, reranker batch size,
+              fusion weights, eval thresholds — everything is a parameter, and every parameter is exposed.
+              The <a href="/demo/start" class="text-[#94a3b8] hover:underline">Get Started wizard</a> abstracts
+              them into sliders (Faster↔Thorough, Cheapest↔Smartest, Local↔Cloud) so new users
+              aren't overwhelmed. Power users get the full surface.
+            </p>
+          </div>
+
+          <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
+            <div class="text-sm font-semibold text-[#94a3b8]">Eval pipeline</div>
+            <h3 class="mt-2 text-lg font-bold text-white">CI for retrieval, not "have you tried evals"</h3>
+            <p class="mt-2 text-sm text-gray-400">
+              Schedule nightly eval runs that auto-generate triplets from real user feedback (thumbs up/down).
+              Compare runs across every parameter change with evidence, not guesswork. This isn't a suggestion
+              to "add CI" — it <em class="text-gray-300">is</em> your CI for retrieval quality.
             </p>
           </div>
 
           <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
             <div class="text-sm font-semibold text-[#94a3b8]">Eval drilldown</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Diff the “why”</h3>
+            <h3 class="mt-2 text-lg font-bold text-white">Diff the "why" across 500+ parameters</h3>
             <p class="mt-2 text-sm text-gray-400">
-              Inspect per-query outcomes, retrieval legs, and sources. Diff runs across 200+ parameters (down to
-              embeddings + tokenization), and get a one-click comparison summary of what likely mattered.
+              Per-query, per-source drilldown. Diff two runs down to embeddings, tokenization, chunking strategy,
+              reranker config — all 500+ parameters — and get a one-click analysis of what likely caused the delta.
+              Visual gradient descent for the reranker. Not "here's your MRR number, good luck."
             </p>
           </div>
 
           <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
             <div class="text-sm font-semibold text-gray-300">Reranker</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Trainable SOTA reranking</h3>
+            <h3 class="mt-2 text-lg font-bold text-white">A LoRA training studio, not a reranker checkbox</h3>
             <p class="mt-2 text-sm text-gray-400">
-              Most teams are still fine-tuning cross-encoders. ragweld’s learning reranker trains LoRA adapters and scores with
-              <span class="text-gray-300">yes/no logits</span> (MLX-native on Apple Silicon, with safe fallbacks elsewhere) — plus
-              compare/promote gating so you only ship real improvements.
+              ragweld's learning reranker scores with Qwen3-style
+              <span class="text-gray-300">yes/no logits</span> and trains LoRA adapters on
+              <em class="text-gray-300">your</em> data — automatically, from user feedback. MLX-native on Apple
+              Silicon. Visual gradient descent. Compare/promote gating so you only ship improvements that actually improve.
             </p>
             <p class="mt-3 text-sm text-gray-500">
-              <a href="/blog/posts/cross-encoder-paradigm-shift-qwen3-mlx/" class="text-[#94a3b8] hover:underline">
+              <a href="/blog/posts/learning-reranker-qwen3-mlx/" class="text-[#94a3b8] hover:underline">
                 Read the reranking paradigm shift →
               </a>
             </p>
           </div>
 
           <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-[#64748b]">Tooltips</div>
-            <h3 class="mt-2 text-lg font-bold text-white">A built-in RAG wiki</h3>
+            <div class="text-sm font-semibold text-[#94a3b8]">Grafana</div>
+            <h3 class="mt-2 text-lg font-bold text-white">Live dashboards built into the UI</h3>
             <p class="mt-2 text-sm text-gray-400">
-              Verbose explanations for knobs and tradeoffs — often with direct links to papers, repos, and third-party
-              tools.
+              Not "we integrate with Grafana." Grafana is <em class="text-gray-300">embedded in the workbench</em> in
+              split-screen. Chat in the left panel, watch retrieval metrics in real time on the right. Run an eval
+              and watch precision/recall update live. Run a benchmark and watch latency percentiles as they happen.
             </p>
           </div>
 
           <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-[#94a3b8]">Observability</div>
-            <h3 class="mt-2 text-lg font-bold text-white">See metrics while you run</h3>
+            <div class="text-sm font-semibold text-[#64748b]">Alerting</div>
+            <h3 class="mt-2 text-lg font-bold text-white">MRR drops at 2am? Someone gets woken up.</h3>
             <p class="mt-2 text-sm text-gray-400">
-              Grafana embedded in the UI (split-screen) so you can run a query, eval, or benchmark and watch live
-              metrics in the same workspace — plus alerting hooks for production ops.
+              Slack and Discord webhook alerts on any metric, any threshold. Canary score, MRR, precision, latency
+              p99 — your rules. If Asia is waking up and hitting your RAG endpoint and quality drops, your on-call
+              in the US knows about it before users start complaining. This is production ops plumbing, not a dashboard.
             </p>
           </div>
 
           <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-[#64748b]">Alerts + hooks</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Enterprise-grade, configurable</h3>
+            <div class="text-sm font-semibold text-gray-300">Chat</div>
+            <h3 class="mt-2 text-lg font-bold text-white">Every model. Local, cloud, OpenRouter. All of them.</h3>
             <p class="mt-2 text-sm text-gray-400">
-              Alerting isn’t “on/off” — it’s your rules, your on-call. ragweld provides the plumbing: Slack/Discord
-              webhooks and Alertmanager visibility so production incidents don’t hide in logs.
+              Not "we support GPT-4 and Claude." Literally every model on OpenRouter, every major cloud provider
+              (OpenAI, Anthropic, Google, Cohere, Voyage), every local model via Ollama — including vision.
+              Multi-corpus querying with per-corpus embedding and tokenization configs when your data demands it.
             </p>
           </div>
 
           <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-gray-300">Chat + memory</div>
-            <h3 class="mt-2 text-lg font-bold text-white">A full chat interface, too</h3>
+            <div class="text-sm font-semibold text-gray-300">Recall</div>
+            <h3 class="mt-2 text-lg font-bold text-white">Chat memory that actually works with RAG</h3>
             <p class="mt-2 text-sm text-gray-400">
-              Multi-model chat (including vision inputs), persistent memory (sparse + dense), multi-corpus querying, and
-              per-corpus embeddings/tokenization when your data demands it.
+              Persistent conversation memory (sparse + dense indexed) that combines with corpus retrieval.
+              Smart routing decides when to hit memory, when to hit the corpus, and when to hit both — with
+              configurable weights and intensity levels. Not "we save chat history."
             </p>
             <p class="mt-3 text-sm text-gray-500">
               <a href="/blog/posts/when-to-query-chat-memory-vs-your-corpus/" class="text-[#94a3b8] hover:underline">
-                Read the chat memory routing policy →
+                Read the routing policy →
               </a>
             </p>
           </div>
 
           <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-[#94a3b8]">MCP</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Use it anywhere</h3>
+            <div class="text-sm font-semibold text-[#64748b]">Glossary</div>
+            <h3 class="mt-2 text-lg font-bold text-white">396 parameters, documented with arxiv links</h3>
             <p class="mt-2 text-sm text-gray-400">
-              Built-in MCP server support so you can use TriBridRAG tools from other clients (IDEs, agents, automation)
-              without rewriting integrations for each surface.
+              Every knob has an in-app tooltip explanation. The technical ones link directly to arxiv papers and
+              GitHub repos. The full glossary is also a standalone
+              <a href="/glossary" class="text-[#94a3b8] hover:underline">searchable reference</a> — because
+              "what does RRF_K_DIV do" shouldn't require reading source code.
             </p>
           </div>
+
+          <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
+            <div class="text-sm font-semibold text-[#64748b]">Onboarding</div>
+            <h3 class="mt-2 text-lg font-bold text-white">Five steps to a working RAG pipeline</h3>
+            <p class="mt-2 text-sm text-gray-400">
+              The <a href="/demo/start" class="text-[#94a3b8] hover:underline">Get Started wizard</a>: pick a folder
+              or GitHub repo, index it, ask golden questions, tune with sliders, save. You go from "I just cloned this"
+              to a running, benchmarked pipeline in minutes — not hours of YAML editing.
+            </p>
+          </div>
+
+          <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
+            <div class="text-sm font-semibold text-[#94a3b8]">MCP</div>
+            <h3 class="mt-2 text-lg font-bold text-white">MCP server built in. Table stakes.</h3>
+            <p class="mt-2 text-sm text-gray-400">
+              Use ragweld tools from any MCP client — IDEs, agents, automation pipelines, other apps.
+              HTTP and stdio transports. No separate integration work per surface.
+            </p>
+          </div>
+
         </div>
       </div>
     </section>
 
+    <LandingScreenshots />
     <section id="how" class="bg-[#09090b] pb-20">
       <div class="mx-auto max-w-7xl px-4">
         <div class="mx-auto max-w-3xl text-center">
           <h2 class="text-3xl font-bold text-white">Under the hood</h2>
           <p class="mt-3 text-gray-400">
-            Tribrid retrieval is the spine: vector + sparse + graph signals fused and reranked — then surfaced through a
+            Three-leg retrieval is the spine: vector + sparse + graph signals fused and reranked — then surfaced through a
             workbench that lets you measure and iterate.
           </p>
         </div>

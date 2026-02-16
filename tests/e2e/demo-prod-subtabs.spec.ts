@@ -33,7 +33,7 @@ test('prod demo: exercise every tab + subtab', async ({ page }, testInfo) => {
   expect(Array.isArray(corpora)).toBeTruthy();
   expect(corpora.length).toBeGreaterThan(0);
 
-  const corpusId = String(corpora?.[0]?.corpus_id || corpora?.[0]?.id || 'faxbot');
+  const corpusId = String(corpora?.[0]?.corpus_id || corpora?.[0]?.id || 'epstein-files-1');
   const lastIndexed = corpora?.[0]?.last_indexed ?? corpora?.[0]?.lastIndexed ?? null;
   if (!lastIndexed) {
     failures.push(`Corpus "${corpusId}" has no last_indexed (indexing may not have run).`);

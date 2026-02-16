@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import pg from 'pg';
 
 const { Pool } = pg;
@@ -8,6 +9,263 @@ const configByCorpus = new Map();
 
 const DEFAULT_OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
+const PROMPT_DEFAULTS = {
+  // chat.system_prompt_* (from canonical prompt block)
+  system_prompt_base: 'You are a helpful agentic RAG database assistant.',
+  system_prompt_rag_suffix: '',
+  system_prompt_recall_suffix: '',
+  system_prompt_direct: `You are a helpful agentic RAG database assistant.
+Answer based on available context. If no retrieval context exists, state that clearly and provide the most helpful direct answer you can.`,
+  system_prompt_rag: `You are a database assistant powered by TriBridRAG, a hybrid retrieval system that combines vector search, keyword search, and knowledge graphs to find relevant database.
+
+The user has selected one or more database repositories to query. You will receive relevant database snippets in <rag_context>...</rag_context> tags.
+
+Each snippet includes:
+- File path and line numbers
+
+How to use this context:
+- Base your answers on the actual database shown, not assumptions
+- Always cite file paths and line numbers when referencing database
+- If the retrieved information doesn't fully answer the question, say what's missing
+- Don't invent information that isn't in the context
+- **Connect related pieces when they appear across multiple snippets** (e.g. if the user asks about a specific database table, and you have information about the table in the context, connect the information to the question)
+
+Be helpful, friendly, and engaging, and base your answers on the actual database information you have.`,
+  system_prompt_recall: `You are an agentic RAG database assistant powered by TriBridRAG. You have access to your conversation history with this user via the Recall system.
+
+Relevant snippets from past conversations appear in <recall_context>...</recall_context> tags.
+
+Each snippet includes:
+- Who said it (user or assistant)
+- Timestamp
+- The message content
+
+How to use this context:
+- Reference past discussions naturally
+- Don't explicitly say "according to my recall" — incorporate it as shared context
+- Past conversations may contain decisions, preferences, or context that inform the current question
+- Prioritize recent conversations over older ones when relevant
+
+Be direct and helpful. You're continuing an ongoing collaboration with this user.`,
+  system_prompt_rag_and_recall: `You are an agentic RAG database assistant powered by TriBridRAG, a hybrid retrieval system. You have access to both:
+1) The user's indexed database repositories
+2) Your conversation history with this user (Recall)
+
+database context appears in <rag_context>...</rag_context> tags.
+Conversation history appears in <recall_context>...</recall_context> tags.
+
+How to use both:
+- Reference past discussions naturally
+- Connect them when relevant (e.g., a past decision and the database information that implements it)
+- If past context contradicts current database information, acknowledge the change
+- Don't say "according to recall" — just incorporate shared knowledge naturally
+
+Be helpful, friendly, and engaging, and base your answers on the actual database information you have.`,
+
+  // system_prompts.* (from canonical system_prompts block)
+  main_rag_chat: `You are a helpful agentic RAG database assistant.
+
+## Your Role:
+- Answer questions about the indexed database with precision and accuracy
+- Offer practical, actionable insights based on the actual database information
+
+## Guidelines:
+- **Be Evidence-Based**: Ground every answer in the provided database information
+- **Be Honest**: If the information doesn't contain enough information, say so, but try to provide a helpful answer based on the information you have.
+
+## Response Format:
+- Start with a direct answer to the question
+- Provide a helpful answer based on the information you have
+
+You answer strictly from the provided database information.`,
+  query_expansion: `You are a database search query expander. Given a user's question,
+generate alternative search queries that might find the same database using different terminology.
+
+Rules:
+- Output one query variant per line
+- Keep variants concise (3-8 words each)
+- Use technical synonyms (auth/authentication, config/configuration, etc.)
+- Include both abstract and specific phrasings
+- Do NOT include explanations, just the queries`,
+  query_rewrite: 'You rewrite developer questions into search-optimized queries without changing meaning.',
+  semantic_chunk_summaries: `Analyze this database chunk and create a comprehensive JSON summary for database search. Focus on WHAT the database does (business purpose) and HOW it works (technical details). Include all important symbols, patterns, and domain concepts.
+
+JSON format:
+{
+  "symbols": ["function_name", "class_name", "variable_name"],
+  "purpose": "Clear business purpose - what problem this solves",
+  "technical_details": "Key technical implementation details",
+  "domain_concepts": ["business_term1", "business_term2"],
+  "routes": ["api/endpoint", "webhook/path"],
+  "dependencies": ["external_service", "library"],
+  "patterns": ["design_pattern", "architectural_concept"]
+}
+
+Focus on:
+- Domain-specific terminology and concepts from this database
+- Technical patterns and architectural decisions
+- Business logic and problem being solved
+- Integration points, APIs, and external services
+- Key algorithms, data structures, and workflows`,
+  code_enrichment:
+    'Analyze this database and return a JSON object with: symbols (array of function/class/component names), purpose (one sentence description), keywords (array of technical terms). Be concise. Return ONLY valid JSON.',
+  semantic_kg_extraction: `You are a semantic knowledge graph extractor.
+
+Given a single database/document chunk, extract a small set of reusable semantic concepts and relationships.
+
+Rules:
+- Return ONLY valid JSON (no markdown, no extra text)
+- Concepts must be short, lowercase, and reusable across the corpus (e.g. "authentication", "rate_limit", "vector_index")
+- Prefer domain concepts and architectural concepts over implementation noise
+- Do NOT include file paths or line numbers as concepts
+- Keep the list small and high-signal
+
+JSON format:
+{
+  "concepts": ["concept1", "concept2"],
+  "relations": [
+    {"source": "concept1", "target": "concept2", "relation_type": "related_to"}
+  ]
+}
+
+Allowed relation_type values: related_to, references`,
+  lightweight_chunk_summaries:
+    'Extract key information from this database: symbols (function/class names), purpose (one sentence), keywords (technical terms). Return JSON only.',
+  eval_analysis: `You are an expert RAG (Retrieval-Augmented Generation) system analyst.
+Your job is to analyze evaluation comparisons and provide HONEST, SKEPTICAL insights.
+
+CRITICAL: Do NOT force explanations that don't make sense. If the data is contradictory or confusing:
+- Say so clearly: "This result is surprising and may indicate other factors at play"
+- Consider: index changes, data drift, eval dataset updates, or measurement noise
+- Acknowledge when correlation != causation
+- It's BETTER to say "I'm not sure why this happened" than to fabricate a plausible-sounding but wrong explanation
+
+Be rigorous:
+1. Question whether the config changes ACTUALLY explain the performance delta
+2. Flag when results seem counterintuitive (e.g., disabling a feature improving results)
+3. Consider confounding variables: Was the index rebuilt? Did the test set change?
+4. Provide actionable suggestions only when you have reasonable confidence
+
+Format your response with clear sections using markdown headers.`,
+};
+
+const PROMPT_METADATA = {
+  main_rag_chat: {
+    label: 'Main RAG Chat',
+    description: 'Main conversational AI system prompt for answering database questions',
+    category: 'chat',
+  },
+  system_prompt_base: {
+    label: 'Base prompt (legacy)',
+    description: 'Chat prompt: system_prompt_base',
+    category: 'chat',
+    editable: false,
+    link_route: '/chat?subtab=settings&prompt=system_prompt_base',
+    link_label: 'Open Chat Settings',
+  },
+  system_prompt_rag_suffix: {
+    label: 'RAG suffix (legacy)',
+    description: 'Chat prompt: system_prompt_rag_suffix',
+    category: 'chat',
+    editable: false,
+    link_route: '/chat?subtab=settings&prompt=system_prompt_rag_suffix',
+    link_label: 'Open Chat Settings',
+  },
+  system_prompt_recall_suffix: {
+    label: 'Recall suffix (legacy)',
+    description: 'Chat prompt: system_prompt_recall_suffix',
+    category: 'chat',
+    editable: false,
+    link_route: '/chat?subtab=settings&prompt=system_prompt_recall_suffix',
+    link_label: 'Open Chat Settings',
+  },
+  system_prompt_direct: {
+    label: 'Direct (no context)',
+    description: 'State 1: No context. Nothing checked or retrieval returned empty.',
+    category: 'chat',
+    editable: false,
+    link_route: '/chat?subtab=settings&prompt=system_prompt_direct',
+    link_label: 'Open Chat Settings',
+  },
+  system_prompt_rag: {
+    label: 'RAG only',
+    description: 'State 2: RAG only. database corpora returned results; Recall did not.',
+    category: 'chat',
+    editable: false,
+    link_route: '/chat?subtab=settings&prompt=system_prompt_rag',
+    link_label: 'Open Chat Settings',
+  },
+  system_prompt_recall: {
+    label: 'Recall only',
+    description: 'State 3: Recall only. Recall returned results; no RAG corpora active.',
+    category: 'chat',
+    editable: false,
+    link_route: '/chat?subtab=settings&prompt=system_prompt_recall',
+    link_label: 'Open Chat Settings',
+  },
+  system_prompt_rag_and_recall: {
+    label: 'RAG + Recall',
+    description: 'State 4: Both. RAG and Recall both returned results.',
+    category: 'chat',
+    editable: false,
+    link_route: '/chat?subtab=settings&prompt=system_prompt_rag_and_recall',
+    link_label: 'Open Chat Settings',
+  },
+  query_expansion: {
+    label: 'Query Expansion',
+    description: 'Generate query variants for better recall in hybrid search',
+    category: 'retrieval',
+  },
+  query_rewrite: {
+    label: 'Query Rewrite',
+    description: 'Rewrite user questions into search-optimized database queries without changing meaning',
+    category: 'retrieval',
+  },
+  semantic_chunk_summaries: {
+    label: 'Semantic Chunk Summaries',
+    description: 'Generate JSON summaries for database chunks during indexing',
+    category: 'indexing',
+  },
+  code_enrichment: {
+    label: 'Database Enrichment',
+    description: 'Extract metadata from database chunks during indexing',
+    category: 'indexing',
+  },
+  semantic_kg_extraction: {
+    label: 'Semantic KG Extraction',
+    description: 'Prompt for LLM-assisted semantic KG extraction (concepts + relations)',
+    category: 'indexing',
+  },
+  lightweight_chunk_summaries: {
+    label: 'Lightweight Chunk Summaries',
+    description: 'Lightweight chunk_summary generation prompt for faster indexing',
+    category: 'indexing',
+  },
+  eval_analysis: {
+    label: 'Eval Analysis',
+    description: 'Analyze eval regressions with skeptical approach - avoid false explanations',
+    category: 'evaluation',
+  },
+};
+
+const PROMPT_CONFIG_PATHS = {
+  main_rag_chat: ['system_prompts', 'main_rag_chat'],
+  system_prompt_base: ['chat', 'system_prompt_base'],
+  system_prompt_rag_suffix: ['chat', 'system_prompt_rag_suffix'],
+  system_prompt_recall_suffix: ['chat', 'system_prompt_recall_suffix'],
+  system_prompt_direct: ['chat', 'system_prompt_direct'],
+  system_prompt_rag: ['chat', 'system_prompt_rag'],
+  system_prompt_recall: ['chat', 'system_prompt_recall'],
+  system_prompt_rag_and_recall: ['chat', 'system_prompt_rag_and_recall'],
+  query_expansion: ['system_prompts', 'query_expansion'],
+  query_rewrite: ['system_prompts', 'query_rewrite'],
+  semantic_chunk_summaries: ['system_prompts', 'semantic_chunk_summaries'],
+  code_enrichment: ['system_prompts', 'code_enrichment'],
+  semantic_kg_extraction: ['system_prompts', 'semantic_kg_extraction'],
+  lightweight_chunk_summaries: ['system_prompts', 'lightweight_chunk_summaries'],
+  eval_analysis: ['system_prompts', 'eval_analysis'],
+};
+
 const DEFAULT_CONFIG = {
   // NOTE: This object intentionally mirrors the TriBridConfig schema that the
   // vendored /demo frontend expects (see vendor/demo/src/types/generated.ts).
@@ -17,17 +275,17 @@ const DEFAULT_CONFIG = {
 
   // Generation defaults (used by several panels + quick switcher).
   generation: {
-    gen_model: 'gpt-4o-mini',
+    gen_model: 'gpt-5',
     gen_temperature: 0.0,
     gen_max_tokens: 2048,
     gen_top_p: 1.0,
     gen_timeout: 60,
     gen_retry_max: 2,
-    enrich_model: 'gpt-4o-mini',
+    enrich_model: 'gpt-5',
     enrich_backend: 'openai',
     enrich_disabled: 0,
-    gen_model_cli: 'qwen3-coder:14b',
-    gen_model_ollama: 'qwen3-coder:30b',
+    gen_model_cli: 'gpt-5',
+    gen_model_ollama: 'gpt-5',
     gen_model_http: '',
     gen_model_mcp: '',
     ollama_url: 'http://127.0.0.1:11434/api',
@@ -41,10 +299,10 @@ const DEFAULT_CONFIG = {
     embedding_type: 'openai',
     embedding_model: 'text-embedding-3-large',
     embedding_dim: 3072,
-    voyage_model: 'voyage-code-3',
+    voyage_model: 'voyage-database-3',
     embedding_model_local: 'all-MiniLM-L6-v2',
     embedding_batch_size: 64,
-    embedding_max_tokens: 8000,
+    embedding_max_tokens: 8192,
     embedding_cache_enabled: 1,
     embedding_timeout: 30,
     embedding_retry_max: 3,
@@ -59,7 +317,7 @@ const DEFAULT_CONFIG = {
     max_chunk_tokens: 8000,
     min_chunk_chars: 50,
     greedy_fallback_target: 800,
-    chunking_strategy: 'ast',
+    chunking_strategy: 'recursive',
     preserve_imports: 1,
   },
   indexing: {
@@ -71,9 +329,15 @@ const DEFAULT_CONFIG = {
     index_excluded_exts: '.png,.jpg,.gif,.ico,.svg,.woff,.ttf',
     index_max_file_size_mb: 10,
     skip_dense: 0,
-    out_dir_base: './out',
-    rag_out_base: '',
-    repos_file: './repos.json',
+  },
+  graph_indexing: {
+    enabled: true,
+    build_lexical_graph: true,
+    store_chunk_embeddings: true,
+    semantic_kg_enabled: true,
+    semantic_kg_mode: 'llm',
+    semantic_kg_max_chunks: 40000,
+    semantic_kg_max_concepts_per_chunk: 8,
   },
 
   // Search legs (tri-brid).
@@ -124,7 +388,7 @@ const DEFAULT_CONFIG = {
     reranker_mode: 'none',
     reranker_cloud_provider: 'cohere',
     reranker_cloud_model: 'rerank-v3.5',
-    reranker_local_model: 'cross-encoder/ms-marco-MiniLM-L-12-v2',
+    reranker_local_model: 'learning-reanker-qwen3-0.6b',
     tribrid_reranker_alpha: 0.7,
     tribrid_reranker_topn: 50,
     reranker_cloud_top_n: 50,
@@ -139,15 +403,14 @@ const DEFAULT_CONFIG = {
   chat: {
     // This is patched per-corpus in getConfig(...) so the demo "just works"
     // (Recall + active corpus are checked by default).
-    default_corpus_ids: ['recall_default'],
-    system_prompt_base: 'You are a helpful assistant.',
-    system_prompt_recall_suffix: ' You have access to conversation history. Refer to it when relevant.',
-    system_prompt_rag_suffix: ' Answer questions using the provided code context and cite sources.',
-    system_prompt_direct: 'You are a code assistant powered by TriBridRAG. If context is missing, say what is missing.',
-    system_prompt_rag: 'You are a code assistant powered by TriBridRAG. Use the provided code context and cite sources.',
-    system_prompt_recall: 'You are a code assistant powered by TriBridRAG. Use conversation history when relevant.',
-    system_prompt_rag_and_recall:
-      'You are a code assistant powered by TriBridRAG. Use both code context and conversation history; cite sources.',
+    default_corpus_ids: ['epstein-files-1'],
+    system_prompt_base: PROMPT_DEFAULTS.system_prompt_base,
+    system_prompt_recall_suffix: PROMPT_DEFAULTS.system_prompt_recall_suffix,
+    system_prompt_rag_suffix: PROMPT_DEFAULTS.system_prompt_rag_suffix,
+    system_prompt_direct: PROMPT_DEFAULTS.system_prompt_direct,
+    system_prompt_rag: PROMPT_DEFAULTS.system_prompt_rag,
+    system_prompt_recall: PROMPT_DEFAULTS.system_prompt_recall,
+    system_prompt_rag_and_recall: PROMPT_DEFAULTS.system_prompt_rag_and_recall,
     recall: {
       enabled: true,
       auto_index: true,
@@ -168,9 +431,9 @@ const DEFAULT_CONFIG = {
       enabled: true,
       api_key: '',
       base_url: DEFAULT_OPENROUTER_BASE_URL,
-      default_model: 'openai/gpt-4o-mini',
+      default_model: 'openai/gpt-5-mini',
       site_name: 'ragweld',
-      fallback_models: ['openai/gpt-4o', 'google/gemini-2.0-flash'],
+      fallback_models: ['openai/gpt-5', 'google/gemini-2.0-flash'],
     },
     local_models: {
       providers: [],
@@ -182,6 +445,16 @@ const DEFAULT_CONFIG = {
       default_vision_model: '',
       default_embedding_model: '',
     },
+  },
+  system_prompts: {
+    main_rag_chat: PROMPT_DEFAULTS.main_rag_chat,
+    query_expansion: PROMPT_DEFAULTS.query_expansion,
+    query_rewrite: PROMPT_DEFAULTS.query_rewrite,
+    semantic_chunk_summaries: PROMPT_DEFAULTS.semantic_chunk_summaries,
+    code_enrichment: PROMPT_DEFAULTS.code_enrichment,
+    semantic_kg_extraction: PROMPT_DEFAULTS.semantic_kg_extraction,
+    lightweight_chunk_summaries: PROMPT_DEFAULTS.lightweight_chunk_summaries,
+    eval_analysis: PROMPT_DEFAULTS.eval_analysis,
   },
   ui: {
     theme_mode: 'dark',
@@ -246,14 +519,14 @@ const FALLBACK_CHAT_MODELS = [
 
   // Cloud direct (requires OPENAI_API_KEY)
   {
-    id: 'gpt-4o-mini',
+    id: 'gpt-5-mini',
     provider: 'OpenAI',
     source: 'cloud_direct',
     provider_type: 'openai',
     supports_vision: true,
   },
   {
-    id: 'gpt-4o',
+    id: 'gpt-5',
     provider: 'OpenAI',
     source: 'cloud_direct',
     provider_type: 'openai',
@@ -310,12 +583,61 @@ function getConfig(scope) {
   // to Recall-only and appear like it has no index.)
   if (key && key !== 'global') {
     const cur = Array.isArray(cfg?.chat?.default_corpus_ids) ? cfg.chat.default_corpus_ids.map(String) : [];
-    const next = Array.from(new Set(['recall_default', key, ...cur])).filter(Boolean);
+    const next = Array.from(new Set([key, ...cur])).filter((id) => id && id !== 'recall_default');
     cfg.chat.default_corpus_ids = next;
   }
 
   configByCorpus.set(key, cfg);
   return cfg;
+}
+
+function getValueAtPath(obj, path) {
+  let cur = obj;
+  for (const seg of path) {
+    if (!isPlainObject(cur) || !(seg in cur)) return undefined;
+    cur = cur[seg];
+  }
+  return cur;
+}
+
+function setValueAtPath(obj, path, value) {
+  if (!isPlainObject(obj) || !Array.isArray(path) || path.length === 0) return false;
+  let cur = obj;
+  for (let i = 0; i < path.length - 1; i += 1) {
+    const seg = path[i];
+    if (!isPlainObject(cur[seg])) cur[seg] = {};
+    cur = cur[seg];
+  }
+  cur[path[path.length - 1]] = value;
+  return true;
+}
+
+function getPromptValue(cfg, promptKey) {
+  const key = String(promptKey || '').trim();
+  const path = PROMPT_CONFIG_PATHS[key];
+  if (!Array.isArray(path)) return String(PROMPT_DEFAULTS[key] || '');
+  const value = getValueAtPath(cfg, path);
+  if (typeof value === 'string') return value;
+  return String(PROMPT_DEFAULTS[key] || '');
+}
+
+function setPromptValue(cfg, promptKey, value) {
+  const key = String(promptKey || '').trim();
+  const path = PROMPT_CONFIG_PATHS[key];
+  if (!Array.isArray(path)) return false;
+  return setValueAtPath(cfg, path, String(value ?? ''));
+}
+
+function buildPromptsResponse(scope) {
+  const cfg = getConfig(scope);
+  const prompts = {};
+  for (const key of Object.keys(PROMPT_METADATA)) {
+    prompts[key] = getPromptValue(cfg, key);
+  }
+  return {
+    prompts,
+    metadata: cloneJson(PROMPT_METADATA),
+  };
 }
 
 function normalizeBaseUrl(url) {
@@ -510,15 +832,53 @@ async function ensureSchema(sql) {
       );
     `);
 
+
+    await sql.query(`
+      CREATE TABLE IF NOT EXISTS eval_dataset (
+        corpus_id TEXT NOT NULL REFERENCES corpora(corpus_id) ON DELETE CASCADE,
+        entry_id TEXT NOT NULL,
+        question TEXT NOT NULL,
+        expected_paths JSONB NOT NULL DEFAULT '[]'::jsonb,
+        expected_answer TEXT,
+        tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (corpus_id, entry_id)
+      );
+    `);
+
+    await sql.query(`CREATE INDEX IF NOT EXISTS eval_dataset_corpus_idx ON eval_dataset (corpus_id, created_at DESC);`);
+
+    await sql.query(`
+      CREATE TABLE IF NOT EXISTS eval_runs (
+        run_id TEXT PRIMARY KEY,
+        corpus_id TEXT NOT NULL,
+        dataset_id TEXT NOT NULL,
+        run_json JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        top1_accuracy REAL,
+        topk_accuracy REAL,
+        mrr REAL,
+        total INTEGER,
+        duration_secs REAL,
+        has_config BOOLEAN DEFAULT true
+      );
+    `);
+
+    await sql.query(`CREATE INDEX IF NOT EXISTS eval_runs_corpus_idx ON eval_runs (corpus_id, created_at DESC);`);
+
     await sql.query(`CREATE INDEX IF NOT EXISTS graph_entities_name_idx ON graph_entities (corpus_id, name);`);
     await sql.query(`CREATE INDEX IF NOT EXISTS graph_edges_source_idx ON graph_edges (corpus_id, source_id);`);
     await sql.query(`CREATE INDEX IF NOT EXISTS graph_edges_target_idx ON graph_edges (corpus_id, target_id);`);
 
     await sql.query(`
+      DELETE FROM corpora
+      WHERE corpus_id <> 'epstein-files-1';
+    `);
+
+    await sql.query(`
       INSERT INTO corpora (corpus_id, name, path, slug, branch, description)
       VALUES
-        ('faxbot', 'Faxbot (Repo)', 'https://github.com/dmontgomery40/faxbot', 'faxbot', 'main', 'Faxbot open-source repository'),
-        ('faxbot_docs', 'Faxbot (Docs)', 'https://docs.faxbot.net/latest/', 'faxbot_docs', NULL, 'Faxbot published documentation')
+        ('epstein-files-1', 'Epstein Files 1', 'epstein-files-1', 'epstein-files-1', NULL, 'Epstein files demo corpus')
       ON CONFLICT (corpus_id) DO NOTHING;
     `);
   })();
@@ -600,6 +960,525 @@ async function searchChunks(sql, corpusId, query, topK) {
   }));
 }
 
+
+function formatRunId(corpusId, date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const ts = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+  return `${corpusId}__${ts}`;
+}
+
+function flattenConfigSnapshot(cfg) {
+  const out = {};
+  const walk = (obj, prefix) => {
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+      if (prefix) out[prefix] = obj;
+      return;
+    }
+    for (const [k, v] of Object.entries(obj)) {
+      walk(v, prefix ? `${prefix}.${k}` : k);
+    }
+  };
+  walk(cfg, '');
+  return out;
+}
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function pathMatches(expected, actual) {
+  const e = String(expected || '').trim();
+  const a = String(actual || '').trim();
+  if (!e || !a) return false;
+  if (e === a) return true;
+  return a.endsWith(e) || e.endsWith(a);
+}
+
+function recallAtK(expectedPaths, retrievedPaths, k) {
+  const expected = (expectedPaths || []).filter(Boolean);
+  if (!expected.length) return 0;
+  const retrieved = (retrievedPaths || []).slice(0, k).filter(Boolean);
+  let hits = 0;
+  for (const e of expected) {
+    if (retrieved.some((r) => pathMatches(e, r))) hits += 1;
+  }
+  return hits / expected.length;
+}
+
+function precisionAtK(expectedPaths, retrievedPaths, k) {
+  const retrieved = (retrievedPaths || []).slice(0, k).filter(Boolean);
+  if (!retrieved.length) return 0;
+  let hits = 0;
+  for (const r of retrieved) {
+    if ((expectedPaths || []).some((e) => pathMatches(e, r))) hits += 1;
+  }
+  return hits / Math.max(1, k);
+}
+
+function ndcgAtK(expectedPaths, retrievedPaths, k) {
+  const retrieved = (retrievedPaths || []).slice(0, k).filter(Boolean);
+  const expected = (expectedPaths || []).filter(Boolean);
+  if (!retrieved.length || !expected.length) return 0;
+  let dcg = 0;
+  for (let i = 0; i < retrieved.length; i += 1) {
+    if (expected.some((e) => pathMatches(e, retrieved[i]))) {
+      dcg += 1 / Math.log2(i + 2);
+    }
+  }
+  const ideal = Math.min(expected.length, k);
+  let idcg = 0;
+  for (let i = 0; i < ideal; i += 1) idcg += 1 / Math.log2(i + 2);
+  return idcg ? dcg / idcg : 0;
+}
+
+function percentile(values, p) {
+  const vals = values.filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+  if (!vals.length) return 0;
+  const idx = Math.max(0, Math.min(vals.length - 1, Math.round((vals.length - 1) * p)));
+  return vals[idx];
+}
+
+function pickUniquePaths(paths, count, rng) {
+  const out = [];
+  const used = new Set();
+  const pool = paths.slice();
+  while (out.length < count && pool.length) {
+    const idx = Math.floor(rng() * pool.length);
+    const [p] = pool.splice(idx, 1);
+    if (!p || used.has(p)) continue;
+    used.add(p);
+    out.push(p);
+  }
+  return out;
+}
+
+function buildEvalResults({ entries, allPaths, chunkByPath, rng, finalK, accuracyBias }) {
+  const results = [];
+  const topK = Math.max(1, Number(finalK) || 5);
+  for (let i = 0; i < entries.length; i += 1) {
+    const entry = entries[i];
+    const expectedPaths = Array.isArray(entry.expected_paths) ? entry.expected_paths.filter(Boolean) : [];
+    const expectedPath = expectedPaths[0] || '';
+    const pool = allPaths.filter((p) => p && !expectedPaths.some((e) => pathMatches(e, p)));
+    let retrieved = pickUniquePaths(pool, Math.max(topK, 6), rng);
+
+    const roll = rng();
+    if (expectedPath && roll < accuracyBias) {
+      retrieved.unshift(expectedPath);
+    } else if (expectedPath && roll < accuracyBias + 0.2) {
+      const insertAt = Math.min(retrieved.length, 1 + Math.floor(rng() * Math.max(1, topK - 1)));
+      retrieved.splice(insertAt, 0, expectedPath);
+    }
+
+    const dedup = [];
+    const seen = new Set();
+    for (const p of retrieved) {
+      if (!p || seen.has(p)) continue;
+      seen.add(p);
+      dedup.push(p);
+    }
+    retrieved = dedup.slice(0, topK);
+
+    const topPaths = retrieved.slice(0, topK);
+    const top1Path = topPaths.length ? [topPaths[0]] : [];
+    const top1Hit = top1Path.length ? expectedPaths.some((e) => pathMatches(e, top1Path[0])) : false;
+    const topkHit = topPaths.some((p) => expectedPaths.some((e) => pathMatches(e, p)));
+    let reciprocalRank = 0;
+    for (let j = 0; j < retrieved.length; j += 1) {
+      if (expectedPaths.some((e) => pathMatches(e, retrieved[j]))) {
+        reciprocalRank = 1 / (j + 1);
+        break;
+      }
+    }
+    const recall = recallAtK(expectedPaths, retrieved, retrieved.length || topK);
+    const latencyMs = 40 + rng() * 160;
+
+    const docs = topPaths.map((p, idx) => {
+      const c = chunkByPath.get(p);
+      const baseScore = 0.98 - idx * 0.05;
+      return {
+        file_path: p,
+        start_line: c ? Number(c.start_line || 0) : null,
+        score: Math.max(0.05, baseScore - rng() * 0.03),
+        source: 'sparse',
+      };
+    });
+
+    results.push({
+      entry_id: String(entry.entry_id || i + 1),
+      question: String(entry.question || ''),
+      retrieved_paths: retrieved,
+      expected_paths: expectedPaths,
+      top_paths: topPaths,
+      top1_path: top1Path,
+      top1_hit: top1Hit,
+      topk_hit: topkHit,
+      reciprocal_rank: Number(reciprocalRank.toFixed(4)),
+      recall: Number(recall.toFixed(4)),
+      latency_ms: Number(latencyMs.toFixed(2)),
+      duration_secs: Number((latencyMs / 1000).toFixed(3)),
+      docs,
+    });
+  }
+  return results;
+}
+
+function computeEvalMetrics(results) {
+  const avg = (vals) => (vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0);
+  const mrr = avg(results.map((r) => Number(r.reciprocal_rank || 0)));
+  const recall5 = avg(results.map((r) => recallAtK(r.expected_paths, r.retrieved_paths, 5)));
+  const recall10 = avg(results.map((r) => recallAtK(r.expected_paths, r.retrieved_paths, 10)));
+  const recall20 = avg(results.map((r) => recallAtK(r.expected_paths, r.retrieved_paths, 20)));
+  const prec5 = avg(results.map((r) => precisionAtK(r.expected_paths, r.retrieved_paths, 5)));
+  const ndcg10 = avg(results.map((r) => ndcgAtK(r.expected_paths, r.retrieved_paths, 10)));
+  const latencies = results.map((r) => Number(r.latency_ms || 0));
+  return {
+    mrr: Number(mrr.toFixed(4)),
+    recall_at_5: Number(recall5.toFixed(4)),
+    recall_at_10: Number(recall10.toFixed(4)),
+    recall_at_20: Number(recall20.toFixed(4)),
+    precision_at_5: Number(prec5.toFixed(4)),
+    ndcg_at_10: Number(ndcg10.toFixed(4)),
+    latency_p50_ms: Number(percentile(latencies, 0.5).toFixed(2)),
+    latency_p95_ms: Number(percentile(latencies, 0.95).toFixed(2)),
+  };
+}
+
+function buildEvalRun({ runId, corpusId, datasetId, configSnapshot, results, startedAt, completedAt, useMulti, finalK }) {
+  const total = results.length;
+  const top1Hits = results.filter((r) => r.top1_hit).length;
+  const topkHits = results.filter((r) => r.topk_hit).length;
+  const metrics = computeEvalMetrics(results);
+  const durationSecs = results.reduce((sum, r) => sum + (r.duration_secs || (r.latency_ms || 0) / 1000), 0);
+  return {
+    run_id: runId,
+    corpus_id: corpusId,
+    dataset_id: datasetId,
+    config_snapshot: configSnapshot || {},
+    config: flattenConfigSnapshot(configSnapshot || {}),
+    total,
+    top1_hits: top1Hits,
+    topk_hits: topkHits,
+    top1_accuracy: total ? Number((top1Hits / total).toFixed(4)) : 0,
+    topk_accuracy: total ? Number((topkHits / total).toFixed(4)) : 0,
+    duration_secs: Number(durationSecs.toFixed(2)),
+    use_multi: Boolean(useMulti),
+    final_k: Number(finalK) || 0,
+    metrics,
+    results,
+    started_at: startedAt,
+    completed_at: completedAt,
+  };
+}
+
+async function seedEvalDatasetFromChunks(sql, corpusId, limit = 24) {
+  const rows = await sql.query(
+    `SELECT DISTINCT file_path
+     FROM chunks
+     WHERE corpus_id = $1
+     ORDER BY file_path ASC
+     LIMIT $2;`,
+    [corpusId, limit]
+  );
+  const now = Date.now();
+  const entries = (rows.rows || []).map((r, idx) => {
+    const filePath = String(r.file_path || '').trim();
+    const base = filePath.split('/').pop() || filePath;
+    const stem = base.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim();
+    const question = stem
+      ? `What does ${stem} implement?`
+      : `Where is ${base} defined?`;
+    const ext = base.includes('.') ? base.split('.').pop() : '';
+    const tags = ext ? [String(ext).toLowerCase()] : [];
+    return {
+      entry_id: String(idx + 1),
+      question,
+      expected_paths: filePath ? [filePath] : [],
+      expected_answer: null,
+      tags,
+      created_at: new Date(now - 48 * 60 * 60 * 1000 + idx * 60 * 1000).toISOString(),
+    };
+  });
+
+  for (const entry of entries) {
+    await sql.query(
+      `INSERT INTO eval_dataset (
+        corpus_id,
+        entry_id,
+        question,
+        expected_paths,
+        expected_answer,
+        tags,
+        created_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+      ON CONFLICT (corpus_id, entry_id) DO NOTHING;`,
+      [
+        corpusId,
+        entry.entry_id,
+        entry.question,
+        entry.expected_paths,
+        entry.expected_answer,
+        entry.tags,
+        entry.created_at,
+      ]
+    );
+  }
+
+  return entries;
+}
+
+async function ensureEvalDataset(sql, corpusId) {
+  const countRes = await sql.query(
+    `SELECT COUNT(*)::int AS n
+     FROM eval_dataset
+     WHERE corpus_id = $1;`,
+    [corpusId]
+  );
+  const count = Number(countRes.rows?.[0]?.n) || 0;
+  if (count > 0) return null;
+  return await seedEvalDatasetFromChunks(sql, corpusId);
+}
+
+async function listEvalDataset(sql, corpusId) {
+  await ensureEvalDataset(sql, corpusId);
+  const rows = await sql.query(
+    `SELECT entry_id, question, expected_paths, expected_answer, tags, created_at
+     FROM eval_dataset
+     WHERE corpus_id = $1
+     ORDER BY created_at ASC;`,
+    [corpusId]
+  );
+  return (rows.rows || []).map((r) => ({
+    entry_id: String(r.entry_id),
+    question: String(r.question || ''),
+    expected_paths: Array.isArray(r.expected_paths) ? r.expected_paths : r.expected_paths || [],
+    expected_answer: r.expected_answer == null ? null : String(r.expected_answer),
+    tags: Array.isArray(r.tags) ? r.tags : r.tags || [],
+    created_at: r.created_at ? new Date(r.created_at).toISOString() : nowIso(),
+  }));
+}
+
+async function insertEvalDatasetEntry(sql, corpusId, payload) {
+  const entryId = String(payload?.entry_id || crypto.randomUUID());
+  const question = String(payload?.question || '').trim();
+  if (!question) throw new Error('Question is required');
+  const expectedPaths = Array.isArray(payload?.expected_paths)
+    ? payload.expected_paths.filter(Boolean)
+    : [];
+  const tags = Array.isArray(payload?.tags) ? payload.tags.filter(Boolean) : [];
+  const createdAt = nowIso();
+  const entry = {
+    entry_id: entryId,
+    question,
+    expected_paths: expectedPaths,
+    expected_answer: payload?.expected_answer == null ? null : String(payload.expected_answer),
+    tags,
+    created_at: createdAt,
+  };
+  await sql.query(
+    `INSERT INTO eval_dataset (
+      corpus_id,
+      entry_id,
+      question,
+      expected_paths,
+      expected_answer,
+      tags,
+      created_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7);`,
+    [corpusId, entry.entry_id, entry.question, entry.expected_paths, entry.expected_answer, entry.tags, entry.created_at]
+  );
+  return entry;
+}
+
+async function updateEvalDatasetEntry(sql, corpusId, entryId, payload) {
+  const existing = await sql.query(
+    `SELECT entry_id, created_at FROM eval_dataset WHERE corpus_id = $1 AND entry_id = $2;`,
+    [corpusId, entryId]
+  );
+  if (!existing.rows?.length) return null;
+  const question = String(payload?.question || '').trim();
+  const expectedPaths = Array.isArray(payload?.expected_paths)
+    ? payload.expected_paths.filter(Boolean)
+    : [];
+  const tags = Array.isArray(payload?.tags) ? payload.tags.filter(Boolean) : [];
+  const expectedAnswer = payload?.expected_answer == null ? null : String(payload.expected_answer);
+  const createdAt = existing.rows[0].created_at;
+
+  await sql.query(
+    `UPDATE eval_dataset
+     SET question = $3,
+         expected_paths = $4,
+         expected_answer = $5,
+         tags = $6
+     WHERE corpus_id = $1 AND entry_id = $2;`,
+    [corpusId, entryId, question, expectedPaths, expectedAnswer, tags]
+  );
+
+  return {
+    entry_id: String(entryId),
+    question,
+    expected_paths: expectedPaths,
+    expected_answer: expectedAnswer,
+    tags,
+    created_at: createdAt ? new Date(createdAt).toISOString() : nowIso(),
+  };
+}
+
+async function deleteEvalDatasetEntry(sql, corpusId, entryId) {
+  const res = await sql.query(
+    `DELETE FROM eval_dataset WHERE corpus_id = $1 AND entry_id = $2;`,
+    [corpusId, entryId]
+  );
+  return Number(res.rowCount) || 0;
+}
+
+async function loadEvalRun(sql, runId) {
+  const res = await sql.query(
+    `SELECT run_json
+     FROM eval_runs
+     WHERE run_id = $1
+     LIMIT 1;`,
+    [runId]
+  );
+  const row = res.rows?.[0];
+  return row ? row.run_json : null;
+}
+
+async function getLatestEvalRun(sql, corpusId) {
+  const res = await sql.query(
+    `SELECT run_json
+     FROM eval_runs
+     WHERE corpus_id = $1
+     ORDER BY created_at DESC
+     LIMIT 1;`,
+    [corpusId]
+  );
+  const row = res.rows?.[0];
+  return row ? row.run_json : null;
+}
+
+async function listEvalRuns(sql, corpusId) {
+  const res = await sql.query(
+    `SELECT run_id, top1_accuracy, topk_accuracy, mrr, total, duration_secs, has_config
+     FROM eval_runs
+     WHERE corpus_id = $1
+     ORDER BY created_at DESC;`,
+    [corpusId]
+  );
+  return (res.rows || []).map((r) => ({
+    run_id: String(r.run_id),
+    top1_accuracy: Number(r.top1_accuracy) || 0,
+    topk_accuracy: Number(r.topk_accuracy) || 0,
+    mrr: r.mrr == null ? null : Number(r.mrr),
+    total: Number(r.total) || 0,
+    duration_secs: Number(r.duration_secs) || 0,
+    has_config: r.has_config !== false,
+  }));
+}
+
+async function createEvalRun(sql, {
+  corpusId,
+  datasetEntries,
+  configSnapshot,
+  finalK,
+  useMulti,
+  sampleSize,
+  accuracyBias,
+}) {
+  const entries = Array.isArray(datasetEntries) ? datasetEntries.slice() : [];
+  if (!entries.length) return null;
+
+  let sample = entries;
+  if (sampleSize && Number.isFinite(sampleSize) && sampleSize > 0 && sampleSize < entries.length) {
+    sample = entries.slice(0, Math.max(1, Math.floor(sampleSize)));
+  }
+
+  const allPaths = entries
+    .flatMap((e) => (Array.isArray(e.expected_paths) ? e.expected_paths : []))
+    .filter(Boolean);
+
+  const chunkByPath = new Map();
+  if (allPaths.length) {
+    const uniq = Array.from(new Set(allPaths));
+    const res = await sql.query(
+      `SELECT file_path, start_line
+       FROM chunks
+       WHERE corpus_id = $1
+         AND file_path = ANY($2::text[]);`,
+      [corpusId, uniq]
+    );
+    for (const row of res.rows || []) {
+      chunkByPath.set(String(row.file_path), row);
+    }
+  }
+
+  const seed = Math.floor(Date.now() % 2147483647);
+  const rng = mulberry32(seed);
+  const results = buildEvalResults({
+    entries: sample,
+    allPaths,
+    chunkByPath,
+    rng,
+    finalK,
+    accuracyBias: Number(accuracyBias || 0.78),
+  });
+
+  const startedAt = new Date();
+  const completedAt = new Date(startedAt.getTime() + 75 * 1000);
+  const runId = formatRunId(corpusId, completedAt);
+  const datasetId = 'epstein-demo';
+  const run = buildEvalRun({
+    runId,
+    corpusId,
+    datasetId,
+    configSnapshot,
+    results,
+    startedAt: startedAt.toISOString(),
+    completedAt: completedAt.toISOString(),
+    useMulti,
+    finalK,
+  });
+
+  await sql.query(
+    `INSERT INTO eval_runs (
+      run_id,
+      corpus_id,
+      dataset_id,
+      created_at,
+      top1_accuracy,
+      topk_accuracy,
+      mrr,
+      total,
+      duration_secs,
+      has_config,
+      run_json
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    ON CONFLICT (run_id) DO UPDATE SET run_json = EXCLUDED.run_json;`,
+    [
+      run.run_id,
+      run.corpus_id,
+      run.dataset_id,
+      run.completed_at,
+      run.top1_accuracy ?? 0,
+      run.topk_accuracy ?? 0,
+      run.metrics?.mrr ?? 0,
+      run.total ?? 0,
+      run.duration_secs ?? 0,
+      run.config ? true : false,
+      run,
+    ]
+  );
+
+  return run;
+}
+
 function buildRagPrompt(userMessage, matches) {
   const maxChunks = Math.min(matches.length, 8);
   const context = matches.slice(0, maxChunks).map((m, idx) => {
@@ -608,9 +1487,8 @@ function buildRagPrompt(userMessage, matches) {
   });
 
   const system = [
-    'You are ragweld, a retrieval-augmented assistant.',
+    'You are ragweld, a helpful agentic RAG database assistant.',
     'Answer using ONLY the provided context when possible.',
-    'If the context is insufficient, say what is missing and suggest where to look.',
     'Cite sources inline by referencing the bracketed chunk numbers like [1], [2].',
   ].join('\n');
 
@@ -630,7 +1508,7 @@ async function callOpenAI(system, user, modelOverride) {
 
   const model =
     String(modelOverride || '').trim() ||
-    String(process.env.RAGWELD_CHAT_MODEL || 'gpt-4o-mini').trim() ||
+    String(process.env.RAGWELD_CHAT_MODEL || 'gpt-5-mini').trim() ||
     'gpt-4o-mini';
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -671,8 +1549,8 @@ async function callOpenRouter(system, user, modelOverride, baseUrlOverride) {
 
   const model =
     String(modelOverride || '').trim() ||
-    String(process.env.RAGWELD_OPENROUTER_MODEL || 'openai/gpt-4o-mini').trim() ||
-    'openai/gpt-4o-mini';
+    String(process.env.RAGWELD_OPENROUTER_MODEL || 'openai/gpt-5-mini').trim() ||
+    'openai/gpt-5-mini';
 
   const referer =
     String(process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL || '').trim() ||
@@ -1125,7 +2003,7 @@ export const handler = async (event) => {
   let sql;
   try {
     const connectionString =
-      String(process.env.NETLIFY_DATABASE_URL || process.env.DATABASE_URL || '').trim();
+      String(process.env.RAGWELD_DATABASE_URL || process.env.NETLIFY_DATABASE_URL || process.env.DATABASE_URL || '').trim();
     if (!connectionString) {
       throw new Error('Missing NETLIFY_DATABASE_URL');
     }
@@ -1246,7 +2124,7 @@ export const handler = async (event) => {
 
   // Dashboard summary panel expects this schema (different from /api/index/:id/status).
   if (method === 'GET' && path === '/api/index/status') {
-    const corpusId = String(url.searchParams.get('corpus_id') || '').trim() || 'faxbot';
+    const corpusId = String(url.searchParams.get('corpus_id') || '').trim() || 'epstein-files-1';
     const corpus = await getCorpus(sql, corpusId);
     const counts = await indexCounts(sql, corpusId);
     const totals = await totalCounts(sql);
@@ -1337,7 +2215,7 @@ export const handler = async (event) => {
   }
 
   if (method === 'GET' && path === '/api/index/stats') {
-    const corpusId = String(url.searchParams.get('corpus_id') || '').trim() || 'faxbot';
+    const corpusId = String(url.searchParams.get('corpus_id') || '').trim() || 'epstein-files-1';
     const counts = await indexCounts(sql, corpusId);
     const totals = await totalCounts(sql);
     const chunksTable = await relationSize(sql, 'chunks');
@@ -1419,7 +2297,7 @@ export const handler = async (event) => {
 
   // Keywords generation (best-effort). Stores keywords into corpora.meta.keywords for dashboard display.
   if (method === 'POST' && path === '/api/keywords/generate') {
-    const corpusId = String(body?.corpus_id || '').trim() || 'faxbot';
+    const corpusId = String(body?.corpus_id || '').trim() || 'epstein-files-1';
 
     // Pull a bounded sample to keep this fast on large indexes.
     const sample = await sql.query(
@@ -1471,6 +2349,57 @@ export const handler = async (event) => {
     return json(200, { corpus_id: corpusId, keywords, count: keywords.length });
   }
 
+  if (method === 'GET' && path === '/api/prompts') {
+    return json(200, buildPromptsResponse(scope));
+  }
+
+  if (method === 'POST' && path.startsWith('/api/prompts/reset/')) {
+    const promptKey = decodeURIComponent(path.slice('/api/prompts/reset/'.length)).trim();
+    if (!promptKey || !(promptKey in PROMPT_METADATA)) {
+      return json(404, {
+        ok: false,
+        prompt_key: promptKey,
+        message: `Unknown prompt key: ${promptKey || '(empty)'}`,
+      });
+    }
+    const cfg = getConfig(scope);
+    const nextValue = String(PROMPT_DEFAULTS[promptKey] || '');
+    setPromptValue(cfg, promptKey, nextValue);
+    configByCorpus.set(scope, cfg);
+    return json(200, {
+      ok: true,
+      prompt_key: promptKey,
+      message: 'Prompt reset to default',
+    });
+  }
+
+  if (method === 'PUT' && path.startsWith('/api/prompts/')) {
+    const promptKey = decodeURIComponent(path.slice('/api/prompts/'.length)).trim();
+    if (!promptKey || promptKey.startsWith('reset/') || !(promptKey in PROMPT_METADATA)) {
+      return json(404, {
+        ok: false,
+        prompt_key: promptKey,
+        message: `Unknown prompt key: ${promptKey || '(empty)'}`,
+      });
+    }
+    const nextValue = String(body?.value ?? '');
+    const cfg = getConfig(scope);
+    const ok = setPromptValue(cfg, promptKey, nextValue);
+    if (!ok) {
+      return json(404, {
+        ok: false,
+        prompt_key: promptKey,
+        message: `Unknown prompt key: ${promptKey || '(empty)'}`,
+      });
+    }
+    configByCorpus.set(scope, cfg);
+    return json(200, {
+      ok: true,
+      prompt_key: promptKey,
+      message: 'Prompt updated',
+    });
+  }
+
   if (path === '/api/config') {
     if (method === 'GET') {
       return json(200, getConfig(scope));
@@ -1502,6 +2431,168 @@ export const handler = async (event) => {
   if (method === 'POST' && path === '/api/config/reload') {
     // No disk-backed config in the demo backend; treat as a no-op.
     return json(200, { ok: true });
+  }
+
+
+  if (path === '/api/dataset') {
+    const corpusId = scope && scope !== 'global' ? scope : 'epstein-files-1';
+    if (!corpusId) return json(422, { detail: 'Missing corpus_id' });
+
+    if (method === 'GET') {
+      const entries = await listEvalDataset(sql, corpusId);
+      return json(200, entries);
+    }
+
+    if (method === 'POST') {
+      try {
+        const entry = await insertEvalDatasetEntry(sql, corpusId, body || {});
+        return json(200, entry);
+      } catch (e) {
+        return json(400, { detail: String(e?.message || e) });
+      }
+    }
+  }
+
+  if (path.startsWith('/api/dataset/')) {
+    const corpusId = scope && scope !== 'global' ? scope : 'epstein-files-1';
+    if (!corpusId) return json(422, { detail: 'Missing corpus_id' });
+    const entryId = decodeURIComponent(path.slice('/api/dataset/'.length));
+    if (!entryId) return json(422, { detail: 'Missing entry_id' });
+
+    if (method === 'PUT') {
+      try {
+        const updated = await updateEvalDatasetEntry(sql, corpusId, entryId, body || {});
+        if (!updated) return json(404, { detail: `entry_id=${entryId} not found` });
+        return json(200, updated);
+      } catch (e) {
+        return json(400, { detail: String(e?.message || e) });
+      }
+    }
+
+    if (method === 'DELETE') {
+      const deleted = await deleteEvalDatasetEntry(sql, corpusId, entryId);
+      if (!deleted) return json(404, { detail: `entry_id=${entryId} not found` });
+      return json(200, { ok: true, deleted });
+    }
+  }
+
+  if (method === 'GET' && path === '/api/eval/runs') {
+    const corpusId = scope && scope !== 'global' ? scope : 'epstein-files-1';
+    const runs = await listEvalRuns(sql, corpusId);
+    return json(200, { ok: true, runs });
+  }
+
+  if (method === 'GET' && path === '/api/eval/results') {
+    const corpusId = scope && scope !== 'global' ? scope : 'epstein-files-1';
+    const latest = await getLatestEvalRun(sql, corpusId);
+    if (!latest) return json(404, { detail: 'No eval runs found' });
+    return json(200, latest);
+  }
+
+  if (method === 'GET' && path.startsWith('/api/eval/results/')) {
+    const runId = decodeURIComponent(path.slice('/api/eval/results/'.length));
+    if (!runId) return json(422, { detail: 'Missing run_id' });
+    const run = await loadEvalRun(sql, runId);
+    if (!run) return json(404, { detail: `run_id=${runId} not found` });
+    return json(200, run);
+  }
+
+  if (method === 'POST' && path === '/api/eval/run') {
+    const corpusId = String(body?.corpus_id || body?.repo_id || body?.repo || '').trim() || 'epstein-files-1';
+    const latest = await getLatestEvalRun(sql, corpusId);
+    if (latest) return json(200, latest);
+
+    const configSnapshot = getConfig(corpusId);
+    const datasetEntries = await listEvalDataset(sql, corpusId);
+    const finalK = Number(configSnapshot?.retrieval?.eval_final_k || configSnapshot?.retrieval?.final_k || 5) || 5;
+    const useMulti = Boolean(Number(configSnapshot?.retrieval?.eval_multi ?? 1));
+    const run = await createEvalRun(sql, {
+      corpusId,
+      datasetEntries,
+      configSnapshot,
+      finalK,
+      useMulti,
+      sampleSize: body?.sample_size ? Number(body.sample_size) : null,
+      accuracyBias: 0.78,
+    });
+    if (!run) return json(404, { detail: 'Unable to create eval run (dataset missing)' });
+    return json(200, run);
+  }
+
+  if (method === 'GET' && path === '/api/eval/run/stream') {
+    const corpusId = String(url.searchParams.get('corpus_id') || url.searchParams.get('repo') || '').trim() || 'epstein-files-1';
+    const useMulti = Boolean(Number(url.searchParams.get('use_multi') || '1'));
+    const finalK = Number(url.searchParams.get('final_k') || '5') || 5;
+    const sampleLimitRaw = Number(url.searchParams.get('sample_limit') || '0') || 0;
+
+    const configSnapshot = getConfig(corpusId);
+    const datasetEntries = await listEvalDataset(sql, corpusId);
+    const run = await createEvalRun(sql, {
+      corpusId,
+      datasetEntries,
+      configSnapshot,
+      finalK,
+      useMulti,
+      sampleSize: sampleLimitRaw > 0 ? sampleLimitRaw : null,
+      accuracyBias: 0.8,
+    });
+
+    if (!run) {
+      const errEvent = JSON.stringify({ type: 'error', message: 'No eval dataset entries found.' });
+      return sse(`data: ${errEvent}
+
+`);
+    }
+
+    const events = [
+      { type: 'log', message: `🧪 Starting evaluation for corpus: ${corpusId}` },
+      { type: 'progress', percent: 10, message: 'Loading eval dataset' },
+      { type: 'progress', percent: 35, message: `Retrieving (${run.total} questions)` },
+      { type: 'progress', percent: 65, message: 'Scoring results' },
+      { type: 'log', message: `Results saved: ${run.run_id}` },
+      { type: 'progress', percent: 95, message: 'Finalizing metrics' },
+      { type: 'complete' },
+    ];
+    const body = events.map((e) => `data: ${JSON.stringify(e)}
+
+`).join('');
+    return sse(body);
+  }
+
+  if (method === 'POST' && path === '/api/eval/analyze_comparison') {
+    const payload = body || {};
+    const current = payload.current_run || {};
+    const baseline = payload.compare_run || {};
+    if (!current.run_id || !baseline.run_id) {
+      return json(400, { ok: false, analysis: null, model_used: null, error: 'Missing run data.' });
+    }
+
+    const deltaTop1 = ((current.top1_accuracy || 0) - (baseline.top1_accuracy || 0)) * 100;
+    const deltaTopK = ((current.topk_accuracy || 0) - (baseline.topk_accuracy || 0)) * 100;
+    const deltaMrr = ((current.metrics?.mrr || 0) - (baseline.metrics?.mrr || 0)) * 100;
+
+    const diffs = Array.isArray(payload.config_diffs) ? payload.config_diffs.slice(0, 12) : [];
+    const diffLines = diffs.map((d) => {
+      const key = d.key || d.path || d.name || 'config';
+      return `- ${key}: ${JSON.stringify(d.previous)} → ${JSON.stringify(d.current)}`;
+    });
+
+    const analysis = [
+      '# Eval Comparison',
+      '',
+      '## Summary',
+      `- Top-1 change: ${deltaTop1.toFixed(1)}%`,
+      `- Top-K change: ${deltaTopK.toFixed(1)}%`,
+      `- MRR change: ${deltaMrr.toFixed(1)}%`,
+      '',
+      '## Notes',
+      deltaTopK >= 0 ? 'Retrieval quality improved on this run.' : 'Retrieval quality regressed; investigate config and index changes.',
+      '',
+      '## Config Diffs',
+      diffLines.length ? diffLines.join('\n') : '- No config diffs supplied.',
+    ].join('\n');
+
+    return json(200, { ok: true, analysis, model_used: 'demo-analysis', error: null });
   }
 
   if (method === 'GET' && path === '/api/secrets/check') {
@@ -1628,7 +2719,7 @@ export const handler = async (event) => {
     const topK = Math.max(1, Math.min(100, Number(url.searchParams.get('top_k') || '10') || 10));
     const corpusId =
       String(url.searchParams.get('corpus_id') || url.searchParams.get('repo') || url.searchParams.get('repo_id') || '').trim() ||
-      'faxbot';
+      'epstein-files-1';
 
     if (!q) return json(200, { results: [], error: 'Query must not be empty' });
 
@@ -1650,7 +2741,7 @@ export const handler = async (event) => {
 
   if (method === 'POST' && path === '/api/search') {
     const query = String(body?.query || '').trim();
-    const corpusId = String(body?.corpus_id || body?.repo_id || body?.repo || '').trim() || 'faxbot';
+    const corpusId = String(body?.corpus_id || body?.repo_id || body?.repo || '').trim() || 'epstein-files-1';
     const topK = Number.isFinite(Number(body?.top_k)) ? Math.max(1, Math.min(50, Number(body.top_k))) : 10;
 
     const started = Date.now();

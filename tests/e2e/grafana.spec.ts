@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test('demo: Grafana tab loads embedded dashboard', async ({ page }) => {
   // Pick a corpus id if available (not strictly required for Grafana embed, but keeps config consistent).
-  let corpusId = 'faxbot';
+  let corpusId = 'epstein-files-1';
   try {
     const corporaRes = await page.request.get('/api/corpora');
     if (corporaRes.ok()) {

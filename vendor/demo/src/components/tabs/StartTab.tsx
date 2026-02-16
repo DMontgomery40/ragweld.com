@@ -78,8 +78,8 @@ export default function StartTab() {
           data-testid="onboarding-step-1"
         >
           <div className="ob-main">
-            <h2 className="ob-title">Welcome to Tri-Brid RAG</h2>
-            <p className="ob-subtitle">Point Tri-Brid RAG at a folder or repo; in ~3 minutes it will answer questions about it.</p>
+            <h2 className="ob-title">Welcome to ragweld</h2>
+            <p className="ob-subtitle">Point ragweld at a folder or repo; in ~3 minutes it will answer questions about it.</p>
 
             <div className="ob-info-box">
               <p>We scan text, markdown, code, and docs. Nothing leaves your computer unless you turn on cloud.</p>

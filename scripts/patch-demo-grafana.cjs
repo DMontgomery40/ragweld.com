@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Patch the vendored demo Grafana experience after syncing from tribrid-rag/web.
+ * Patch the vendored demo Grafana experience after syncing from ragweld/web.
  *
  * Responsibilities:
  * - Ensure TabRouter serves the internal embed route: /d/:uid/:slug

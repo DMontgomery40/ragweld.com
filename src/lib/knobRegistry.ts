@@ -201,7 +201,7 @@ function groupFromPath(dotPath: string): string {
 }
 
 export function buildKnobRegistry(): KnobRegistry {
-  const docsBase = 'https://dmontgomery40.github.io/tribrid-rag/';
+  const docsBase = 'https://dmontgomery40.github.io/ragweld/';
 
   const generatedTypesPath = repoPath('vendor', 'demo', 'src', 'types', 'generated.ts');
   const envMapPath = repoPath('src', 'data', 'env-key-map.json');

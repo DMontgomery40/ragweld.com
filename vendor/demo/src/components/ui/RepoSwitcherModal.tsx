@@ -310,7 +310,7 @@ export function RepoSwitcherModal({ isOpen, onClose }: RepoSwitcherModalProps) {
             <input
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              placeholder="Corpus name (e.g. tribrid-rag)"
+              placeholder="Corpus name (e.g. ragweld-demo)"
               style={{
                 width: '100%',
                 padding: '10px 12px',

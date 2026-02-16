@@ -5,35 +5,33 @@
  * in the live demo mode.
  */
 
-import type { TriBridConfig, ChunkMatch, ChatModelInfo, Entity, Relationship, Community, GraphStats } from '@/types/generated';
+import type {
+  TriBridConfig,
+  ChunkMatch,
+  ChatModelInfo,
+  Entity,
+  Relationship,
+  Community,
+  GraphStats,
+  PromptMetadata,
+  EvalRun,
+  EvalDatasetItem,
+} from '@/types/generated';
 
-// Sample corpora (cross-promotion for faxbot.net and vivified)
+// Sample corpora for demo mode
 export const mockCorpora = [
   {
-    corpus_id: 'faxbot',
-    name: 'Faxbot',
-    path: 'https://github.com/dmontgomery40/faxbot',
-    description: 'Faxbot codebase - modern fax automation platform',
-    slug: 'faxbot',
-    branch: 'main',
+    corpus_id: 'epstein-files-1',
+    name: 'Epstein Files 1',
+    path: 'epstein-files-1',
+    description: 'Epstein files demo corpus',
+    slug: 'epstein-files-1',
+    branch: null,
     created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 30).toISOString(),
     last_indexed: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(), // 2 days ago
     // Mock-only fields (used by demo-only endpoints)
     chunk_count: 1847,
     file_count: 156,
-  },
-  {
-    corpus_id: 'vivified',
-    name: 'Vivified',
-    path: 'https://vivified.example.com',
-    description: 'Vivified documentation and code samples',
-    slug: 'vivified',
-    branch: null,
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 30).toISOString(),
-    last_indexed: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(), // 1 day ago
-    // Mock-only fields (used by demo-only endpoints)
-    chunk_count: 2134,
-    file_count: 203,
   },
 ];
 
@@ -100,6 +98,242 @@ export const mockChatModels: ChatModelInfo[] = [
     supports_vision: false,
   },
 ];
+
+export const mockPromptDefaults: Record<string, string> = {
+  system_prompt_base: 'You are a helpful agentic RAG database assistant.',
+  system_prompt_rag_suffix: '',
+  system_prompt_recall_suffix: '',
+  system_prompt_direct: `You are a helpful agentic RAG database assistant.
+Answer based on available context. If no retrieval context exists, state that clearly and provide the most helpful direct answer you can.`,
+  system_prompt_rag: `You are a database assistant powered by TriBridRAG, a hybrid retrieval system that combines vector search, keyword search, and knowledge graphs to find relevant database.
+
+The user has selected one or more database repositories to query. You will receive relevant database snippets in <rag_context>...</rag_context> tags.
+
+Each snippet includes:
+- File path and line numbers
+
+How to use this context:
+- Base your answers on the actual database shown, not assumptions
+- Always cite file paths and line numbers when referencing database
+- If the retrieved information doesn't fully answer the question, say what's missing
+- Don't invent information that isn't in the context
+- **Connect related pieces when they appear across multiple snippets** (e.g. if the user asks about a specific database table, and you have information about the table in the context, connect the information to the question)
+
+Be helpful, friendly, and engaging, and base your answers on the actual database information you have.`,
+  system_prompt_recall: `You are an agentic RAG database assistant powered by TriBridRAG. You have access to your conversation history with this user via the Recall system.
+
+Relevant snippets from past conversations appear in <recall_context>...</recall_context> tags.
+
+Each snippet includes:
+- Who said it (user or assistant)
+- Timestamp
+- The message content
+
+How to use this context:
+- Reference past discussions naturally
+- Don't explicitly say "according to my recall" — incorporate it as shared context
+- Past conversations may contain decisions, preferences, or context that inform the current question
+- Prioritize recent conversations over older ones when relevant
+
+Be direct and helpful. You're continuing an ongoing collaboration with this user.`,
+  system_prompt_rag_and_recall: `You are an agentic RAG database assistant powered by TriBridRAG, a hybrid retrieval system. You have access to both:
+1) The user's indexed database repositories
+2) Your conversation history with this user (Recall)
+
+database context appears in <rag_context>...</rag_context> tags.
+Conversation history appears in <recall_context>...</recall_context> tags.
+
+How to use both:
+- Reference past discussions naturally
+- Connect them when relevant (e.g., a past decision and the database information that implements it)
+- If past context contradicts current database information, acknowledge the change
+- Don't say "according to recall" — just incorporate shared knowledge naturally
+
+Be helpful, friendly, and engaging, and base your answers on the actual database information you have.`,
+  main_rag_chat: `You are a helpful agentic RAG database assistant.
+
+## Your Role:
+- Answer questions about the indexed database with precision and accuracy
+- Offer practical, actionable insights based on the actual database information
+
+## Guidelines:
+- **Be Evidence-Based**: Ground every answer in the provided database information
+- **Be Honest**: If the information doesn't contain enough information, say so, but try to provide a helpful answer based on the information you have.
+
+## Response Format:
+- Start with a direct answer to the question
+- Provide a helpful answer based on the information you have
+
+You answer strictly from the provided database information.`,
+  query_expansion: `You are a database search query expander. Given a user's question,
+generate alternative search queries that might find the same database using different terminology.
+
+Rules:
+- Output one query variant per line
+- Keep variants concise (3-8 words each)
+- Use technical synonyms (auth/authentication, config/configuration, etc.)
+- Include both abstract and specific phrasings
+- Do NOT include explanations, just the queries`,
+  query_rewrite: 'You rewrite developer questions into search-optimized queries without changing meaning.',
+  semantic_chunk_summaries: `Analyze this database chunk and create a comprehensive JSON summary for database search. Focus on WHAT the database does (business purpose) and HOW it works (technical details). Include all important symbols, patterns, and domain concepts.
+
+JSON format:
+{
+  "symbols": ["function_name", "class_name", "variable_name"],
+  "purpose": "Clear business purpose - what problem this solves",
+  "technical_details": "Key technical implementation details",
+  "domain_concepts": ["business_term1", "business_term2"],
+  "routes": ["api/endpoint", "webhook/path"],
+  "dependencies": ["external_service", "library"],
+  "patterns": ["design_pattern", "architectural_concept"]
+}
+
+Focus on:
+- Domain-specific terminology and concepts from this database
+- Technical patterns and architectural decisions
+- Business logic and problem being solved
+- Integration points, APIs, and external services
+- Key algorithms, data structures, and workflows`,
+  code_enrichment:
+    'Analyze this database and return a JSON object with: symbols (array of function/class/component names), purpose (one sentence description), keywords (array of technical terms). Be concise. Return ONLY valid JSON.',
+  semantic_kg_extraction: `You are a semantic knowledge graph extractor.
+
+Given a single database/document chunk, extract a small set of reusable semantic concepts and relationships.
+
+Rules:
+- Return ONLY valid JSON (no markdown, no extra text)
+- Concepts must be short, lowercase, and reusable across the corpus (e.g. "authentication", "rate_limit", "vector_index")
+- Prefer domain concepts and architectural concepts over implementation noise
+- Do NOT include file paths or line numbers as concepts
+- Keep the list small and high-signal
+
+JSON format:
+{
+  "concepts": ["concept1", "concept2"],
+  "relations": [
+    {"source": "concept1", "target": "concept2", "relation_type": "related_to"}
+  ]
+}
+
+Allowed relation_type values: related_to, references`,
+  lightweight_chunk_summaries:
+    'Extract key information from this database: symbols (function/class names), purpose (one sentence), keywords (technical terms). Return JSON only.',
+  eval_analysis: `You are an expert RAG (Retrieval-Augmented Generation) system analyst.
+Your job is to analyze evaluation comparisons and provide HONEST, SKEPTICAL insights.
+
+CRITICAL: Do NOT force explanations that don't make sense. If the data is contradictory or confusing:
+- Say so clearly: "This result is surprising and may indicate other factors at play"
+- Consider: index changes, data drift, eval dataset updates, or measurement noise
+- Acknowledge when correlation != causation
+- It's BETTER to say "I'm not sure why this happened" than to fabricate a plausible-sounding but wrong explanation
+
+Be rigorous:
+1. Question whether the config changes ACTUALLY explain the performance delta
+2. Flag when results seem counterintuitive (e.g., disabling a feature improving results)
+3. Consider confounding variables: Was the index rebuilt? Did the test set change?
+4. Provide actionable suggestions only when you have reasonable confidence
+
+Format your response with clear sections using markdown headers.`,
+};
+
+export const mockPromptMetadata: Record<string, PromptMetadata> = {
+  main_rag_chat: {
+    label: 'Main RAG Chat',
+    description: 'Main conversational AI system prompt for answering codebase questions',
+    category: 'chat',
+  },
+  system_prompt_base: {
+    label: 'Base prompt (legacy)',
+    description: 'Chat prompt: system_prompt_base',
+    category: 'chat',
+    editable: false,
+    link_route: '/chat?subtab=settings&prompt=system_prompt_base',
+    link_label: 'Open Chat Settings',
+  },
+  system_prompt_rag_suffix: {
+    label: 'RAG suffix (legacy)',
+    description: 'Chat prompt: system_prompt_rag_suffix',
+    category: 'chat',
+    editable: false,
+    link_route: '/chat?subtab=settings&prompt=system_prompt_rag_suffix',
+    link_label: 'Open Chat Settings',
+  },
+  system_prompt_recall_suffix: {
+    label: 'Recall suffix (legacy)',
+    description: 'Chat prompt: system_prompt_recall_suffix',
+    category: 'chat',
+    editable: false,
+    link_route: '/chat?subtab=settings&prompt=system_prompt_recall_suffix',
+    link_label: 'Open Chat Settings',
+  },
+  system_prompt_direct: {
+    label: 'Direct (no context)',
+    description: 'State 1: No context. Nothing checked or retrieval returned empty.',
+    category: 'chat',
+    editable: false,
+    link_route: '/chat?subtab=settings&prompt=system_prompt_direct',
+    link_label: 'Open Chat Settings',
+  },
+  system_prompt_rag: {
+    label: 'RAG only',
+    description: 'State 2: RAG only. Database corpora returned results; Recall did not.',
+    category: 'chat',
+    editable: false,
+    link_route: '/chat?subtab=settings&prompt=system_prompt_rag',
+    link_label: 'Open Chat Settings',
+  },
+  system_prompt_recall: {
+    label: 'Recall only',
+    description: 'State 3: Recall only. Recall returned results; no RAG corpora active.',
+    category: 'chat',
+    editable: false,
+    link_route: '/chat?subtab=settings&prompt=system_prompt_recall',
+    link_label: 'Open Chat Settings',
+  },
+  system_prompt_rag_and_recall: {
+    label: 'RAG + Recall',
+    description: 'State 4: Both. RAG and Recall both returned results.',
+    category: 'chat',
+    editable: false,
+    link_route: '/chat?subtab=settings&prompt=system_prompt_rag_and_recall',
+    link_label: 'Open Chat Settings',
+  },
+  query_expansion: {
+    label: 'Query Expansion',
+    description: 'Generate query variants for better recall in hybrid search',
+    category: 'retrieval',
+  },
+  query_rewrite: {
+    label: 'Query Rewrite',
+    description: 'Rewrite user questions into search-optimized database queries without changing meaning',
+    category: 'retrieval',
+  },
+  semantic_chunk_summaries: {
+    label: 'Semantic Chunk Summaries',
+    description: 'Generate JSON summaries for database chunks during indexing',
+    category: 'indexing',
+  },
+  code_enrichment: {
+    label: 'Database Enrichment',
+    description: 'Extract metadata from database chunks during indexing',
+    category: 'indexing',
+  },
+  semantic_kg_extraction: {
+    label: 'Semantic KG Extraction',
+    description: 'Prompt for LLM-assisted semantic KG extraction (concepts + relations)',
+    category: 'indexing',
+  },
+  lightweight_chunk_summaries: {
+    label: 'Lightweight Chunk Summaries',
+    description: 'Lightweight chunk_summary generation prompt for faster indexing',
+    category: 'indexing',
+  },
+  eval_analysis: {
+    label: 'Eval Analysis',
+    description: 'Analyze eval regressions with skeptical approach - avoid false explanations',
+    category: 'evaluation',
+  },
+};
 
 // Default TriBridConfig
 export const mockConfig: TriBridConfig = {
@@ -216,15 +450,14 @@ export const mockConfig: TriBridConfig = {
     transformers_trust_remote_code: 1,
   },
   chat: {
-    default_corpus_ids: ['recall_default', 'faxbot'],
-    system_prompt_base: 'You are a helpful assistant.',
-    system_prompt_recall_suffix: ' You have access to conversation history. Refer to it when relevant.',
-    system_prompt_rag_suffix: ' Answer questions using the provided code context and cite sources.',
-    system_prompt_direct: 'You are a code assistant powered by TriBridRAG. If context is missing, say what is missing.',
-    system_prompt_rag: 'You are a code assistant powered by TriBridRAG. Use the provided code context and cite sources.',
-    system_prompt_recall: 'You are a code assistant powered by TriBridRAG. Use conversation history when relevant.',
-    system_prompt_rag_and_recall:
-      'You are a code assistant powered by TriBridRAG. Use both code context and conversation history; cite sources.',
+    default_corpus_ids: ['epstein-files-1'],
+    system_prompt_base: mockPromptDefaults.system_prompt_base,
+    system_prompt_recall_suffix: mockPromptDefaults.system_prompt_recall_suffix,
+    system_prompt_rag_suffix: mockPromptDefaults.system_prompt_rag_suffix,
+    system_prompt_direct: mockPromptDefaults.system_prompt_direct,
+    system_prompt_rag: mockPromptDefaults.system_prompt_rag,
+    system_prompt_recall: mockPromptDefaults.system_prompt_recall,
+    system_prompt_rag_and_recall: mockPromptDefaults.system_prompt_rag_and_recall,
     recall: {
       enabled: true,
       auto_index: true,
@@ -259,6 +492,16 @@ export const mockConfig: TriBridConfig = {
       default_vision_model: '',
       default_embedding_model: '',
     },
+  },
+  system_prompts: {
+    main_rag_chat: mockPromptDefaults.main_rag_chat,
+    query_expansion: mockPromptDefaults.query_expansion,
+    query_rewrite: mockPromptDefaults.query_rewrite,
+    semantic_chunk_summaries: mockPromptDefaults.semantic_chunk_summaries,
+    code_enrichment: mockPromptDefaults.code_enrichment,
+    semantic_kg_extraction: mockPromptDefaults.semantic_kg_extraction,
+    lightweight_chunk_summaries: mockPromptDefaults.lightweight_chunk_summaries,
+    eval_analysis: mockPromptDefaults.eval_analysis,
   },
   ui: {
     theme_mode: 'dark',
@@ -389,30 +632,30 @@ const buildStats = (corpus_id: string, entities: Entity[], relationships: Relati
   relationship_breakdown: countBy(relationships as unknown as Record<string, unknown>[], 'relation_type'),
 });
 
-const faxbotGraphEntities: Entity[] = [
+const epsteinGraphEntities: Entity[] = [
   {
-    entity_id: 'fx:authMiddleware',
+    entity_id: 'ef:authMiddleware',
     name: 'authMiddleware',
     entity_type: 'function',
     file_path: 'src/middleware/auth.ts',
     description: 'Validates JWTs and attaches the user to the request.',
   },
   {
-    entity_id: 'fx:authenticateUser',
+    entity_id: 'ef:authenticateUser',
     name: 'authenticateUser',
     entity_type: 'function',
     file_path: 'src/auth/authenticate.ts',
     description: 'Validates credentials and issues a JWT.',
   },
   {
-    entity_id: 'fx:AuthConfig',
+    entity_id: 'ef:AuthConfig',
     name: 'AuthConfig',
     entity_type: 'concept',
     file_path: 'src/auth/config.ts',
     description: 'Authentication settings such as token expiry and bcrypt rounds.',
   },
   {
-    entity_id: 'fx:auth',
+    entity_id: 'ef:auth',
     name: 'auth',
     entity_type: 'module',
     file_path: 'src/auth/index.ts',
@@ -420,75 +663,30 @@ const faxbotGraphEntities: Entity[] = [
   },
 ];
 
-const faxbotGraphRelationships: Relationship[] = [
-  { source_id: 'fx:auth', target_id: 'fx:authenticateUser', relation_type: 'contains', weight: 1.0 },
-  { source_id: 'fx:auth', target_id: 'fx:authMiddleware', relation_type: 'contains', weight: 1.0 },
-  { source_id: 'fx:authenticateUser', target_id: 'fx:AuthConfig', relation_type: 'references', weight: 0.7 },
-  { source_id: 'fx:authMiddleware', target_id: 'fx:AuthConfig', relation_type: 'references', weight: 0.6 },
-  { source_id: 'fx:authenticateUser', target_id: 'fx:authMiddleware', relation_type: 'calls', weight: 0.5 },
+const epsteinGraphRelationships: Relationship[] = [
+  { source_id: 'ef:auth', target_id: 'ef:authenticateUser', relation_type: 'contains', weight: 1.0 },
+  { source_id: 'ef:auth', target_id: 'ef:authMiddleware', relation_type: 'contains', weight: 1.0 },
+  { source_id: 'ef:authenticateUser', target_id: 'ef:AuthConfig', relation_type: 'references', weight: 0.7 },
+  { source_id: 'ef:authMiddleware', target_id: 'ef:AuthConfig', relation_type: 'references', weight: 0.6 },
+  { source_id: 'ef:authenticateUser', target_id: 'ef:authMiddleware', relation_type: 'calls', weight: 0.5 },
 ];
 
-const faxbotGraphCommunities: Community[] = [
+const epsteinGraphCommunities: Community[] = [
   {
-    community_id: 'fx:community:auth',
+    community_id: 'ef:community:auth',
     name: 'Auth + Identity',
     summary: 'Login, tokens, and request authentication.',
-    member_ids: ['fx:auth', 'fx:authenticateUser', 'fx:authMiddleware', 'fx:AuthConfig'],
-    level: 0,
-  },
-];
-
-const vivifiedGraphEntities: Entity[] = [
-  {
-    entity_id: 'vv:Quickstart',
-    name: 'Quickstart',
-    entity_type: 'concept',
-    file_path: 'docs/quickstart.md',
-    description: 'High-level getting-started guide.',
-  },
-  {
-    entity_id: 'vv:Cli',
-    name: 'cli',
-    entity_type: 'module',
-    file_path: 'src/cli/index.ts',
-    description: 'CLI entrypoints and argument parsing.',
-  },
-  {
-    entity_id: 'vv:run',
-    name: 'run',
-    entity_type: 'function',
-    file_path: 'src/cli/run.ts',
-    description: 'Primary CLI command implementation.',
-  },
-];
-
-const vivifiedGraphRelationships: Relationship[] = [
-  { source_id: 'vv:Cli', target_id: 'vv:run', relation_type: 'contains', weight: 1.0 },
-  { source_id: 'vv:run', target_id: 'vv:Quickstart', relation_type: 'references', weight: 0.6 },
-];
-
-const vivifiedGraphCommunities: Community[] = [
-  {
-    community_id: 'vv:community:docs',
-    name: 'Docs + CLI',
-    summary: 'Docs pages and their corresponding CLI entrypoints.',
-    member_ids: ['vv:Quickstart', 'vv:Cli', 'vv:run'],
+    member_ids: ['ef:auth', 'ef:authenticateUser', 'ef:authMiddleware', 'ef:AuthConfig'],
     level: 0,
   },
 ];
 
 export const mockGraphByCorpus: Record<string, MockGraphData> = {
-  faxbot: {
-    entities: faxbotGraphEntities,
-    relationships: faxbotGraphRelationships,
-    communities: faxbotGraphCommunities,
-    stats: buildStats('faxbot', faxbotGraphEntities, faxbotGraphRelationships, faxbotGraphCommunities),
-  },
-  vivified: {
-    entities: vivifiedGraphEntities,
-    relationships: vivifiedGraphRelationships,
-    communities: vivifiedGraphCommunities,
-    stats: buildStats('vivified', vivifiedGraphEntities, vivifiedGraphRelationships, vivifiedGraphCommunities),
+  'epstein-files-1': {
+    entities: epsteinGraphEntities,
+    relationships: epsteinGraphRelationships,
+    communities: epsteinGraphCommunities,
+    stats: buildStats('epstein-files-1', epsteinGraphEntities, epsteinGraphRelationships, epsteinGraphCommunities),
   },
 };
 
@@ -536,7 +734,7 @@ When you ask a question, the system:
 2. Tokenizes for BM25 matching (sparse)
 3. Extracts entities for graph lookup (graph)
 4. Fuses results using RRF or weighted fusion
-5. Reranks with a cross-encoder
+5. Reranks with the configured learning/local reranker
 6. Generates a response with citations
 
 Try asking about specific features like authentication, configuration, or API endpoints!`;
@@ -589,3 +787,249 @@ export const mockHealthResponse = {
   embedding_model: 'loaded',
   demo_mode: true,
 };
+
+
+// Eval dataset + run mocks
+export const mockEvalDataset: EvalDatasetItem[] = [
+  {
+    entry_id: '1',
+    question: 'Where are the 1996 flight logs documented?',
+    expected_paths: ['records/flight-logs/1996-09-03.md'],
+    expected_answer: null,
+    tags: ['md'],
+    created_at: new Date(Date.now() - 1000 * 60 * 60 * 72).toISOString(),
+  },
+  {
+    entry_id: '2',
+    question: 'Which file contains the 1997 phone log entries?',
+    expected_paths: ['records/phone-logs/1997-02-11.md'],
+    expected_answer: null,
+    tags: ['md'],
+    created_at: new Date(Date.now() - 1000 * 60 * 60 * 71).toISOString(),
+  },
+  {
+    entry_id: '3',
+    question: 'Where is the 1998 passenger manifest recorded?',
+    expected_paths: ['records/manifest/1998-04-12.csv'],
+    expected_answer: null,
+    tags: ['csv'],
+    created_at: new Date(Date.now() - 1000 * 60 * 60 * 70).toISOString(),
+  },
+  {
+    entry_id: '4',
+    question: 'Which document covers the 2007 settlement summary?',
+    expected_paths: ['records/legal/settlement-2007.pdf'],
+    expected_answer: null,
+    tags: ['pdf'],
+    created_at: new Date(Date.now() - 1000 * 60 * 60 * 69).toISOString(),
+  },
+];
+
+const baselineResults = [
+  {
+    entry_id: '1',
+    question: mockEvalDataset[0].question,
+    retrieved_paths: ['records/flight-logs/1996-09-03.md', 'records/legal/settlement-2007.pdf', 'records/manifest/1998-04-12.csv'],
+    expected_paths: mockEvalDataset[0].expected_paths,
+    top_paths: ['records/flight-logs/1996-09-03.md', 'records/legal/settlement-2007.pdf', 'records/manifest/1998-04-12.csv'],
+    top1_path: ['records/flight-logs/1996-09-03.md'],
+    top1_hit: true,
+    topk_hit: true,
+    reciprocal_rank: 1,
+    recall: 1,
+    latency_ms: 118,
+    duration_secs: 0.118,
+    docs: [
+      { file_path: 'records/flight-logs/1996-09-03.md', start_line: 1, score: 0.92, source: 'sparse' },
+      { file_path: 'records/legal/settlement-2007.pdf', start_line: 1, score: 0.61, source: 'graph' },
+    ],
+  },
+  {
+    entry_id: '2',
+    question: mockEvalDataset[1].question,
+    retrieved_paths: ['records/flight-logs/1996-09-03.md', 'records/phone-logs/1997-02-11.md', 'records/manifest/1998-04-12.csv'],
+    expected_paths: mockEvalDataset[1].expected_paths,
+    top_paths: ['records/flight-logs/1996-09-03.md', 'records/phone-logs/1997-02-11.md', 'records/manifest/1998-04-12.csv'],
+    top1_path: ['records/flight-logs/1996-09-03.md'],
+    top1_hit: false,
+    topk_hit: true,
+    reciprocal_rank: 0.5,
+    recall: 1,
+    latency_ms: 132,
+    duration_secs: 0.132,
+    docs: [
+      { file_path: 'records/flight-logs/1996-09-03.md', start_line: 1, score: 0.87, source: 'sparse' },
+      { file_path: 'records/phone-logs/1997-02-11.md', start_line: 1, score: 0.77, source: 'vector' },
+    ],
+  },
+  {
+    entry_id: '3',
+    question: mockEvalDataset[2].question,
+    retrieved_paths: ['records/manifest/1998-04-12.csv', 'records/phone-logs/1997-02-11.md', 'records/legal/settlement-2007.pdf'],
+    expected_paths: mockEvalDataset[2].expected_paths,
+    top_paths: ['records/manifest/1998-04-12.csv', 'records/phone-logs/1997-02-11.md', 'records/legal/settlement-2007.pdf'],
+    top1_path: ['records/manifest/1998-04-12.csv'],
+    top1_hit: true,
+    topk_hit: true,
+    reciprocal_rank: 1,
+    recall: 1,
+    latency_ms: 109,
+    duration_secs: 0.109,
+    docs: [
+      { file_path: 'records/manifest/1998-04-12.csv', start_line: 1, score: 0.9, source: 'sparse' },
+      { file_path: 'records/phone-logs/1997-02-11.md', start_line: 1, score: 0.62, source: 'graph' },
+    ],
+  },
+  {
+    entry_id: '4',
+    question: mockEvalDataset[3].question,
+    retrieved_paths: ['records/phone-logs/1997-02-11.md', 'records/legal/settlement-2007.pdf', 'records/manifest/1998-04-12.csv'],
+    expected_paths: mockEvalDataset[3].expected_paths,
+    top_paths: ['records/phone-logs/1997-02-11.md', 'records/legal/settlement-2007.pdf', 'records/manifest/1998-04-12.csv'],
+    top1_path: ['records/phone-logs/1997-02-11.md'],
+    top1_hit: false,
+    topk_hit: true,
+    reciprocal_rank: 0.5,
+    recall: 1,
+    latency_ms: 141,
+    duration_secs: 0.141,
+    docs: [
+      { file_path: 'records/phone-logs/1997-02-11.md', start_line: 1, score: 0.74, source: 'sparse' },
+      { file_path: 'records/legal/settlement-2007.pdf', start_line: 1, score: 0.69, source: 'vector' },
+    ],
+  },
+];
+
+const currentResults = [
+  {
+    entry_id: '1',
+    question: mockEvalDataset[0].question,
+    retrieved_paths: ['records/flight-logs/1996-09-03.md', 'records/manifest/1998-04-12.csv', 'records/legal/settlement-2007.pdf'],
+    expected_paths: mockEvalDataset[0].expected_paths,
+    top_paths: ['records/flight-logs/1996-09-03.md', 'records/manifest/1998-04-12.csv', 'records/legal/settlement-2007.pdf'],
+    top1_path: ['records/flight-logs/1996-09-03.md'],
+    top1_hit: true,
+    topk_hit: true,
+    reciprocal_rank: 1,
+    recall: 1,
+    latency_ms: 101,
+    duration_secs: 0.101,
+    docs: [
+      { file_path: 'records/flight-logs/1996-09-03.md', start_line: 1, score: 0.94, source: 'sparse' },
+      { file_path: 'records/manifest/1998-04-12.csv', start_line: 1, score: 0.7, source: 'graph' },
+    ],
+  },
+  {
+    entry_id: '2',
+    question: mockEvalDataset[1].question,
+    retrieved_paths: ['records/phone-logs/1997-02-11.md', 'records/flight-logs/1996-09-03.md', 'records/manifest/1998-04-12.csv'],
+    expected_paths: mockEvalDataset[1].expected_paths,
+    top_paths: ['records/phone-logs/1997-02-11.md', 'records/flight-logs/1996-09-03.md', 'records/manifest/1998-04-12.csv'],
+    top1_path: ['records/phone-logs/1997-02-11.md'],
+    top1_hit: true,
+    topk_hit: true,
+    reciprocal_rank: 1,
+    recall: 1,
+    latency_ms: 115,
+    duration_secs: 0.115,
+    docs: [
+      { file_path: 'records/phone-logs/1997-02-11.md', start_line: 1, score: 0.9, source: 'vector' },
+      { file_path: 'records/flight-logs/1996-09-03.md', start_line: 1, score: 0.62, source: 'sparse' },
+    ],
+  },
+  {
+    entry_id: '3',
+    question: mockEvalDataset[2].question,
+    retrieved_paths: ['records/manifest/1998-04-12.csv', 'records/flight-logs/1996-09-03.md', 'records/phone-logs/1997-02-11.md'],
+    expected_paths: mockEvalDataset[2].expected_paths,
+    top_paths: ['records/manifest/1998-04-12.csv', 'records/flight-logs/1996-09-03.md', 'records/phone-logs/1997-02-11.md'],
+    top1_path: ['records/manifest/1998-04-12.csv'],
+    top1_hit: true,
+    topk_hit: true,
+    reciprocal_rank: 1,
+    recall: 1,
+    latency_ms: 96,
+    duration_secs: 0.096,
+    docs: [
+      { file_path: 'records/manifest/1998-04-12.csv', start_line: 1, score: 0.93, source: 'sparse' },
+      { file_path: 'records/flight-logs/1996-09-03.md', start_line: 1, score: 0.63, source: 'graph' },
+    ],
+  },
+  {
+    entry_id: '4',
+    question: mockEvalDataset[3].question,
+    retrieved_paths: ['records/legal/settlement-2007.pdf', 'records/phone-logs/1997-02-11.md', 'records/manifest/1998-04-12.csv'],
+    expected_paths: mockEvalDataset[3].expected_paths,
+    top_paths: ['records/legal/settlement-2007.pdf', 'records/phone-logs/1997-02-11.md', 'records/manifest/1998-04-12.csv'],
+    top1_path: ['records/legal/settlement-2007.pdf'],
+    top1_hit: true,
+    topk_hit: true,
+    reciprocal_rank: 1,
+    recall: 1,
+    latency_ms: 108,
+    duration_secs: 0.108,
+    docs: [
+      { file_path: 'records/legal/settlement-2007.pdf', start_line: 1, score: 0.88, source: 'sparse' },
+      { file_path: 'records/phone-logs/1997-02-11.md', start_line: 1, score: 0.67, source: 'vector' },
+    ],
+  },
+];
+
+export const mockEvalRuns: EvalRun[] = [
+  {
+    run_id: 'epstein-files-1__20260216_080000',
+    corpus_id: 'epstein-files-1',
+    dataset_id: 'epstein-demo',
+    config_snapshot: { retrieval: { final_k: 5 }, fusion: { method: 'rrf' } },
+    config: { 'retrieval.final_k': 5, 'fusion.method': 'rrf' },
+    total: currentResults.length,
+    top1_hits: 4,
+    topk_hits: 4,
+    top1_accuracy: 1,
+    topk_accuracy: 1,
+    duration_secs: 0.42,
+    use_multi: true,
+    final_k: 5,
+    metrics: {
+      mrr: 1,
+      recall_at_5: 1,
+      recall_at_10: 1,
+      recall_at_20: 1,
+      precision_at_5: 0.8,
+      ndcg_at_10: 1,
+      latency_p50_ms: 108,
+      latency_p95_ms: 118,
+    },
+    results: currentResults,
+    started_at: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
+    completed_at: new Date(Date.now() - 1000 * 60 * 60 * 2 + 75000).toISOString(),
+  },
+  {
+    run_id: 'epstein-files-1__20260214_090000',
+    corpus_id: 'epstein-files-1',
+    dataset_id: 'epstein-demo',
+    config_snapshot: { retrieval: { final_k: 5 }, fusion: { method: 'rrf' } },
+    config: { 'retrieval.final_k': 5, 'fusion.method': 'rrf' },
+    total: baselineResults.length,
+    top1_hits: 2,
+    topk_hits: 4,
+    top1_accuracy: 0.5,
+    topk_accuracy: 1,
+    duration_secs: 0.5,
+    use_multi: false,
+    final_k: 5,
+    metrics: {
+      mrr: 0.75,
+      recall_at_5: 1,
+      recall_at_10: 1,
+      recall_at_20: 1,
+      precision_at_5: 0.7,
+      ndcg_at_10: 0.82,
+      latency_p50_ms: 120,
+      latency_p95_ms: 141,
+    },
+    results: baselineResults,
+    started_at: new Date(Date.now() - 1000 * 60 * 60 * 36).toISOString(),
+    completed_at: new Date(Date.now() - 1000 * 60 * 60 * 36 + 90000).toISOString(),
+  },
+];

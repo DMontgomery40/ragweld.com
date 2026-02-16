@@ -1,4 +1,4 @@
-// TriBrid RAG Storage Calculator Suite v2.0 - TSX Component
+// ragweld Storage Calculator Suite v2.0 - TSX Component
 // Calculates storage for pgvector, Neo4j, and sparse indices
 // Connected to Pydantic config for default values
 
@@ -283,7 +283,7 @@ export function StorageCalculatorSuite() {
   return (
     <div className="storage-calc-wrapper">
       <div className="storage-calc-header">
-        <h1><span className="brand">TriBrid RAG</span> Storage Calculator Suite</h1>
+        <h1><span className="brand">ragweld</span> Storage Calculator Suite</h1>
         <p className="subtitle">Vector + Sparse + Graph • Enterprise Memory Planning</p>
         <div className="info-box">
           <p>
@@ -823,7 +823,7 @@ export function StorageCalculatorSuite() {
       </div>
 
       <div className="storage-calc-footer">
-        <p>TriBrid RAG • Enterprise Storage Calculator v2.0</p>
+        <p>ragweld • Enterprise Storage Calculator v2.0</p>
         <p>Precision calculations for pgvector + Neo4j + BM25 infrastructure</p>
       </div>
     </div>

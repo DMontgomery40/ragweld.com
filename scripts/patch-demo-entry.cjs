@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Patch the vendored demo entrypoint after syncing from tribrid-rag/web.
+ * Patch the vendored demo entrypoint after syncing from ragweld/web.
  *
  * Responsibilities:
  * - Ensure BrowserRouter basename is "/demo"

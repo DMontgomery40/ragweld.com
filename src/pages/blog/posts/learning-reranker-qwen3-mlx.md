@@ -10,7 +10,7 @@ summary: "How we implemented a Qwen3 LoRA learning reranker with yes/no logits o
 
 We needed a reranker that *trains* on Apple Silicon. Not inference-only, not “export to CoreML and hope” — actually trains LoRA adapters locally so it learns from user feedback and improves over time.
 
-That’s the core loop in TriBridRAG’s learning reranker: users give thumbs up/down, we mine triplets, we fine-tune, retrieval gets better.
+That's the core loop in ragweld's learning reranker: users give thumbs up/down, we mine triplets, we fine-tune, retrieval gets better.
 
 Our existing backend uses `sentence-transformers` `CrossEncoder` on PyTorch MPS. It works. It’s also slow to train, memory-hungry, and tethered to a framework that still treats Apple Silicon as an afterthought. We wanted native **MLX** — Apple’s lazy-evaluation ML framework that actually uses unified memory properly.
 
@@ -50,7 +50,7 @@ We went with **Qwen3-Reranker-0.6B** as the base, with LoRA fine-tuning via `mlx
 
 Training runs at ~800–1200 tokens/sec on an M2 Pro, fast enough to retrain nightly from accumulated feedback.
 
-Integration-wise, we replaced TriBridRAG’s learning reranker backend. Same config surface, same training triggers, same hot-reload — but the engine underneath is fundamentally different.
+Integration-wise, we replaced ragweld's learning reranker backend. Same config surface, same training triggers, same hot-reload — but the engine underneath is fundamentally different.
 
 A config flag (`learning_reranker_backend: "auto"`) detects macOS ARM64 and routes to MLX automatically. Linux and CI fall back to the existing `sentence-transformers` path. No one’s workflow breaks.
 
@@ -122,4 +122,4 @@ If you’re still fine-tuning `cross-encoder/ms-marco-MiniLM-L-6-v2`, you’re l
 
 The adapter is ~2MB. The base model is ~1.2GB. Training takes minutes, not hours. And it actually learns your domain.
 
-Built in the open at RagWeld. TriBridRAG source on GitHub: https://github.com/DMontgomery40/tribrid-rag
+Built in the open at ragweld. ragweld source on GitHub: https://github.com/DMontgomery40/ragweld

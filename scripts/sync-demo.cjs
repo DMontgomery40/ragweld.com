@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * Sync demo from tribrid-rag/web
- * Usage: node scripts/sync-demo.cjs ../tribrid-rag/web
+ * Sync demo from ragweld/web
+ * Usage: node scripts/sync-demo.cjs ../ragweld/web
  */
 
 const fs = require('fs');
@@ -10,7 +10,7 @@ const path = require('path');
 const os = require('os');
 const { execSync } = require('child_process');
 
-const sourceDir = process.argv[2] || '../tribrid-rag/web';
+const sourceDir = process.argv[2] || '../ragweld/web';
 const targetDir = path.join(__dirname, '..', 'vendor', 'demo');
 
 // Ensure source exists

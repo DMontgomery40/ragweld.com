@@ -1,0 +1,42 @@
+# ragweld.com — crawl everything
+User-agent: *
+Allow: /
+
+# Sitemaps
+Sitemap: https://ragweld.com/sitemap-index.xml
+
+# LLM-friendly content
+# See https://llmstxt.org/
+# llms.txt: https://ragweld.com/llms.txt
+# llms-full.txt: https://ragweld.com/llms-full.txt
+
+# AI crawlers welcome
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Anthropic-AI
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-Web
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Bytespider
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+User-agent: Cohere-AI
+Allow: /

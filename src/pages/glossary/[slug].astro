@@ -1,0 +1,235 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Nav from '../../components/Nav.astro';
+import Footer from '../../components/Footer.astro';
+import {
+  GLOSSARY_CATEGORIES,
+  categorizeGlossaryKey,
+  glossaryDefinitionToDisplayText,
+  loadGlossaryJson,
+  slugifyTerm,
+  slugifyKey,
+  type GlossaryTerm,
+} from '../../lib/glossary';
+
+/* ── static paths (one page per glossary term) ───────────── */
+
+export function getStaticPaths() {
+  const glossary = loadGlossaryJson();
+
+  // Build a lookup so we can resolve related terms
+  const byKey = new Map<string, GlossaryTerm>();
+  for (const t of glossary.terms) byKey.set(t.key, t);
+
+  // Detect duplicate term names → use key-based slug for those
+  const termCounts = new Map<string, number>();
+  for (const t of glossary.terms) {
+    const s = slugifyTerm(t.term);
+    termCounts.set(s, (termCounts.get(s) || 0) + 1);
+  }
+
+  // Build slug lookup for related-term linking
+  const slugByKey = new Map<string, string>();
+  for (const t of glossary.terms) {
+    const termSlug = slugifyTerm(t.term);
+    slugByKey.set(t.key, (termCounts.get(termSlug) || 0) > 1 ? slugifyKey(t.key) : termSlug);
+  }
+
+  return glossary.terms.map((t) => {
+    const slug = slugByKey.get(t.key)!;
+    const related = (t.related || [])
+      .map((k) => {
+        const r = byKey.get(k);
+        return r ? { ...r, _slug: slugByKey.get(k)! } : null;
+      })
+      .filter(Boolean) as (GlossaryTerm & { _slug: string })[];
+
+    return {
+      params: { slug },
+      props: { term: t, related, slug },
+    };
+  });
+}
+
+/* ── page props ──────────────────────────────────────────── */
+
+interface Props {
+  term: GlossaryTerm;
+  related: (GlossaryTerm & { _slug: string })[];
+  slug: string;
+}
+
+const { term, related, slug } = Astro.props;
+const category = GLOSSARY_CATEGORIES[categorizeGlossaryKey(term.key)];
+const definition = glossaryDefinitionToDisplayText(term.definition || '');
+
+const pageTitle = `${term.term} — ragweld Glossary`;
+const pageDescription =
+  definition.length > 155
+    ? definition.slice(0, 152).replace(/\s+\S*$/, '') + '…'
+    : definition;
+
+const badgeClass = (raw: string) => {
+  const cls = String(raw || '').trim().toLowerCase();
+  const allowed = new Set(['info', 'warn', 'warning', 'err', 'reindex', 'ok', 'success', 'security']);
+  return allowed.has(cls) ? cls : '';
+};
+---
+
+<BaseLayout
+  title={pageTitle}
+  description={pageDescription}
+  keywords={`${term.term}, ${term.key}, RAG, retrieval augmented generation, ragweld`}
+  canonical={`https://ragweld.com/glossary/${slug}/`}
+>
+  <Fragment slot="head">
+    <script type="application/ld+json" set:html={JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "DefinedTerm",
+      "name": term.term,
+      "description": definition,
+      "inDefinedTermSet": {
+        "@type": "DefinedTermSet",
+        "name": "ragweld Parameter Glossary",
+        "url": "https://ragweld.com/glossary/"
+      },
+      "url": `https://ragweld.com/glossary/${slug}/`
+    })} />
+    <script type="application/ld+json" set:html={JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://ragweld.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Glossary", "item": "https://ragweld.com/glossary/" },
+        { "@type": "ListItem", "position": 3, "name": term.term, "item": `https://ragweld.com/glossary/${slug}/` }
+      ]
+    })} />
+  </Fragment>
+  <Nav />
+  <main class="bg-[#09090b] pt-28 pb-16">
+    <div class="mx-auto max-w-3xl px-4">
+
+      {/* Breadcrumb */}
+      <nav class="text-sm text-gray-400 flex items-center gap-2">
+        <a href="/" class="hover:text-white transition-colors">Home</a>
+        <span class="text-gray-600">/</span>
+        <a href="/glossary/" class="hover:text-white transition-colors">Glossary</a>
+        <span class="text-gray-600">/</span>
+        <span class="text-gray-300">{term.term}</span>
+      </nav>
+
+      {/* Header */}
+      <div class="mt-8">
+        <div class="flex items-center gap-3 mb-3">
+          <span class="text-3xl">{category.icon}</span>
+          <span class="text-xs font-semibold uppercase tracking-widest text-gray-500">
+            {category.title}
+          </span>
+        </div>
+        <h1 class="text-4xl font-bold text-white tracking-tight">{term.term}</h1>
+        <code class="mt-3 inline-block text-sm text-[#a1a1aa] bg-[#18181b] border border-[#27272a] rounded px-3 py-1.5 font-mono">
+          {term.key}
+        </code>
+      </div>
+
+      {/* Badges */}
+      {term.badges?.length ? (
+        <div class="mt-5 flex flex-wrap gap-2">
+          {term.badges.map((b) => (
+            <span class={`glossary-badge ${badgeClass(b.class)}`}>{b.text}</span>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Definition */}
+      <div class="mt-8 rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
+        <p class="text-base text-gray-200 leading-relaxed whitespace-pre-line">{definition}</p>
+      </div>
+
+      {/* Links / References */}
+      {term.links?.length ? (
+        <div class="mt-8">
+          <h2 class="text-lg font-semibold text-white mb-4">References</h2>
+          <div class="flex flex-col gap-3">
+            {term.links.map((l) => (
+              <a
+                href={l.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center gap-2 text-[#94a3b8] hover:text-white transition-colors text-sm"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                  <polyline points="15 3 21 3 21 9" />
+                  <line x1="10" y1="14" x2="21" y2="3" />
+                </svg>
+                <span>{l.text}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Related terms */}
+      {related.length ? (
+        <div class="mt-10">
+          <h2 class="text-lg font-semibold text-white mb-4">Related Parameters</h2>
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {related.map((r) => {
+              const rCat = GLOSSARY_CATEGORIES[categorizeGlossaryKey(r.key)];
+              return (
+                <a
+                  href={`/glossary/${r._slug}/`}
+                  class="rounded-lg border border-[#27272a] bg-[#0f0f12] p-4 hover:border-[#64748b]/50 transition-colors block"
+                >
+                  <div class="flex items-center gap-2">
+                    <span class="text-lg">{rCat.icon}</span>
+                    <span class="text-sm font-semibold text-[#e4e4e7]">{r.term}</span>
+                  </div>
+                  <code class="mt-1 block text-[11px] text-[#71717a] font-mono">{r.key}</code>
+                </a>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {/* CTA */}
+      <div class="mt-12 rounded-xl border border-[#27272a] bg-gradient-to-r from-[#0f0f12] to-[#141420] p-6 text-center">
+        <p class="text-gray-300 text-sm">
+          Configure <code class="text-[#94a3b8] bg-[#18181b] border border-[#27272a] rounded px-1.5 py-0.5 text-xs">{term.key}</code> visually in ragweld's Get Started wizard.
+        </p>
+        <a
+          href="/demo/"
+          class="mt-4 inline-flex items-center gap-2 rounded-lg bg-[#64748b] px-5 py-2.5 text-sm font-medium text-white hover:bg-[#475569] transition-colors"
+        >
+          Try the demo →
+        </a>
+      </div>
+
+      {/* Back to glossary */}
+      <div class="mt-8 text-center">
+        <a href="/glossary/" class="text-sm text-gray-400 hover:text-white transition-colors">
+          ← Back to full glossary ({396} parameters)
+        </a>
+      </div>
+
+    </div>
+  </main>
+  <Footer />
+
+  <style is:global>
+    .glossary-badge {
+      display: inline-flex; align-items: center; border-radius: 999px;
+      padding: 2px 8px; font-size: 10px; font-weight: 700;
+      letter-spacing: 0.04em; text-transform: uppercase;
+      border: 1px solid #27272a; background: #09090b; color: #a1a1aa;
+    }
+    .glossary-badge.info { background: rgba(148,163,184,.14); color: #94a3b8; border-color: rgba(148,163,184,.28); }
+    .glossary-badge.warn, .glossary-badge.warning { background: rgba(251,191,36,.16); color: #fbbf24; border-color: rgba(251,191,36,.32); }
+    .glossary-badge.err { background: rgba(248,113,113,.16); color: #f87171; border-color: rgba(248,113,113,.32); }
+    .glossary-badge.reindex { background: rgba(248,113,113,.14); color: #f87171; border-color: rgba(248,113,113,.28); }
+    .glossary-badge.ok, .glossary-badge.success { background: rgba(74,222,128,.14); color: #4ade80; border-color: rgba(74,222,128,.28); }
+    .glossary-badge.security { background: rgba(251,191,36,.16); color: #fbbf24; border-color: rgba(251,191,36,.32); }
+  </style>
+</BaseLayout>

@@ -80,6 +80,21 @@ export const GLOSSARY_CATEGORY_ORDER: GlossaryCategoryId[] = [
   'advanced',
 ];
 
+export function slugifyTerm(term: string): string {
+  return term
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+export function slugifyKey(key: string): string {
+  return key
+    .toLowerCase()
+    .replace(/_/g, '-')
+    .replace(/[^a-z0-9-]+/g, '')
+    .replace(/^-+|-+$/g, '');
+}
+
 export function categorizeGlossaryKey(key: string): GlossaryCategoryId {
   const upper = String(key || '').toUpperCase();
   for (const categoryId of GLOSSARY_CATEGORY_ORDER) {
@@ -99,7 +114,7 @@ export function resolveGlossaryJsonPath(): string {
     return resolved;
   }
 
-  const sibling = repoPath('..', 'tribrid-rag', 'web', 'public', 'glossary.json');
+  const sibling = repoPath('..', 'ragweld', 'web', 'public', 'glossary.json');
   if (fs.existsSync(sibling)) return sibling;
 
   const pinned = repoPath('public', 'glossary.json');
@@ -109,7 +124,7 @@ export function resolveGlossaryJsonPath(): string {
     [
       'Unable to locate glossary.json.',
       `Looked for:\n- ${sibling}\n- ${pinned}`,
-      'Fix: check out ../tribrid-rag, set RAGWELD_GLOSSARY_PATH, or run npm run sync:demo to populate public/glossary.json.',
+      'Fix: check out ../ragweld, set RAGWELD_GLOSSARY_PATH, or run npm run sync:demo to populate public/glossary.json.',
     ].join('\n')
   );
 }

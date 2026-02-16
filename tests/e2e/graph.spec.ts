@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('graph explorer loads entities and shows neighbors', async ({ page }) => {
-  await page.goto('/demo/rag?subtab=graph&corpus=faxbot&mock=1');
+  await page.goto('/demo/rag?subtab=graph&corpus=epstein-files-1&mock=1');
 
   await expect(page.getByTestId('graph-subtab')).toBeVisible();
 

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
-    "sync:demo": "node scripts/sync-demo.cjs ../tribrid-rag/web",
+    "sync:demo": "node scripts/sync-demo.cjs ../ragweld/web",
     "deps:demo": "npm --prefix vendor/demo ci || npm --prefix vendor/demo install",
     "build:demo": "npm --prefix vendor/demo run build",
     "build": "npm run deps:demo && npm run build:demo && astro build && node scripts/copy-demo.cjs",
@@ -16,18 +16,20 @@
   },
   "dependencies": {
     "@astrojs/react": "^4.2.0",
+    "@astrojs/sitemap": "^3.7.0",
     "@astrojs/tailwind": "^6.0.0",
     "@netlify/neon": "^0.1.2",
     "astro": "^5.1.0",
+    "neo4j-driver": "^5.28.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@netlify/functions": "^2.8.0",
     "@playwright/test": "^1.54.0",
+    "@tailwindcss/typography": "^0.5.16",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
-    "@tailwindcss/typography": "^0.5.16",
     "pg": "^8.11.5",
     "tailwindcss": "^3.4.0"
   }

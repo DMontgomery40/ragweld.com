@@ -1,4 +1,4 @@
-// TriBrid RAG - Dashboard API Client
+// ragweld - Dashboard API Client
 // Centralized API calls for all Dashboard operations
 
 import { apiClient, api, withCorpusScope } from './client';
