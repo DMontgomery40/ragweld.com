@@ -247,7 +247,7 @@ export const handlersFull = [
 
   http.post('/api/dataset', async ({ request }) => {
     await delay(120);
-    const body = await request.json();
+    const body = (await request.json()) as Record<string, any>;
     const entry = {
       entry_id: String(Date.now()),
       question: String(body?.question || ''),
@@ -262,7 +262,7 @@ export const handlersFull = [
 
   http.put('/api/dataset/:entryId', async ({ request, params }) => {
     await delay(120);
-    const body = await request.json();
+    const body = (await request.json()) as Record<string, any>;
     const entryId = String(params.entryId);
     const idx = evalDatasetEntries.findIndex((e) => e.entry_id === entryId);
     if (idx === -1) return new HttpResponse(null, { status: 404 });
