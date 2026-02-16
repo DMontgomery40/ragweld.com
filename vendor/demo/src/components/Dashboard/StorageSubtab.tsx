@@ -1,4 +1,4 @@
-// ragweld - Storage Subtab
+// TriBrid RAG - Storage Subtab
 // Disk usage, index storage breakdown, and capacity planning
 
 import { useState, useEffect } from 'react';

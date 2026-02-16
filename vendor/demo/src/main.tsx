@@ -56,7 +56,7 @@ enableMocking().then(() => {
           fallback={({ error, reset }) => (
             <div className="min-h-screen bg-bg p-6 text-fg">
               <SubtabErrorFallback
-                title="ragweld failed to initialize"
+                title="Tri-Brid RAG failed to initialize"
                 context="A fatal error occurred while bootstrapping the workspace."
                 error={error}
                 retryLabel="Reload application"

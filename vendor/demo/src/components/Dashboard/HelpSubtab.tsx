@@ -1,4 +1,4 @@
-// ragweld - Help Subtab
+// TriBrid RAG - Help Subtab
 // Documentation, guides, and helpful resources
 
 export function HelpSubtab() {
@@ -28,7 +28,7 @@ export function HelpSubtab() {
         </h3>
 
         <p style={{ color: 'var(--fg-muted)', marginBottom: '32px', lineHeight: '1.6', fontSize: '14px' }}>
-          Welcome to ragweld (Vector + Sparse + Graph). This guide will help you get started and understand key concepts.
+          Welcome to TriBrid RAG (Vector + Sparse + Graph). This guide will help you get started and understand key concepts.
         </p>
 
         {/* Quick Start Guide */}
