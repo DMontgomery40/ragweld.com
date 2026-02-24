@@ -5,12 +5,28 @@
 [functions]
   directory = "netlify/functions"
 
+[functions."deepseek-mcp"]
+  node_bundler = "esbuild"
+  external_node_modules = ["@modelcontextprotocol/sdk", "deepseek-mcp-server"]
+  included_files = ["node_modules/@modelcontextprotocol/sdk/dist/cjs/server/**"]
+
 [build.environment]
   NODE_VERSION = "20"
 
 [[redirects]]
   from = "/demo/*"
   to = "/demo/index.html"
+  status = 200
+
+[[redirects]]
+  from = "https://deepseek-mcp.ragweld.com/mcp"
+  to = "/.netlify/functions/deepseek-mcp"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/deepseek-mcp/mcp"
+  to = "/.netlify/functions/deepseek-mcp"
   status = 200
 
 [[redirects]]
