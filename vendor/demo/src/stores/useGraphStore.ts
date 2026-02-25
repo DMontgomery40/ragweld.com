@@ -40,8 +40,9 @@ interface GraphStore {
   reset: () => void;
 }
 
-const defaultEntityTypes = ['function', 'class', 'module', 'variable', 'concept'];
-const defaultRelationTypes = ['calls', 'imports', 'inherits', 'contains', 'references', 'related_to'];
+// Empty defaults mean "show all currently available types" for each corpus.
+const defaultEntityTypes: string[] = [];
+const defaultRelationTypes: string[] = [];
 
 export const useGraphStore = create<GraphStore>()((set) => ({
   // Initial state

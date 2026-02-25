@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import ForceGraph2D from 'react-force-graph-2d';
 import { useGraph } from '@/hooks/useGraph';
 import { useRepoStore } from '@/stores/useRepoStore';
-import type { Community, Entity, Relationship } from '@/types/generated';
+import type { Community, Entity, GraphStats, Relationship } from '@/types/generated';
 
 /** Node with computed degree for importance labeling */
 type NodeWithDegree = Entity & { __degree?: number };
@@ -32,8 +32,38 @@ function mergeUniqueTypes(primary: string[], secondary: string[], fallback: stri
   return out;
 }
 
+function humanizeEntityName(value: string): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const withSpaces = raw.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return withSpaces.replace(/\b[a-z]/g, (m) => m.toUpperCase());
+}
+
+function hasOnlyConceptEntities(stats: GraphStats | null | undefined): boolean {
+  const breakdown = stats?.entity_breakdown;
+  if (!breakdown || typeof breakdown !== 'object') return false;
+  const nonZero = Object.entries(breakdown)
+    .filter(([, n]) => Number(n) > 0)
+    .map(([k]) => String(k).trim())
+    .filter(Boolean);
+  return nonZero.length === 1 && nonZero[0] === 'concept';
+}
+
+function pickBootstrapEntity(list: Entity[], query: string): Entity | null {
+  if (!list.length) return null;
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return list[0];
+
+  if (q === 'epstein') {
+    const je = list.find((e) => /jeffrey[_\s-]?epstein/i.test(String(e.name || '')));
+    if (je) return je;
+  }
+
+  return list.find((e) => String(e.name || '').toLowerCase().includes(q)) || list[0];
+}
+
 function formatEntityLabel(e: Entity): string {
-  const name = String(e.name || '').trim();
+  const name = humanizeEntityName(e.name);
   const type = String(e.entity_type || '').trim();
   return type ? `${name} (${type})` : name;
 }
@@ -41,8 +71,8 @@ function formatEntityLabel(e: Entity): string {
 function formatRelLabel(r: Relationship, byId: Map<string, Entity>): string {
   const src = byId.get(r.source_id);
   const dst = byId.get(r.target_id);
-  const srcName = src ? src.name : r.source_id;
-  const dstName = dst ? dst.name : r.target_id;
+  const srcName = humanizeEntityName(src ? src.name : r.source_id);
+  const dstName = humanizeEntityName(dst ? dst.name : r.target_id);
   return `${srcName} ─ ${r.relation_type} → ${dstName}`;
 }
 
@@ -84,6 +114,11 @@ export function GraphSubtab() {
   const fullscreenCanvasRef = useRef<HTMLDivElement | null>(null);
   const [vizSize, setVizSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [fullscreenSize, setFullscreenSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  const isEpsteinCorpus = useMemo(() => /epstein/i.test(String(activeRepo || '')), [activeRepo]);
+  const conceptOnlyCorpus = useMemo(() => hasOnlyConceptEntities(stats), [stats]);
+  const bootstrapQuery = useMemo(() => {
+    return isEpsteinCorpus && conceptOnlyCorpus ? 'epstein' : '';
+  }, [conceptOnlyCorpus, isEpsteinCorpus]);
 
   useEffect(() => {
     if (!repos.length) void loadRepos();
@@ -166,11 +201,30 @@ export function GraphSubtab() {
     }
     if (bootstrappedRepoRef.current === activeRepo) return;
     if (!stats || isLoading) return;
-    bootstrappedRepoRef.current = activeRepo;
-    if ((stats.total_entities ?? 0) > 0) {
-      void searchEntities('', 200);
-    }
-  }, [activeRepo, isLoading, searchEntities, stats]);
+    let cancelled = false;
+
+    const bootstrap = async () => {
+      bootstrappedRepoRef.current = activeRepo;
+      if ((stats.total_entities ?? 0) <= 0) return;
+
+      if (bootstrapQuery) {
+        setEntityQuery(bootstrapQuery);
+      }
+
+      const seeded = await searchEntities(bootstrapQuery, 200);
+      if (cancelled || !seeded.length) return;
+
+      const seed = pickBootstrapEntity(seeded, bootstrapQuery);
+      if (seed) {
+        await selectEntity(seed);
+      }
+    };
+
+    void bootstrap();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRepo, bootstrapQuery, isLoading, searchEntities, selectEntity, stats]);
 
   const vizEntityIdSet = useMemo(() => {
     return new Set<string>(filteredEntities.map((e) => e.entity_id));
@@ -349,7 +403,8 @@ export function GraphSubtab() {
       const baseSize = 4;
       const degree = entity.__degree || 0;
       const sizeMultiplier = Math.min(2.5, 1 + degree * 0.15);
-      const nodeSize = baseSize * sizeMultiplier;
+      const isSelected = selectedEntity?.entity_id === entity.entity_id;
+      const nodeSize = baseSize * sizeMultiplier * (isSelected ? 1.4 : 1);
 
       // Draw node circle
       ctx.beginPath();
@@ -361,19 +416,20 @@ export function GraphSubtab() {
       ctx.fill();
 
       // Draw subtle glow for important nodes
-      if (importantNodeIds.has(entity.entity_id)) {
+      if (importantNodeIds.has(entity.entity_id) || isSelected) {
         ctx.beginPath();
         ctx.arc(x, y, nodeSize + 2, 0, 2 * Math.PI);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.strokeStyle = isSelected ? 'rgba(0, 255, 136, 0.45)' : 'rgba(255, 255, 255, 0.2)';
         ctx.lineWidth = 1;
         ctx.stroke();
       }
 
-      // Draw label for important nodes (only when zoomed in enough)
-      if (importantNodeIds.has(entity.entity_id) && globalScale >= 0.4) {
-        const label = entity.name || entity.entity_id;
+      // Draw label for important nodes + selected node (only when zoomed in enough).
+      const shouldLabel = importantNodeIds.has(entity.entity_id) || isSelected;
+      if (shouldLabel && globalScale >= 0.35) {
+        const label = humanizeEntityName(entity.name || entity.entity_id);
         const fontSize = Math.max(10, 12 / globalScale);
-        ctx.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
+        ctx.font = `${isSelected ? 700 : 600} ${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
 
         // Background pill for readability
         const textWidth = ctx.measureText(label).width;
@@ -410,7 +466,14 @@ export function GraphSubtab() {
   const handleClear = async () => {
     setEntityQuery('');
     await loadGraph();
-    await searchEntities('', 200);
+    if (bootstrapQuery) {
+      setEntityQuery(bootstrapQuery);
+    }
+    const seeded = await searchEntities(bootstrapQuery, 200);
+    if (bootstrapQuery) {
+      const seed = pickBootstrapEntity(seeded, bootstrapQuery);
+      if (seed) await selectEntity(seed);
+    }
   };
 
   const handlePickCommunity = async (c: Community | null) => {
@@ -589,6 +652,24 @@ export function GraphSubtab() {
                   </div>
                 ))}
               </div>
+
+              {conceptOnlyCorpus ? (
+                <div
+                  style={{
+                    marginTop: '12px',
+                    padding: '10px 12px',
+                    borderRadius: '10px',
+                    border: '1px solid var(--line)',
+                    background: 'rgba(var(--accent-rgb), 0.06)',
+                    color: 'var(--fg-muted)',
+                    fontSize: '12px',
+                  }}
+                  data-testid="graph-concept-only-hint"
+                >
+                  This corpus is currently semantic-concepts only (no explicit <code>person/org</code> typing).
+                  {isEpsteinCorpus ? ' Auto-focused on Jeffrey Epstein relationships for people-first exploration.' : ''}
+                </div>
+              ) : null}
 
               {(stats.total_entities ?? 0) === 0 && (stats.total_chunks ?? 0) > 0 ? (
                 <div
@@ -829,7 +910,9 @@ export function GraphSubtab() {
 
             {selectedEntity ? (
               <div data-testid="graph-entity-details">
-                <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--fg)' }}>{selectedEntity.name}</div>
+                <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--fg)' }}>
+                  {humanizeEntityName(selectedEntity.name)}
+                </div>
                 <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--fg-muted)' }}>
                   <span style={{ fontFamily: 'var(--font-mono)' }}>{selectedEntity.entity_id}</span>
                 </div>
@@ -1184,7 +1267,7 @@ export function GraphSubtab() {
                     }}
                   >
                     <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--accent)' }}>
-                      {selectedEntity.name}
+                      {humanizeEntityName(selectedEntity.name)}
                     </div>
                     <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '4px' }}>
                       {selectedEntity.entity_type} • {nodeDegreeMap.get(selectedEntity.entity_id) || 0} connections
