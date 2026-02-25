@@ -11,15 +11,18 @@ type NodeWithDegree = Entity & { __degree?: number };
 const DEFAULT_ENTITY_TYPES: string[] = [];
 const DEFAULT_RELATION_TYPES: string[] = [];
 
-type SpotlightConfig = { label: string; queries: string[]; match: RegExp };
+const FIRST_NAME_HINTS = new Set([
+  'andrew', 'alan', 'bill', 'charles', 'david', 'donald', 'george', 'ghislaine',
+  'hillary', 'jane', 'jeffrey', 'john', 'joseph', 'leslie', 'mark', 'mary',
+  'michael', 'paul', 'peter', 'prince', 'richard', 'robert', 'sarah', 'steven',
+  'thomas', 'virginia', 'william',
+]);
 
-const EPSTEIN_PEOPLE_SPOTLIGHTS: SpotlightConfig[] = [
-  { label: 'Jeffrey Epstein', queries: ['jeffrey_epstein', 'epstein'], match: /jeffrey[_\s-]?epstein/i },
-  { label: 'Ghislaine Maxwell', queries: ['ghislaine_maxwell', 'maxwell'], match: /ghislaine[_\s-]?maxwell/i },
-  { label: 'Donald Trump', queries: ['donald_trump', 'trump'], match: /donald[_\s-]?trump|trump/i },
-  { label: 'Bill Clinton', queries: ['bill_clinton', 'clinton'], match: /bill[_\s-]?clinton|clinton/i },
-  { label: 'Prince Andrew', queries: ['prince_andrew', 'andrew'], match: /prince[_\s-]?andrew|andrew/i },
-];
+const PERSON_STOPWORDS = new Set([
+  'case', 'campaign', 'administration', 'policy', 'process', 'strategy', 'security',
+  'investment', 'relations', 'network', 'services', 'status', 'care', 'bill', 'scandal',
+  'presidency', 'run', 'system', 'plan', 'history', 'world', 'group', 'media',
+]);
 
 function rankKeysByBreakdownCount(breakdown: Record<string, number> | undefined): string[] {
   if (!breakdown || typeof breakdown !== 'object') return [];
@@ -72,39 +75,101 @@ function pickBootstrapEntity(list: Entity[], query: string): Entity | null {
   return list.find((e) => String(e.name || '').toLowerCase().includes(q)) || list[0];
 }
 
-function pickSpotlightEntity(list: Entity[]): Entity | null {
-  for (const spotlight of EPSTEIN_PEOPLE_SPOTLIGHTS) {
-    const hit = list.find((e) => spotlight.match.test(String(e.name || '')));
-    if (hit) return hit;
-  }
-  return null;
+function isLikelyPersonEntity(entity: Entity): boolean {
+  const raw = String(entity.name || '').trim().toLowerCase();
+  if (!raw) return false;
+
+  const tokens = raw
+    .replace(/[_-]+/g, ' ')
+    .replace(/[^a-z\s]/g, ' ')
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+  if (tokens.length < 2 || tokens.length > 3) return false;
+  if (!FIRST_NAME_HINTS.has(tokens[0])) return false;
+  if (tokens.some((t) => PERSON_STOPWORDS.has(t))) return false;
+  if (tokens.some((t) => t.length < 2 || t.length > 24)) return false;
+
+  return true;
+}
+
+function normalizeQueryValue(value: string): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
 }
 
 function buildFallbackQueries(rawQuery: string): string[] {
-  const q = String(rawQuery || '').trim().toLowerCase();
+  const q = normalizeQueryValue(rawQuery);
   if (!q) return [];
 
   const out: string[] = [];
   const seen = new Set<string>();
   const push = (value: string) => {
-    const v = String(value || '').trim().toLowerCase();
+    const v = normalizeQueryValue(value);
     if (!v || seen.has(v)) return;
     seen.add(v);
     out.push(v);
   };
 
-  const parts = q
-    .replace(/[_-]+/g, ' ')
-    .split(/\s+/)
-    .map((p) => p.trim())
-    .filter(Boolean);
-
-  push(q.replace(/\s+/g, '_'));
+  const parts = q.split(' ').map((p) => p.trim()).filter(Boolean);
   push(q);
+  push(q.replace(/\s+/g, '_'));
+  push(q.replace(/\s+/g, '-'));
   for (const p of parts) {
     if (p.length >= 3) push(p);
   }
   return out;
+}
+
+function scoreEntityMatch(entity: Entity, rawQuery: string): number {
+  const q = normalizeQueryValue(rawQuery);
+  const name = normalizeQueryValue(String(entity.name || ''));
+  const tokens = q ? q.split(' ').filter(Boolean) : [];
+  const degree = Number((entity as any)?.properties?.degree || 0);
+  let score = degree * 0.25;
+
+  if (!q) {
+    if (isLikelyPersonEntity(entity)) score += 1200;
+    return score;
+  }
+
+  if (name === q) score += 5000;
+  if (name.includes(q)) score += 1800;
+  if (q.includes(name) && name.length > 4) score += 700;
+
+  for (const token of tokens) {
+    if (token.length < 3) continue;
+    if (name === token) score += 900;
+    if (name.includes(token)) score += 350;
+  }
+
+  if (isLikelyPersonEntity(entity)) score += 420;
+  return score;
+}
+
+function pickBestEntity(list: Entity[], rawQuery: string, preferPeople: boolean): Entity | null {
+  if (!list.length) return null;
+
+  const q = normalizeQueryValue(rawQuery);
+  if (q === 'epstein') {
+    const je = list.find((e) => /jeffrey[_\s-]?epstein/i.test(String(e.name || '')));
+    if (je) return je;
+  }
+
+  const scored = list
+    .map((entity) => ({ entity, score: scoreEntityMatch(entity, rawQuery) }))
+    .sort((a, b) => b.score - a.score || String(a.entity.name || '').localeCompare(String(b.entity.name || '')));
+
+  if (preferPeople) {
+    const person = scored.find(({ entity }) => isLikelyPersonEntity(entity));
+    if (person) return person.entity;
+  }
+
+  return scored[0]?.entity || null;
 }
 
 function formatEntityLabel(e: Entity): string {
@@ -219,6 +284,25 @@ export function GraphSubtab() {
   const filteredRelationships = useMemo(() => {
     return getRelationshipsByType(effectiveRelationTypes);
   }, [getRelationshipsByType, effectiveRelationTypes]);
+
+  const peopleSpotlights = useMemo(() => {
+    if (!isEpsteinCorpus || !conceptOnlyCorpus) return [];
+    const seen = new Set<string>();
+    return (entities || [])
+      .filter(isLikelyPersonEntity)
+      .sort((a, b) => {
+        const da = Number((a as any)?.properties?.degree || 0);
+        const db = Number((b as any)?.properties?.degree || 0);
+        return db - da || String(a.name).localeCompare(String(b.name));
+      })
+      .filter((e) => {
+        const key = String(e.name || '').toLowerCase();
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 10);
+  }, [conceptOnlyCorpus, entities, isEpsteinCorpus]);
 
   useEffect(() => {
     const valid = visibleEntityTypes.filter((t) => availableEntityTypes.includes(t));
@@ -507,36 +591,45 @@ export function GraphSubtab() {
 
   const handleSearch = async () => {
     const query = entityQuery.trim();
+    const searchQuery = query || bootstrapQuery;
     setSearchNote('');
 
-    const exact = await searchEntities(query, 200);
+    const exact = await searchEntities(searchQuery, 200);
     if (exact.length) {
-      if (isEpsteinCorpus && conceptOnlyCorpus) {
-        const seed = pickSpotlightEntity(exact) || pickBootstrapEntity(exact, query);
-        if (seed) await selectEntity(seed);
-      }
+      const seed = pickBestEntity(exact, searchQuery, isEpsteinCorpus && conceptOnlyCorpus);
+      if (seed) await selectEntity(seed);
       return;
     }
 
     if (isEpsteinCorpus && conceptOnlyCorpus && query) {
+      const tried = new Set<string>([normalizeQueryValue(searchQuery)]);
       for (const fallbackQuery of buildFallbackQueries(query)) {
+        const norm = normalizeQueryValue(fallbackQuery);
+        if (!norm || tried.has(norm)) continue;
+        tried.add(norm);
+
         const fallback = await searchEntities(fallbackQuery, 500);
         if (!fallback.length) continue;
-        const seed = pickSpotlightEntity(fallback) || pickBootstrapEntity(fallback, fallbackQuery);
+        const seed = pickBestEntity(fallback, query, true);
         if (seed) {
           await selectEntity(seed);
-          setSearchNote(`No exact match for "${query}". Showing ${humanizeEntityName(seed.name)} instead.`);
+          setSearchNote(`No exact match for "${query}". Showing ${humanizeEntityName(seed.name)} from indexed graph.`);
           return;
         }
       }
 
       const seeded = await searchEntities('epstein', 200);
-      const seed = pickBootstrapEntity(seeded, 'epstein');
+      const seed = pickBestEntity(seeded, 'epstein', true);
       if (seed) {
         await selectEntity(seed);
         setEntityQuery('epstein');
-        setSearchNote(`No exact match for "${query}". Showing Jeffrey Epstein relationship graph.`);
+        setSearchNote(`No exact match for "${query}". Showing ${humanizeEntityName(seed.name)} from indexed graph.`);
       }
+      return;
+    }
+
+    if (query) {
+      setSearchNote(`No entities matched "${query}" in this corpus.`);
     }
   };
 
@@ -554,18 +647,10 @@ export function GraphSubtab() {
     }
   };
 
-  const handleSpotlightSelect = async (spotlight: SpotlightConfig) => {
+  const handleSpotlightSelect = async (spotlight: Entity) => {
     setSearchNote('');
-    setEntityQuery(spotlight.label.toLowerCase());
-    for (const query of spotlight.queries) {
-      const matches = await searchEntities(query, 300);
-      if (!matches.length) continue;
-      const seed = matches.find((e) => spotlight.match.test(String(e.name || ''))) || pickBootstrapEntity(matches, query);
-      if (seed) {
-        await selectEntity(seed);
-        return;
-      }
-    }
+    setEntityQuery(humanizeEntityName(spotlight.name).toLowerCase());
+    await selectEntity(spotlight);
   };
 
   const handlePickCommunity = async (c: Community | null) => {
@@ -759,7 +844,7 @@ export function GraphSubtab() {
                   data-testid="graph-concept-only-hint"
                 >
                   This corpus is currently semantic-concepts only (no explicit <code>person/org</code> typing).
-                  {isEpsteinCorpus ? ' Auto-focused on Jeffrey Epstein relationships for people-first exploration.' : ''}
+                  {isEpsteinCorpus ? ' Auto-focused on Epstein-related relationships for people-first exploration.' : ''}
                 </div>
               ) : null}
 
@@ -896,13 +981,13 @@ export function GraphSubtab() {
             </button>
           </div>
 
-          {isEpsteinCorpus && conceptOnlyCorpus ? (
+          {isEpsteinCorpus && conceptOnlyCorpus && peopleSpotlights.length ? (
             <div style={{ marginTop: '10px' }}>
               <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>People spotlight</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                {EPSTEIN_PEOPLE_SPOTLIGHTS.map((spotlight) => (
+                {peopleSpotlights.map((spotlight) => (
                   <button
-                    key={spotlight.label}
+                    key={spotlight.entity_id}
                     onClick={() => void handleSpotlightSelect(spotlight)}
                     style={{
                       padding: '6px 9px',
@@ -914,9 +999,9 @@ export function GraphSubtab() {
                       fontWeight: 700,
                       fontSize: '11px',
                     }}
-                    data-testid={`graph-spotlight-${spotlight.label.toLowerCase().replace(/\s+/g, '-')}`}
+                    data-testid={`graph-spotlight-${String(spotlight.name || '').toLowerCase().replace(/[_\s]+/g, '-')}`}
                   >
-                    {spotlight.label}
+                    {humanizeEntityName(spotlight.name)}
                   </button>
                 ))}
               </div>
