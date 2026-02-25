@@ -200,8 +200,7 @@ export function GraphSubtab() {
       return;
     }
     if (bootstrappedRepoRef.current === activeRepo) return;
-    if (!stats || isLoading) return;
-    let cancelled = false;
+    if (!stats) return;
 
     const bootstrap = async () => {
       bootstrappedRepoRef.current = activeRepo;
@@ -212,7 +211,7 @@ export function GraphSubtab() {
       }
 
       const seeded = await searchEntities(bootstrapQuery, 200);
-      if (cancelled || !seeded.length) return;
+      if (!seeded.length) return;
 
       const seed = pickBootstrapEntity(seeded, bootstrapQuery);
       if (seed) {
@@ -221,10 +220,7 @@ export function GraphSubtab() {
     };
 
     void bootstrap();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeRepo, bootstrapQuery, isLoading, searchEntities, selectEntity, stats]);
+  }, [activeRepo, bootstrapQuery, searchEntities, selectEntity, stats]);
 
   const vizEntityIdSet = useMemo(() => {
     return new Set<string>(filteredEntities.map((e) => e.entity_id));

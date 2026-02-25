@@ -34,6 +34,14 @@ test('graph explorer loads entities and shows neighbors', async ({ page }) => {
   await expect(firstEntity).toBeVisible();
   await firstEntity.click();
 
+  // If bootstrap already selected the first entity, clicking it toggles details off; pick the next one.
+  const relVisible = await relCount.isVisible({ timeout: 1200 }).catch(() => false);
+  if (!relVisible) {
+    const secondEntity = page.getByTestId('graph-entities').locator('button').nth(1);
+    await expect(secondEntity).toBeVisible();
+    await secondEntity.click();
+  }
+
   await expect(relCount).toBeVisible();
   await expect.poll(async () => {
     const txt = (await relCount.textContent()) || '';
