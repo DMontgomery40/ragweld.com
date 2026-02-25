@@ -8,8 +8,18 @@ import type { Community, Entity, GraphStats, Relationship } from '@/types/genera
 /** Node with computed degree for importance labeling */
 type NodeWithDegree = Entity & { __degree?: number };
 
-const DEFAULT_ENTITY_TYPES = ['function', 'class', 'module', 'variable', 'concept'];
-const DEFAULT_RELATION_TYPES = ['calls', 'imports', 'inherits', 'contains', 'references', 'related_to'];
+const DEFAULT_ENTITY_TYPES: string[] = [];
+const DEFAULT_RELATION_TYPES: string[] = [];
+
+type SpotlightConfig = { label: string; queries: string[]; match: RegExp };
+
+const EPSTEIN_PEOPLE_SPOTLIGHTS: SpotlightConfig[] = [
+  { label: 'Jeffrey Epstein', queries: ['jeffrey_epstein', 'epstein'], match: /jeffrey[_\s-]?epstein/i },
+  { label: 'Ghislaine Maxwell', queries: ['ghislaine_maxwell', 'maxwell'], match: /ghislaine[_\s-]?maxwell/i },
+  { label: 'Donald Trump', queries: ['donald_trump', 'trump'], match: /donald[_\s-]?trump|trump/i },
+  { label: 'Bill Clinton', queries: ['bill_clinton', 'clinton'], match: /bill[_\s-]?clinton|clinton/i },
+  { label: 'Prince Andrew', queries: ['prince_andrew', 'andrew'], match: /prince[_\s-]?andrew|andrew/i },
+];
 
 function rankKeysByBreakdownCount(breakdown: Record<string, number> | undefined): string[] {
   if (!breakdown || typeof breakdown !== 'object') return [];
@@ -62,6 +72,41 @@ function pickBootstrapEntity(list: Entity[], query: string): Entity | null {
   return list.find((e) => String(e.name || '').toLowerCase().includes(q)) || list[0];
 }
 
+function pickSpotlightEntity(list: Entity[]): Entity | null {
+  for (const spotlight of EPSTEIN_PEOPLE_SPOTLIGHTS) {
+    const hit = list.find((e) => spotlight.match.test(String(e.name || '')));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function buildFallbackQueries(rawQuery: string): string[] {
+  const q = String(rawQuery || '').trim().toLowerCase();
+  if (!q) return [];
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (value: string) => {
+    const v = String(value || '').trim().toLowerCase();
+    if (!v || seen.has(v)) return;
+    seen.add(v);
+    out.push(v);
+  };
+
+  const parts = q
+    .replace(/[_-]+/g, ' ')
+    .split(/\s+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  push(q.replace(/\s+/g, '_'));
+  push(q);
+  for (const p of parts) {
+    if (p.length >= 3) push(p);
+  }
+  return out;
+}
+
 function formatEntityLabel(e: Entity): string {
   const name = humanizeEntityName(e.name);
   const type = String(e.entity_type || '').trim();
@@ -104,6 +149,7 @@ export function GraphSubtab() {
   } = useGraph();
 
   const [entityQuery, setEntityQuery] = useState('');
+  const [searchNote, setSearchNote] = useState('');
   const [accentColor, setAccentColor] = useState<string>('#00ff88');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fullscreenAnimating, setFullscreenAnimating] = useState(false);
@@ -119,6 +165,10 @@ export function GraphSubtab() {
   const bootstrapQuery = useMemo(() => {
     return isEpsteinCorpus && conceptOnlyCorpus ? 'epstein' : '';
   }, [conceptOnlyCorpus, isEpsteinCorpus]);
+
+  useEffect(() => {
+    setSearchNote('');
+  }, [activeRepo]);
 
   useEffect(() => {
     if (!repos.length) void loadRepos();
@@ -456,10 +506,42 @@ export function GraphSubtab() {
   );
 
   const handleSearch = async () => {
-    await searchEntities(entityQuery, 200);
+    const query = entityQuery.trim();
+    setSearchNote('');
+
+    const exact = await searchEntities(query, 200);
+    if (exact.length) {
+      if (isEpsteinCorpus && conceptOnlyCorpus) {
+        const seed = pickSpotlightEntity(exact) || pickBootstrapEntity(exact, query);
+        if (seed) await selectEntity(seed);
+      }
+      return;
+    }
+
+    if (isEpsteinCorpus && conceptOnlyCorpus && query) {
+      for (const fallbackQuery of buildFallbackQueries(query)) {
+        const fallback = await searchEntities(fallbackQuery, 500);
+        if (!fallback.length) continue;
+        const seed = pickSpotlightEntity(fallback) || pickBootstrapEntity(fallback, fallbackQuery);
+        if (seed) {
+          await selectEntity(seed);
+          setSearchNote(`No exact match for "${query}". Showing ${humanizeEntityName(seed.name)} instead.`);
+          return;
+        }
+      }
+
+      const seeded = await searchEntities('epstein', 200);
+      const seed = pickBootstrapEntity(seeded, 'epstein');
+      if (seed) {
+        await selectEntity(seed);
+        setEntityQuery('epstein');
+        setSearchNote(`No exact match for "${query}". Showing Jeffrey Epstein relationship graph.`);
+      }
+    }
   };
 
   const handleClear = async () => {
+    setSearchNote('');
     setEntityQuery('');
     await loadGraph();
     if (bootstrapQuery) {
@@ -469,6 +551,20 @@ export function GraphSubtab() {
     if (bootstrapQuery) {
       const seed = pickBootstrapEntity(seeded, bootstrapQuery);
       if (seed) await selectEntity(seed);
+    }
+  };
+
+  const handleSpotlightSelect = async (spotlight: SpotlightConfig) => {
+    setSearchNote('');
+    setEntityQuery(spotlight.label.toLowerCase());
+    for (const query of spotlight.queries) {
+      const matches = await searchEntities(query, 300);
+      if (!matches.length) continue;
+      const seed = matches.find((e) => spotlight.match.test(String(e.name || ''))) || pickBootstrapEntity(matches, query);
+      if (seed) {
+        await selectEntity(seed);
+        return;
+      }
     }
   };
 
@@ -747,7 +843,10 @@ export function GraphSubtab() {
           <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
             <input
               value={entityQuery}
-              onChange={(e) => setEntityQuery(e.target.value)}
+              onChange={(e) => {
+                setEntityQuery(e.target.value);
+                if (searchNote) setSearchNote('');
+              }}
               placeholder="Search entities by name…"
               style={{
                 flex: 1,
@@ -796,6 +895,50 @@ export function GraphSubtab() {
               Reset
             </button>
           </div>
+
+          {isEpsteinCorpus && conceptOnlyCorpus ? (
+            <div style={{ marginTop: '10px' }}>
+              <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>People spotlight</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {EPSTEIN_PEOPLE_SPOTLIGHTS.map((spotlight) => (
+                  <button
+                    key={spotlight.label}
+                    onClick={() => void handleSpotlightSelect(spotlight)}
+                    style={{
+                      padding: '6px 9px',
+                      background: 'var(--bg-elev2)',
+                      color: 'var(--fg)',
+                      border: '1px solid var(--line)',
+                      borderRadius: '999px',
+                      cursor: 'pointer',
+                      fontWeight: 700,
+                      fontSize: '11px',
+                    }}
+                    data-testid={`graph-spotlight-${spotlight.label.toLowerCase().replace(/\s+/g, '-')}`}
+                  >
+                    {spotlight.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {searchNote ? (
+            <div
+              style={{
+                marginTop: '10px',
+                padding: '8px 10px',
+                border: '1px solid var(--line)',
+                borderRadius: '8px',
+                color: 'var(--fg-muted)',
+                fontSize: '12px',
+                background: 'rgba(var(--accent-rgb), 0.06)',
+              }}
+              data-testid="graph-search-note"
+            >
+              {searchNote}
+            </div>
+          ) : null}
 
           <details style={{ marginTop: '12px' }}>
             <summary style={{ cursor: 'pointer', fontSize: '12px', fontWeight: 700, color: 'var(--fg)' }}>
