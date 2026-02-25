@@ -8,6 +8,30 @@ import type { Community, Entity, Relationship } from '@/types/generated';
 /** Node with computed degree for importance labeling */
 type NodeWithDegree = Entity & { __degree?: number };
 
+const DEFAULT_ENTITY_TYPES = ['function', 'class', 'module', 'variable', 'concept'];
+const DEFAULT_RELATION_TYPES = ['calls', 'imports', 'inherits', 'contains', 'references', 'related_to'];
+
+function rankKeysByBreakdownCount(breakdown: Record<string, number> | undefined): string[] {
+  if (!breakdown || typeof breakdown !== 'object') return [];
+  return Object.entries(breakdown)
+    .map(([k, v]) => [String(k || '').trim(), Number(v) || 0] as const)
+    .filter(([k]) => Boolean(k))
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([k]) => k);
+}
+
+function mergeUniqueTypes(primary: string[], secondary: string[], fallback: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of [...primary, ...secondary, ...fallback]) {
+    const key = String(item || '').trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+}
+
 function formatEntityLabel(e: Entity): string {
   const name = String(e.name || '').trim();
   const type = String(e.entity_type || '').trim();
@@ -26,12 +50,14 @@ export function GraphSubtab() {
   const { repos, activeRepo, loadRepos, setActiveRepo } = useRepoStore();
   const {
     entities,
+    relationships,
     communities,
     stats,
     selectedEntity,
     selectedCommunity,
     isLoading,
     error,
+    viewMode,
     maxHops,
     visibleEntityTypes,
     visibleRelationTypes,
@@ -39,6 +65,7 @@ export function GraphSubtab() {
     loadGraph,
     selectEntity,
     selectCommunity,
+    setViewMode,
     setMaxHops,
     setVisibleEntityTypes,
     setVisibleRelationTypes,
@@ -47,10 +74,10 @@ export function GraphSubtab() {
   } = useGraph();
 
   const [entityQuery, setEntityQuery] = useState('');
-  const [viewMode, setViewMode] = useState<'table' | 'viz'>('table');
   const [accentColor, setAccentColor] = useState<string>('#00ff88');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fullscreenAnimating, setFullscreenAnimating] = useState(false);
+  const bootstrappedRepoRef = useRef<string | null>(null);
   const fgRef = useRef<any>(null);
   const fullscreenFgRef = useRef<any>(null);
   const vizCanvasRef = useRef<HTMLDivElement | null>(null);
@@ -72,13 +99,78 @@ export function GraphSubtab() {
     return new Map<string, Entity>((entities || []).map((e) => [e.entity_id, e]));
   }, [entities]);
 
+  const availableEntityTypes = useMemo(() => {
+    const fromStats = rankKeysByBreakdownCount(stats?.entity_breakdown);
+    const fromEntities = (entities || [])
+      .map((e) => String(e.entity_type || '').trim())
+      .filter(Boolean);
+    return mergeUniqueTypes(fromStats, fromEntities, DEFAULT_ENTITY_TYPES);
+  }, [stats, entities]);
+
+  const availableRelationTypes = useMemo(() => {
+    const fromStats = rankKeysByBreakdownCount(stats?.relationship_breakdown);
+    const fromRels = (relationships || [])
+      .map((r) => String(r.relation_type || '').trim())
+      .filter(Boolean);
+    return mergeUniqueTypes(fromStats, fromRels, DEFAULT_RELATION_TYPES);
+  }, [stats, relationships]);
+
+  const effectiveEntityTypes = useMemo(() => {
+    const allowed = new Set(availableEntityTypes);
+    const valid = visibleEntityTypes.filter((t) => allowed.has(t));
+    return valid.length ? valid : availableEntityTypes;
+  }, [availableEntityTypes, visibleEntityTypes]);
+
+  const effectiveRelationTypes = useMemo(() => {
+    const allowed = new Set(availableRelationTypes);
+    const valid = visibleRelationTypes.filter((t) => allowed.has(t));
+    return valid.length ? valid : availableRelationTypes;
+  }, [availableRelationTypes, visibleRelationTypes]);
+
   const filteredEntities = useMemo(() => {
-    return getEntitiesByType(visibleEntityTypes);
-  }, [getEntitiesByType, visibleEntityTypes]);
+    return getEntitiesByType(effectiveEntityTypes);
+  }, [getEntitiesByType, effectiveEntityTypes]);
 
   const filteredRelationships = useMemo(() => {
-    return getRelationshipsByType(visibleRelationTypes);
-  }, [getRelationshipsByType, visibleRelationTypes]);
+    return getRelationshipsByType(effectiveRelationTypes);
+  }, [getRelationshipsByType, effectiveRelationTypes]);
+
+  useEffect(() => {
+    const valid = visibleEntityTypes.filter((t) => availableEntityTypes.includes(t));
+    if (!availableEntityTypes.length) return;
+    if (!valid.length) {
+      setVisibleEntityTypes(availableEntityTypes);
+      return;
+    }
+    if (valid.length !== visibleEntityTypes.length) {
+      setVisibleEntityTypes(valid);
+    }
+  }, [availableEntityTypes, visibleEntityTypes, setVisibleEntityTypes]);
+
+  useEffect(() => {
+    const valid = visibleRelationTypes.filter((t) => availableRelationTypes.includes(t));
+    if (!availableRelationTypes.length) return;
+    if (!valid.length) {
+      setVisibleRelationTypes(availableRelationTypes);
+      return;
+    }
+    if (valid.length !== visibleRelationTypes.length) {
+      setVisibleRelationTypes(valid);
+    }
+  }, [availableRelationTypes, visibleRelationTypes, setVisibleRelationTypes]);
+
+  useEffect(() => {
+    if (!activeRepo) {
+      bootstrappedRepoRef.current = null;
+      return;
+    }
+    if (bootstrappedRepoRef.current === activeRepo) return;
+    if (!stats || isLoading) return;
+    bootstrappedRepoRef.current = activeRepo;
+    if ((stats.total_entities ?? 0) > 0) {
+      void searchEntities('', 200);
+    }
+  }, [activeRepo, isLoading, searchEntities, stats]);
 
   const vizEntityIdSet = useMemo(() => {
     return new Set<string>(filteredEntities.map((e) => e.entity_id));
@@ -311,14 +403,6 @@ export function GraphSubtab() {
     [selectedEntity, accentColor, importantNodeIds, nodeColor]
   );
 
-  const entityTypes = useMemo(() => {
-    return ['function', 'class', 'module', 'variable', 'concept'];
-  }, []);
-
-  const relationTypes = useMemo(() => {
-    return ['calls', 'imports', 'inherits', 'contains', 'references', 'related_to'];
-  }, []);
-
   const handleSearch = async () => {
     await searchEntities(entityQuery, 200);
   };
@@ -326,6 +410,7 @@ export function GraphSubtab() {
   const handleClear = async () => {
     setEntityQuery('');
     await loadGraph();
+    await searchEntities('', 200);
   };
 
   const handlePickCommunity = async (c: Community | null) => {
@@ -643,17 +728,18 @@ export function GraphSubtab() {
               <div>
                 <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Entity types</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                  {entityTypes.map((t) => {
-                    const checked = visibleEntityTypes.includes(t);
+                  {availableEntityTypes.map((t) => {
+                    const checked = effectiveEntityTypes.includes(t);
                     return (
                       <label key={t} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--fg)' }}>
                         <input
                           type="checkbox"
                           checked={checked}
                           onChange={(e) => {
+                            const base = effectiveEntityTypes;
                             const next = e.target.checked
-                              ? Array.from(new Set([...visibleEntityTypes, t]))
-                              : visibleEntityTypes.filter((x) => x !== t);
+                              ? Array.from(new Set([...base, t]))
+                              : base.filter((x) => x !== t);
                             setVisibleEntityTypes(next);
                           }}
                         />
@@ -667,17 +753,18 @@ export function GraphSubtab() {
               <div>
                 <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Relationship types</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                  {relationTypes.map((t) => {
-                    const checked = visibleRelationTypes.includes(t);
+                  {availableRelationTypes.map((t) => {
+                    const checked = effectiveRelationTypes.includes(t);
                     return (
                       <label key={t} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--fg)' }}>
                         <input
                           type="checkbox"
                           checked={checked}
                           onChange={(e) => {
+                            const base = effectiveRelationTypes;
                             const next = e.target.checked
-                              ? Array.from(new Set([...visibleRelationTypes, t]))
-                              : visibleRelationTypes.filter((x) => x !== t);
+                              ? Array.from(new Set([...base, t]))
+                              : base.filter((x) => x !== t);
                             setVisibleRelationTypes(next);
                           }}
                         />

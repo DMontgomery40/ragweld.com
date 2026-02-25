@@ -107,6 +107,14 @@ try {
   console.warn('Warning: failed to ensure MSW dependency:', e?.message || e);
 }
 
+// Ensure mockServiceWorker.js exists and matches installed MSW worker (best-effort).
+try {
+  const ensureMswScript = path.join(__dirname, 'ensure-demo-msw.cjs');
+  execSync(`node "${ensureMswScript}"`, { stdio: 'inherit' });
+} catch (e) {
+  console.warn('Warning: failed to ensure demo MSW worker:', e?.message || e);
+}
+
 // Sync glossary.json for ragweld.com marketing site (pinned fallback for CI/Netlify)
 const sourceGlossaryPath = path.join(sourceDir, 'public', 'glossary.json');
 const targetGlossaryPath = path.join(__dirname, '..', 'public', 'glossary.json');

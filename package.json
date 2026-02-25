@@ -7,7 +7,7 @@
     "dev": "astro dev",
     "start": "astro dev",
     "sync:demo": "node scripts/sync-demo.cjs ../ragweld/web",
-    "deps:demo": "npm --prefix vendor/demo ci || npm --prefix vendor/demo install",
+    "deps:demo": "(npm --prefix vendor/demo ci || npm --prefix vendor/demo install) && node scripts/ensure-demo-msw.cjs",
     "build:demo": "npm --prefix vendor/demo run build",
     "build": "npm run deps:demo && npm run build:demo && astro build && node scripts/copy-demo.cjs",
     "test:e2e": "playwright test",
