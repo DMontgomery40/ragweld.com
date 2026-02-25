@@ -20,7 +20,7 @@ const FIRST_NAME_HINTS = new Set([
 
 const PERSON_STOPWORDS = new Set([
   'case', 'campaign', 'administration', 'policy', 'process', 'strategy', 'security',
-  'investment', 'relations', 'network', 'services', 'status', 'care', 'bill', 'scandal',
+  'investment', 'relations', 'network', 'services', 'status', 'care', 'scandal',
   'presidency', 'run', 'system', 'plan', 'history', 'world', 'group', 'media',
 ]);
 
