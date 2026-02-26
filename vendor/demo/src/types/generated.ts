@@ -94,6 +94,8 @@ export interface ChatConfig {
   local_models?: LocalModelConfig;
   openrouter?: OpenRouterConfig;
   benchmark?: BenchmarkConfig;
+  /** Protocol for OpenAI cloud_direct calls. 'auto' routes codex-only models to Responses. */
+  openai_protocol?: "auto" | "responses" | "chat_completions"; // default: "auto"
   temperature?: number; // default: 0.3
   /** Temperature when nothing is checked (direct chat = more creative) */
   temperature_no_retrieval?: number; // default: 0.7
@@ -514,7 +516,7 @@ export interface Entity {
   /** Entity name (function name, class name, etc) */
   name: string;
   /** Type of entity */
-  entity_type: "function" | "class" | "module" | "variable" | "concept";
+  entity_type: "function" | "class" | "module" | "variable" | "concept" | "person" | "org" | "location" | "event";
   /** File where entity is defined */
   file_path?: string | null; // default: None
   /** AI-generated description */
@@ -722,6 +724,14 @@ export interface GraphIndexingConfig {
   ast_calls_weight?: number; // default: 1.0
   /** Semantic KG extraction mode. 'heuristic' is deterministic and test-friendly; 'llm' uses an LLM to extract entities + relations. */
   semantic_kg_mode?: "heuristic" | "llm"; // default: "heuristic"
+  /** When true, semantic KG extraction preserves/uses typed entities (person, org, location, event, concept). */
+  semantic_kg_typed_entities_enabled?: boolean; // default: False
+  /** Allowed semantic KG entity types produced by extraction. */
+  semantic_kg_allowed_entity_types?: string[]; // default: ["concept"]
+  /** When true in LLM mode, fail semantic KG extraction for a chunk if LLM extraction fails instead of falling back. */
+  semantic_kg_require_llm_success?: boolean; // default: False
+  /** Reasoning effort for semantic KG extraction when using OpenAI Responses-compatible models. */
+  semantic_kg_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh"; // default: "medium"
   /** Edge weight for semantic concept relations in LLM mode. */
   semantic_kg_relation_weight_llm?: number; // default: 0.7
   /** Edge weight for semantic concept relations in heuristic fallback mode. */

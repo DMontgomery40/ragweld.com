@@ -17,6 +17,8 @@ interface GraphStore {
   selectedCommunity: Community | null;
   isLoading: boolean;
   error: string | null;
+  viewMode: 'viz' | 'table';
+  assistMode: 'organic' | 'normalized_assist' | 'guided_demo';
 
   // Filter state
   visibleEntityTypes: string[];
@@ -32,14 +34,17 @@ interface GraphStore {
   setSelectedCommunity: (community: Community | null) => void;
   setIsLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
+  setViewMode: (mode: 'viz' | 'table') => void;
+  setAssistMode: (mode: 'organic' | 'normalized_assist' | 'guided_demo') => void;
   setVisibleEntityTypes: (types: string[]) => void;
   setVisibleRelationTypes: (types: string[]) => void;
   setMaxHops: (hops: number) => void;
   reset: () => void;
 }
 
-const defaultEntityTypes = ['function', 'class', 'module', 'variable', 'concept'];
-const defaultRelationTypes = ['calls', 'imports', 'inherits', 'contains', 'references', 'related_to'];
+// Empty defaults mean "show all currently available types" for each corpus.
+const defaultEntityTypes: string[] = [];
+const defaultRelationTypes: string[] = [];
 
 export const useGraphStore = create<GraphStore>()((set) => ({
   // Initial state
@@ -51,6 +56,8 @@ export const useGraphStore = create<GraphStore>()((set) => ({
   selectedCommunity: null,
   isLoading: false,
   error: null,
+  viewMode: 'viz',
+  assistMode: 'organic',
   visibleEntityTypes: defaultEntityTypes,
   visibleRelationTypes: defaultRelationTypes,
   maxHops: 2,
@@ -64,11 +71,13 @@ export const useGraphStore = create<GraphStore>()((set) => ({
   setSelectedCommunity: (selectedCommunity) => set({ selectedCommunity }),
   setIsLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
+  setViewMode: (viewMode) => set({ viewMode }),
+  setAssistMode: (assistMode) => set({ assistMode }),
   setVisibleEntityTypes: (visibleEntityTypes) => set({ visibleEntityTypes }),
   setVisibleRelationTypes: (visibleRelationTypes) => set({ visibleRelationTypes }),
   setMaxHops: (maxHops) => set({ maxHops }),
   reset: () =>
-    set({
+    set((state) => ({
       entities: [],
       relationships: [],
       communities: [],
@@ -77,10 +86,12 @@ export const useGraphStore = create<GraphStore>()((set) => ({
       selectedCommunity: null,
       isLoading: false,
       error: null,
+      viewMode: state.viewMode,
+      assistMode: state.assistMode,
       visibleEntityTypes: defaultEntityTypes,
       visibleRelationTypes: defaultRelationTypes,
       maxHops: 2,
-    }),
+    })),
 }));
 
 export default useGraphStore;

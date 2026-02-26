@@ -111,23 +111,29 @@ Focus on:
     'Analyze this database and return a JSON object with: symbols (array of function/class/component names), purpose (one sentence description), keywords (array of technical terms). Be concise. Return ONLY valid JSON.',
   semantic_kg_extraction: `You are a semantic knowledge graph extractor.
 
-Given a single database/document chunk, extract a small set of reusable semantic concepts and relationships.
+Given one corpus chunk, extract only entities and relations explicitly grounded in that text.
 
 Rules:
-- Return ONLY valid JSON (no markdown, no extra text)
-- Concepts must be short, lowercase, and reusable across the corpus (e.g. "authentication", "rate_limit", "vector_index")
-- Prefer domain concepts and architectural concepts over implementation noise
-- Do NOT include file paths or line numbers as concepts
-- Keep the list small and high-signal
+- Return ONLY valid JSON (no markdown, no prose).
+- Never fabricate entities, aliases, or links.
+- Prefer exact surface forms for names (for example full person/organization names when present).
+- Do not emit file paths or line numbers as entities.
+- Keep output high-signal and deduplicated.
 
 JSON format:
 {
-  "concepts": ["concept1", "concept2"],
+  "entities": [
+    {"name": "Jeffrey Epstein", "entity_type": "person"},
+    {"name": "Bill Clinton", "entity_type": "person"},
+    {"name": "Epstein files", "entity_type": "concept"}
+  ],
   "relations": [
-    {"source": "concept1", "target": "concept2", "relation_type": "related_to"}
+    {"source": "Jeffrey Epstein", "target": "Bill Clinton", "relation_type": "related_to"},
+    {"source": "Epstein files", "target": "Jeffrey Epstein", "relation_type": "references"}
   ]
 }
 
+Allowed entity_type values: person, org, location, event, concept
 Allowed relation_type values: related_to, references`,
   lightweight_chunk_summaries:
     'Extract key information from this database: symbols (function/class names), purpose (one sentence), keywords (technical terms). Return JSON only.',
@@ -233,7 +239,7 @@ const PROMPT_METADATA = {
   },
   semantic_kg_extraction: {
     label: 'Semantic KG Extraction',
-    description: 'Prompt for LLM-assisted semantic KG extraction (concepts + relations)',
+    description: 'Prompt for LLM-assisted semantic KG extraction (typed entities + relations)',
     category: 'indexing',
   },
   lightweight_chunk_summaries: {
@@ -275,17 +281,17 @@ const DEFAULT_CONFIG = {
 
   // Generation defaults (used by several panels + quick switcher).
   generation: {
-    gen_model: 'gpt-5',
+    gen_model: 'gpt-5.3-codex',
     gen_temperature: 0.0,
     gen_max_tokens: 2048,
     gen_top_p: 1.0,
     gen_timeout: 60,
     gen_retry_max: 2,
-    enrich_model: 'gpt-5',
+    enrich_model: 'gpt-5.3-codex',
     enrich_backend: 'openai',
     enrich_disabled: 0,
-    gen_model_cli: 'gpt-5',
-    gen_model_ollama: 'gpt-5',
+    gen_model_cli: 'gpt-5.3-codex',
+    gen_model_ollama: 'gpt-5.3-codex',
     gen_model_http: '',
     gen_model_mcp: '',
     ollama_url: 'http://127.0.0.1:11434/api',
@@ -338,6 +344,10 @@ const DEFAULT_CONFIG = {
     semantic_kg_mode: 'llm',
     semantic_kg_max_chunks: 40000,
     semantic_kg_max_concepts_per_chunk: 8,
+    semantic_kg_typed_entities_enabled: true,
+    semantic_kg_allowed_entity_types: ['person', 'org', 'location', 'event', 'concept'],
+    semantic_kg_require_llm_success: true,
+    semantic_kg_reasoning_effort: 'xhigh',
   },
 
   // Search legs (tri-brid).
@@ -435,6 +445,7 @@ const DEFAULT_CONFIG = {
       site_name: 'ragweld',
       fallback_models: ['openai/gpt-5', 'google/gemini-2.0-flash'],
     },
+    openai_protocol: 'responses',
     local_models: {
       providers: [],
       auto_detect: false,
@@ -460,7 +471,7 @@ const DEFAULT_CONFIG = {
     theme_mode: 'dark',
     runtime_mode: 'production',
     open_browser: 0,
-    chat_default_model: 'gpt-4o-mini',
+    chat_default_model: 'gpt-5.3-codex',
     chat_streaming_enabled: 1,
     chat_show_trace: 1,
     chat_show_citations: 1,
@@ -587,6 +598,18 @@ function getConfig(scope) {
     cfg.chat.default_corpus_ids = next;
   }
 
+  // Corpus-specific hard defaults for the live demo corpus.
+  if (key === 'epstein-files-1') {
+    cfg.generation.enrich_model = 'gpt-5.3-codex';
+    cfg.ui.chat_default_model = 'gpt-5.3-codex';
+    cfg.chat.openai_protocol = 'responses';
+    cfg.graph_indexing.semantic_kg_mode = 'llm';
+    cfg.graph_indexing.semantic_kg_reasoning_effort = 'xhigh';
+    cfg.graph_indexing.semantic_kg_require_llm_success = true;
+    cfg.graph_indexing.semantic_kg_typed_entities_enabled = true;
+    cfg.graph_indexing.semantic_kg_allowed_entity_types = ['person', 'org', 'location', 'event', 'concept'];
+  }
+
   configByCorpus.set(key, cfg);
   return cfg;
 }
@@ -657,6 +680,14 @@ function parseModelOverride(raw) {
   if (prefix === 'local') return { kind: 'local', model: rest };
   // Unknown prefix: treat as cloud-direct model id to avoid surprising routing.
   return { kind: 'cloud_direct', model: s };
+}
+
+function normalizeEntitySearchValue(raw) {
+  return String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
 }
 
 function json(statusCode, body, extraHeaders) {
@@ -1502,16 +1533,34 @@ function buildRagPrompt(userMessage, matches) {
   return { system, user };
 }
 
+function extractResponsesText(data) {
+  const outputText = String(data?.output_text || '').trim();
+  if (outputText) return outputText;
+  const out = Array.isArray(data?.output) ? data.output : [];
+  const parts = [];
+  for (const item of out) {
+    const content = Array.isArray(item?.content) ? item.content : [];
+    for (const part of content) {
+      if (part?.type === 'output_text' && typeof part?.text === 'string' && part.text) {
+        parts.push(part.text);
+      } else if (typeof part?.text === 'string' && part.text) {
+        parts.push(part.text);
+      }
+    }
+  }
+  return parts.join('\n').trim();
+}
+
 async function callOpenAI(system, user, modelOverride) {
   const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
   if (!apiKey) throw new Error('Missing OPENAI_API_KEY');
 
   const model =
     String(modelOverride || '').trim() ||
-    String(process.env.RAGWELD_CHAT_MODEL || 'gpt-5-mini').trim() ||
-    'gpt-4o-mini';
+    String(process.env.RAGWELD_CHAT_MODEL || 'gpt-5.3-codex').trim() ||
+    'gpt-5.3-codex';
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const res = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -1519,11 +1568,9 @@ async function callOpenAI(system, user, modelOverride) {
     },
     body: JSON.stringify({
       model,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
-      temperature: 0.2,
+      instructions: system,
+      input: user,
+      reasoning: { effort: 'xhigh' },
     }),
   });
 
@@ -1533,9 +1580,10 @@ async function callOpenAI(system, user, modelOverride) {
   }
 
   const data = await res.json();
-  const content = String(data?.choices?.[0]?.message?.content || '').trim();
-  const tokensUsed = Number(data?.usage?.total_tokens) || 0;
-  return { content, tokensUsed };
+  const content = extractResponsesText(data);
+  const tokensUsed = Number(data?.usage?.total_tokens)
+    || (Number(data?.usage?.input_tokens || 0) + Number(data?.usage?.output_tokens || 0));
+  return { content, tokensUsed, model };
 }
 
 async function callOpenRouter(system, user, modelOverride, baseUrlOverride) {
@@ -1701,12 +1749,20 @@ async function handleChat(sql, request) {
 
     if (!kind) {
       const orEnabled = Boolean(cfg?.chat?.openrouter?.enabled);
-      if (orEnabled) {
+      const openaiProtocol = String(cfg?.chat?.openai_protocol || 'auto').trim().toLowerCase();
+      const defaultCloudModel = String(cfg?.ui?.chat_default_model || '').trim() || 'gpt-5.3-codex';
+      const hasOpenAIKey = Boolean(String(process.env.OPENAI_API_KEY || '').trim());
+      const preferCloudDirect = openaiProtocol === 'responses' && hasOpenAIKey;
+
+      if (preferCloudDirect) {
+        kind = 'cloud_direct';
+        model = defaultCloudModel || model;
+      } else if (orEnabled) {
         kind = 'openrouter';
         model = String(cfg?.chat?.openrouter?.default_model || '').trim() || model;
       } else {
         kind = 'cloud_direct';
-        model = String(cfg?.ui?.chat_default_model || '').trim() || model;
+        model = defaultCloudModel || model;
       }
     }
 
@@ -1732,7 +1788,7 @@ async function handleChat(sql, request) {
       provider = {
         kind: 'cloud_direct',
         provider_name: 'OpenAI',
-        model: String(model || '').trim() || String(process.env.RAGWELD_CHAT_MODEL || 'gpt-4o-mini').trim(),
+        model: String(model || '').trim() || String(process.env.RAGWELD_CHAT_MODEL || 'gpt-5.3-codex').trim(),
         base_url: null,
       };
     }
@@ -1840,8 +1896,11 @@ async function handleGraphStats(sql, corpusId) {
 async function handleGraphEntities(sql, corpusId, q, limit) {
   const query = String(q || '').trim();
   const safeLimit = Math.max(1, Math.min(500, Number(limit) || 50));
-
+  const normalized = normalizeEntitySearchValue(query);
+  const collapsed = normalized.replace(/\s+/g, '');
   const like = `%${query}%`;
+  const likeNormalized = `%${normalized}%`;
+  const likeCollapsed = `%${collapsed}%`;
 
   // Prefer high-degree entities first so the first click tends to show a meaningful neighborhood.
   // (The UI uses the empty-query entity list as a "top entities" list, not an alphabetical directory.)
@@ -1865,10 +1924,15 @@ async function handleGraphEntities(sql, corpusId, q, limit) {
          FROM graph_entities ge
          LEFT JOIN degrees ON degrees.entity_id = ge.entity_id
          WHERE ge.corpus_id = $1
-           AND (ge.name ILIKE $2 OR ge.file_path ILIKE $2)
+           AND (
+             ge.name ILIKE $2
+             OR ge.file_path ILIKE $2
+             OR REPLACE(REPLACE(LOWER(ge.name), '_', ' '), '-', ' ') LIKE $3
+             OR REPLACE(REPLACE(LOWER(ge.name), '_', ''), '-', '') LIKE $4
+           )
          ORDER BY degree DESC, ge.name ASC
-         LIMIT $3;`,
-        [corpusId, like, safeLimit],
+         LIMIT $5;`,
+        [corpusId, like, likeNormalized, likeCollapsed, safeLimit],
       )
     : await sql.query(
         `${degreesCte}
