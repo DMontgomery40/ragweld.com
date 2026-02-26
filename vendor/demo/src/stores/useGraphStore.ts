@@ -18,6 +18,7 @@ interface GraphStore {
   isLoading: boolean;
   error: string | null;
   viewMode: 'viz' | 'table';
+  assistMode: 'organic' | 'normalized_assist' | 'guided_demo';
 
   // Filter state
   visibleEntityTypes: string[];
@@ -34,12 +35,14 @@ interface GraphStore {
   setIsLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   setViewMode: (mode: 'viz' | 'table') => void;
+  setAssistMode: (mode: 'organic' | 'normalized_assist' | 'guided_demo') => void;
   setVisibleEntityTypes: (types: string[]) => void;
   setVisibleRelationTypes: (types: string[]) => void;
   setMaxHops: (hops: number) => void;
   reset: () => void;
 }
 
+// Empty defaults mean "show all currently available types" for each corpus.
 const defaultEntityTypes: string[] = [];
 const defaultRelationTypes: string[] = [];
 
@@ -54,6 +57,7 @@ export const useGraphStore = create<GraphStore>()((set) => ({
   isLoading: false,
   error: null,
   viewMode: 'viz',
+  assistMode: 'organic',
   visibleEntityTypes: defaultEntityTypes,
   visibleRelationTypes: defaultRelationTypes,
   maxHops: 2,
@@ -68,6 +72,7 @@ export const useGraphStore = create<GraphStore>()((set) => ({
   setIsLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
   setViewMode: (viewMode) => set({ viewMode }),
+  setAssistMode: (assistMode) => set({ assistMode }),
   setVisibleEntityTypes: (visibleEntityTypes) => set({ visibleEntityTypes }),
   setVisibleRelationTypes: (visibleRelationTypes) => set({ visibleRelationTypes }),
   setMaxHops: (maxHops) => set({ maxHops }),
@@ -82,6 +87,7 @@ export const useGraphStore = create<GraphStore>()((set) => ({
       isLoading: false,
       error: null,
       viewMode: state.viewMode,
+      assistMode: state.assistMode,
       visibleEntityTypes: defaultEntityTypes,
       visibleRelationTypes: defaultRelationTypes,
       maxHops: 2,

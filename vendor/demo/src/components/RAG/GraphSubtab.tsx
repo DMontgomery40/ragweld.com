@@ -3,13 +3,149 @@ import { createPortal } from 'react-dom';
 import ForceGraph2D from 'react-force-graph-2d';
 import { useGraph } from '@/hooks/useGraph';
 import { useRepoStore } from '@/stores/useRepoStore';
-import type { Community, Entity, Relationship } from '@/types/generated';
+import type { Community, Entity, GraphStats, Relationship } from '@/types/generated';
 
 /** Node with computed degree for importance labeling */
 type NodeWithDegree = Entity & { __degree?: number };
 
+const DEFAULT_ENTITY_TYPES: string[] = [];
+const DEFAULT_RELATION_TYPES: string[] = [];
+
+function rankKeysByBreakdownCount(breakdown: Record<string, number> | undefined): string[] {
+  if (!breakdown || typeof breakdown !== 'object') return [];
+  return Object.entries(breakdown)
+    .map(([k, v]) => [String(k || '').trim(), Number(v) || 0] as const)
+    .filter(([k]) => Boolean(k))
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([k]) => k);
+}
+
+function mergeUniqueTypes(primary: string[], secondary: string[], fallback: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of [...primary, ...secondary, ...fallback]) {
+    const key = String(item || '').trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+}
+
+function humanizeEntityName(value: string): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const withSpaces = raw.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return withSpaces.replace(/\b[a-z]/g, (m) => m.toUpperCase());
+}
+
+function hasOnlyConceptEntities(stats: GraphStats | null | undefined): boolean {
+  const breakdown = stats?.entity_breakdown;
+  if (!breakdown || typeof breakdown !== 'object') return false;
+  const nonZero = Object.entries(breakdown)
+    .filter(([, n]) => Number(n) > 0)
+    .map(([k]) => String(k).trim())
+    .filter(Boolean);
+  return nonZero.length === 1 && nonZero[0] === 'concept';
+}
+
+function pickBootstrapEntity(list: Entity[], query: string): Entity | null {
+  if (!list.length) return null;
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return list[0];
+
+  if (q === 'epstein') {
+    const je = list.find((e) => /jeffrey[_\s-]?epstein/i.test(String(e.name || '')));
+    if (je) return je;
+  }
+
+  return list.find((e) => String(e.name || '').toLowerCase().includes(q)) || list[0];
+}
+
+function isTypedPersonEntity(entity: Entity): boolean {
+  return String(entity.entity_type || '').trim().toLowerCase() === 'person';
+}
+
+function normalizeQueryValue(value: string): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+}
+
+function buildFallbackQueries(rawQuery: string): string[] {
+  const q = normalizeQueryValue(rawQuery);
+  if (!q) return [];
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (value: string) => {
+    const v = normalizeQueryValue(value);
+    if (!v || seen.has(v)) return;
+    seen.add(v);
+    out.push(v);
+  };
+
+  const parts = q.split(' ').map((p) => p.trim()).filter(Boolean);
+  push(q);
+  push(q.replace(/\s+/g, '_'));
+  push(q.replace(/\s+/g, '-'));
+  for (const p of parts) {
+    if (p.length >= 3) push(p);
+  }
+  return out;
+}
+
+function scoreEntityMatch(entity: Entity, rawQuery: string): number {
+  const q = normalizeQueryValue(rawQuery);
+  const name = normalizeQueryValue(String(entity.name || ''));
+  const tokens = q ? q.split(' ').filter(Boolean) : [];
+  const degree = Number((entity as any)?.properties?.degree || 0);
+  let score = degree * 0.25;
+
+  if (!q) {
+    if (isTypedPersonEntity(entity)) score += 1200;
+    return score;
+  }
+
+  if (name === q) score += 5000;
+  if (name.includes(q)) score += 1800;
+  if (q.includes(name) && name.length > 4) score += 700;
+
+  for (const token of tokens) {
+    if (token.length < 3) continue;
+    if (name === token) score += 900;
+    if (name.includes(token)) score += 350;
+  }
+
+  if (isTypedPersonEntity(entity)) score += 420;
+  return score;
+}
+
+function pickBestEntity(list: Entity[], rawQuery: string, preferPeople: boolean): Entity | null {
+  if (!list.length) return null;
+
+  const q = normalizeQueryValue(rawQuery);
+  if (q === 'epstein') {
+    const je = list.find((e) => /jeffrey[_\s-]?epstein/i.test(String(e.name || '')));
+    if (je) return je;
+  }
+
+  const scored = list
+    .map((entity) => ({ entity, score: scoreEntityMatch(entity, rawQuery) }))
+    .sort((a, b) => b.score - a.score || String(a.entity.name || '').localeCompare(String(b.entity.name || '')));
+
+  if (preferPeople) {
+    const person = scored.find(({ entity }) => isTypedPersonEntity(entity));
+    if (person) return person.entity;
+  }
+
+  return scored[0]?.entity || null;
+}
+
 function formatEntityLabel(e: Entity): string {
-  const name = String(e.name || '').trim();
+  const name = humanizeEntityName(e.name);
   const type = String(e.entity_type || '').trim();
   return type ? `${name} (${type})` : name;
 }
@@ -17,8 +153,8 @@ function formatEntityLabel(e: Entity): string {
 function formatRelLabel(r: Relationship, byId: Map<string, Entity>): string {
   const src = byId.get(r.source_id);
   const dst = byId.get(r.target_id);
-  const srcName = src ? src.name : r.source_id;
-  const dstName = dst ? dst.name : r.target_id;
+  const srcName = humanizeEntityName(src ? src.name : r.source_id);
+  const dstName = humanizeEntityName(dst ? dst.name : r.target_id);
   return `${srcName} ─ ${r.relation_type} → ${dstName}`;
 }
 
@@ -26,6 +162,7 @@ export function GraphSubtab() {
   const { repos, activeRepo, loadRepos, setActiveRepo } = useRepoStore();
   const {
     entities,
+    relationships,
     communities,
     stats,
     selectedEntity,
@@ -33,6 +170,7 @@ export function GraphSubtab() {
     isLoading,
     error,
     viewMode,
+    assistMode,
     maxHops,
     visibleEntityTypes,
     visibleRelationTypes,
@@ -41,6 +179,7 @@ export function GraphSubtab() {
     selectEntity,
     selectCommunity,
     setViewMode,
+    setAssistMode,
     setMaxHops,
     setVisibleEntityTypes,
     setVisibleRelationTypes,
@@ -49,15 +188,26 @@ export function GraphSubtab() {
   } = useGraph();
 
   const [entityQuery, setEntityQuery] = useState('');
+  const [searchNote, setSearchNote] = useState('');
   const [accentColor, setAccentColor] = useState<string>('#00ff88');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fullscreenAnimating, setFullscreenAnimating] = useState(false);
+  const bootstrappedRepoRef = useRef<string | null>(null);
   const fgRef = useRef<any>(null);
   const fullscreenFgRef = useRef<any>(null);
   const vizCanvasRef = useRef<HTMLDivElement | null>(null);
   const fullscreenCanvasRef = useRef<HTMLDivElement | null>(null);
   const [vizSize, setVizSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [fullscreenSize, setFullscreenSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  const isEpsteinCorpus = useMemo(() => /epstein/i.test(String(activeRepo || '')), [activeRepo]);
+  const conceptOnlyCorpus = useMemo(() => hasOnlyConceptEntities(stats), [stats]);
+  const bootstrapQuery = useMemo(() => {
+    return assistMode === 'guided_demo' && isEpsteinCorpus && conceptOnlyCorpus ? 'epstein' : '';
+  }, [assistMode, conceptOnlyCorpus, isEpsteinCorpus]);
+
+  useEffect(() => {
+    setSearchNote('');
+  }, [activeRepo]);
 
   useEffect(() => {
     if (!repos.length) void loadRepos();
@@ -73,13 +223,112 @@ export function GraphSubtab() {
     return new Map<string, Entity>((entities || []).map((e) => [e.entity_id, e]));
   }, [entities]);
 
+  const availableEntityTypes = useMemo(() => {
+    const fromStats = rankKeysByBreakdownCount(stats?.entity_breakdown);
+    const fromEntities = (entities || [])
+      .map((e) => String(e.entity_type || '').trim())
+      .filter(Boolean);
+    return mergeUniqueTypes(fromStats, fromEntities, DEFAULT_ENTITY_TYPES);
+  }, [stats, entities]);
+
+  const availableRelationTypes = useMemo(() => {
+    const fromStats = rankKeysByBreakdownCount(stats?.relationship_breakdown);
+    const fromRels = (relationships || [])
+      .map((r) => String(r.relation_type || '').trim())
+      .filter(Boolean);
+    return mergeUniqueTypes(fromStats, fromRels, DEFAULT_RELATION_TYPES);
+  }, [stats, relationships]);
+
+  const effectiveEntityTypes = useMemo(() => {
+    const allowed = new Set(availableEntityTypes);
+    const valid = visibleEntityTypes.filter((t) => allowed.has(t));
+    return valid.length ? valid : availableEntityTypes;
+  }, [availableEntityTypes, visibleEntityTypes]);
+
+  const effectiveRelationTypes = useMemo(() => {
+    const allowed = new Set(availableRelationTypes);
+    const valid = visibleRelationTypes.filter((t) => allowed.has(t));
+    return valid.length ? valid : availableRelationTypes;
+  }, [availableRelationTypes, visibleRelationTypes]);
+
   const filteredEntities = useMemo(() => {
-    return getEntitiesByType(visibleEntityTypes);
-  }, [getEntitiesByType, visibleEntityTypes]);
+    return getEntitiesByType(effectiveEntityTypes);
+  }, [getEntitiesByType, effectiveEntityTypes]);
 
   const filteredRelationships = useMemo(() => {
-    return getRelationshipsByType(visibleRelationTypes);
-  }, [getRelationshipsByType, visibleRelationTypes]);
+    return getRelationshipsByType(effectiveRelationTypes);
+  }, [getRelationshipsByType, effectiveRelationTypes]);
+
+  const peopleSpotlights = useMemo(() => {
+    if (!isEpsteinCorpus) return [];
+    const seen = new Set<string>();
+    return (entities || [])
+      .filter(isTypedPersonEntity)
+      .sort((a, b) => {
+        const da = Number((a as any)?.properties?.degree || 0);
+        const db = Number((b as any)?.properties?.degree || 0);
+        return db - da || String(a.name).localeCompare(String(b.name));
+      })
+      .filter((e) => {
+        const key = String(e.name || '').toLowerCase();
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 10);
+  }, [entities, isEpsteinCorpus]);
+
+  useEffect(() => {
+    const valid = visibleEntityTypes.filter((t) => availableEntityTypes.includes(t));
+    if (!availableEntityTypes.length) return;
+    if (!valid.length) {
+      setVisibleEntityTypes(availableEntityTypes);
+      return;
+    }
+    if (valid.length !== visibleEntityTypes.length) {
+      setVisibleEntityTypes(valid);
+    }
+  }, [availableEntityTypes, visibleEntityTypes, setVisibleEntityTypes]);
+
+  useEffect(() => {
+    const valid = visibleRelationTypes.filter((t) => availableRelationTypes.includes(t));
+    if (!availableRelationTypes.length) return;
+    if (!valid.length) {
+      setVisibleRelationTypes(availableRelationTypes);
+      return;
+    }
+    if (valid.length !== visibleRelationTypes.length) {
+      setVisibleRelationTypes(valid);
+    }
+  }, [availableRelationTypes, visibleRelationTypes, setVisibleRelationTypes]);
+
+  useEffect(() => {
+    if (!activeRepo) {
+      bootstrappedRepoRef.current = null;
+      return;
+    }
+    if (bootstrappedRepoRef.current === activeRepo) return;
+    if (!stats) return;
+
+    const bootstrap = async () => {
+      bootstrappedRepoRef.current = activeRepo;
+      if ((stats.total_entities ?? 0) <= 0) return;
+
+      if (bootstrapQuery) {
+        setEntityQuery(bootstrapQuery);
+      }
+
+      const seeded = await searchEntities(bootstrapQuery, 200);
+      if (!seeded.length) return;
+
+      const seed = pickBootstrapEntity(seeded, bootstrapQuery);
+      if (seed) {
+        await selectEntity(seed);
+      }
+    };
+
+    void bootstrap();
+  }, [activeRepo, bootstrapQuery, searchEntities, selectEntity, stats]);
 
   const vizEntityIdSet = useMemo(() => {
     return new Set<string>(filteredEntities.map((e) => e.entity_id));
@@ -258,7 +507,8 @@ export function GraphSubtab() {
       const baseSize = 4;
       const degree = entity.__degree || 0;
       const sizeMultiplier = Math.min(2.5, 1 + degree * 0.15);
-      const nodeSize = baseSize * sizeMultiplier;
+      const isSelected = selectedEntity?.entity_id === entity.entity_id;
+      const nodeSize = baseSize * sizeMultiplier * (isSelected ? 1.4 : 1);
 
       // Draw node circle
       ctx.beginPath();
@@ -270,19 +520,20 @@ export function GraphSubtab() {
       ctx.fill();
 
       // Draw subtle glow for important nodes
-      if (importantNodeIds.has(entity.entity_id)) {
+      if (importantNodeIds.has(entity.entity_id) || isSelected) {
         ctx.beginPath();
         ctx.arc(x, y, nodeSize + 2, 0, 2 * Math.PI);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.strokeStyle = isSelected ? 'rgba(0, 255, 136, 0.45)' : 'rgba(255, 255, 255, 0.2)';
         ctx.lineWidth = 1;
         ctx.stroke();
       }
 
-      // Draw label for important nodes (only when zoomed in enough)
-      if (importantNodeIds.has(entity.entity_id) && globalScale >= 0.4) {
-        const label = entity.name || entity.entity_id;
+      // Draw label for important nodes + selected node (only when zoomed in enough).
+      const shouldLabel = importantNodeIds.has(entity.entity_id) || isSelected;
+      if (shouldLabel && globalScale >= 0.35) {
+        const label = humanizeEntityName(entity.name || entity.entity_id);
         const fontSize = Math.max(10, 12 / globalScale);
-        ctx.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
+        ctx.font = `${isSelected ? 700 : 600} ${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
 
         // Background pill for readability
         const textWidth = ctx.measureText(label).width;
@@ -312,21 +563,72 @@ export function GraphSubtab() {
     [selectedEntity, accentColor, importantNodeIds, nodeColor]
   );
 
-  const entityTypes = useMemo(() => {
-    return ['function', 'class', 'module', 'variable', 'concept'];
-  }, []);
-
-  const relationTypes = useMemo(() => {
-    return ['calls', 'imports', 'inherits', 'contains', 'references', 'related_to'];
-  }, []);
-
   const handleSearch = async () => {
-    await searchEntities(entityQuery, 200);
+    const query = entityQuery.trim();
+    const searchQuery = query || bootstrapQuery;
+    const normalizedAssistEnabled = assistMode !== 'organic';
+    const guidedDemoEnabled = assistMode === 'guided_demo';
+    setSearchNote('');
+
+    const exact = await searchEntities(searchQuery, 200);
+    if (exact.length) {
+      const seed = pickBestEntity(exact, searchQuery, normalizedAssistEnabled);
+      if (seed) await selectEntity(seed);
+      return;
+    }
+
+    if (normalizedAssistEnabled && query) {
+      const tried = new Set<string>([normalizeQueryValue(searchQuery)]);
+      for (const fallbackQuery of buildFallbackQueries(query)) {
+        const norm = normalizeQueryValue(fallbackQuery);
+        if (!norm || tried.has(norm)) continue;
+        tried.add(norm);
+
+        const fallback = await searchEntities(fallbackQuery, 500);
+        if (!fallback.length) continue;
+        const seed = pickBestEntity(fallback, query, normalizedAssistEnabled);
+        if (seed) {
+          await selectEntity(seed);
+          setSearchNote(`No exact match for "${query}". Showing ${humanizeEntityName(seed.name)} from indexed graph.`);
+          return;
+        }
+      }
+    }
+
+    if (guidedDemoEnabled && isEpsteinCorpus) {
+      const seeded = await searchEntities('epstein', 200);
+      const seed = pickBestEntity(seeded, 'epstein', normalizedAssistEnabled);
+      if (seed) {
+        await selectEntity(seed);
+        setEntityQuery('epstein');
+        setSearchNote(`No exact match for "${query}". Showing ${humanizeEntityName(seed.name)} from indexed graph.`);
+      }
+      return;
+    }
+
+    if (query) {
+      setSearchNote(`No entities matched "${query}" in this corpus.`);
+    }
   };
 
   const handleClear = async () => {
+    setSearchNote('');
     setEntityQuery('');
     await loadGraph();
+    if (bootstrapQuery) {
+      setEntityQuery(bootstrapQuery);
+    }
+    const seeded = await searchEntities(bootstrapQuery, 200);
+    if (bootstrapQuery) {
+      const seed = pickBootstrapEntity(seeded, bootstrapQuery);
+      if (seed) await selectEntity(seed);
+    }
+  };
+
+  const handleSpotlightSelect = async (spotlight: Entity) => {
+    setSearchNote('');
+    setEntityQuery(humanizeEntityName(spotlight.name).toLowerCase());
+    await selectEntity(spotlight);
   };
 
   const handlePickCommunity = async (c: Community | null) => {
@@ -379,6 +681,27 @@ export function GraphSubtab() {
           >
             Table
           </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <label style={{ fontSize: '11px', color: 'var(--fg-muted)', fontWeight: 700 }}>Assist Mode</label>
+            <select
+              value={assistMode}
+              onChange={(e) => setAssistMode(e.target.value as 'organic' | 'normalized_assist' | 'guided_demo')}
+              style={{
+                padding: '8px 10px',
+                background: 'var(--input-bg)',
+                color: 'var(--fg)',
+                border: '1px solid var(--line)',
+                borderRadius: '8px',
+                fontSize: '12px',
+                fontWeight: 700,
+              }}
+              data-testid="graph-assist-mode"
+            >
+              <option value="organic">Organic</option>
+              <option value="normalized_assist">Normalized Assist</option>
+              <option value="guided_demo">Guided Demo</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -506,6 +829,26 @@ export function GraphSubtab() {
                 ))}
               </div>
 
+              {conceptOnlyCorpus ? (
+                <div
+                  style={{
+                    marginTop: '12px',
+                    padding: '10px 12px',
+                    borderRadius: '10px',
+                    border: '1px solid var(--line)',
+                    background: 'rgba(var(--accent-rgb), 0.06)',
+                    color: 'var(--fg-muted)',
+                    fontSize: '12px',
+                  }}
+                  data-testid="graph-concept-only-hint"
+                >
+                  This corpus is currently semantic-concepts only (no explicit <code>person/org</code> typing).
+                  {isEpsteinCorpus && assistMode === 'guided_demo'
+                    ? ' Guided Demo assist is auto-focusing Epstein-related relationships.'
+                    : ''}
+                </div>
+              ) : null}
+
               {(stats.total_entities ?? 0) === 0 && (stats.total_chunks ?? 0) > 0 ? (
                 <div
                   style={{
@@ -586,7 +929,10 @@ export function GraphSubtab() {
           <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
             <input
               value={entityQuery}
-              onChange={(e) => setEntityQuery(e.target.value)}
+              onChange={(e) => {
+                setEntityQuery(e.target.value);
+                if (searchNote) setSearchNote('');
+              }}
               placeholder="Search entities by name…"
               style={{
                 flex: 1,
@@ -636,6 +982,50 @@ export function GraphSubtab() {
             </button>
           </div>
 
+          {isEpsteinCorpus && peopleSpotlights.length ? (
+            <div style={{ marginTop: '10px' }}>
+              <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>People spotlight</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {peopleSpotlights.map((spotlight) => (
+                  <button
+                    key={spotlight.entity_id}
+                    onClick={() => void handleSpotlightSelect(spotlight)}
+                    style={{
+                      padding: '6px 9px',
+                      background: 'var(--bg-elev2)',
+                      color: 'var(--fg)',
+                      border: '1px solid var(--line)',
+                      borderRadius: '999px',
+                      cursor: 'pointer',
+                      fontWeight: 700,
+                      fontSize: '11px',
+                    }}
+                    data-testid={`graph-spotlight-${String(spotlight.name || '').toLowerCase().replace(/[_\s]+/g, '-')}`}
+                  >
+                    {humanizeEntityName(spotlight.name)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {searchNote ? (
+            <div
+              style={{
+                marginTop: '10px',
+                padding: '8px 10px',
+                border: '1px solid var(--line)',
+                borderRadius: '8px',
+                color: 'var(--fg-muted)',
+                fontSize: '12px',
+                background: 'rgba(var(--accent-rgb), 0.06)',
+              }}
+              data-testid="graph-search-note"
+            >
+              {searchNote}
+            </div>
+          ) : null}
+
           <details style={{ marginTop: '12px' }}>
             <summary style={{ cursor: 'pointer', fontSize: '12px', fontWeight: 700, color: 'var(--fg)' }}>
               Filters
@@ -644,17 +1034,18 @@ export function GraphSubtab() {
               <div>
                 <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Entity types</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                  {entityTypes.map((t) => {
-                    const checked = visibleEntityTypes.includes(t);
+                  {availableEntityTypes.map((t) => {
+                    const checked = effectiveEntityTypes.includes(t);
                     return (
                       <label key={t} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--fg)' }}>
                         <input
                           type="checkbox"
                           checked={checked}
                           onChange={(e) => {
+                            const base = effectiveEntityTypes;
                             const next = e.target.checked
-                              ? Array.from(new Set([...visibleEntityTypes, t]))
-                              : visibleEntityTypes.filter((x) => x !== t);
+                              ? Array.from(new Set([...base, t]))
+                              : base.filter((x) => x !== t);
                             setVisibleEntityTypes(next);
                           }}
                         />
@@ -668,17 +1059,18 @@ export function GraphSubtab() {
               <div>
                 <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Relationship types</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                  {relationTypes.map((t) => {
-                    const checked = visibleRelationTypes.includes(t);
+                  {availableRelationTypes.map((t) => {
+                    const checked = effectiveRelationTypes.includes(t);
                     return (
                       <label key={t} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--fg)' }}>
                         <input
                           type="checkbox"
                           checked={checked}
                           onChange={(e) => {
+                            const base = effectiveRelationTypes;
                             const next = e.target.checked
-                              ? Array.from(new Set([...visibleRelationTypes, t]))
-                              : visibleRelationTypes.filter((x) => x !== t);
+                              ? Array.from(new Set([...base, t]))
+                              : base.filter((x) => x !== t);
                             setVisibleRelationTypes(next);
                           }}
                         />
@@ -743,7 +1135,9 @@ export function GraphSubtab() {
 
             {selectedEntity ? (
               <div data-testid="graph-entity-details">
-                <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--fg)' }}>{selectedEntity.name}</div>
+                <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--fg)' }}>
+                  {humanizeEntityName(selectedEntity.name)}
+                </div>
                 <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--fg-muted)' }}>
                   <span style={{ fontFamily: 'var(--font-mono)' }}>{selectedEntity.entity_id}</span>
                 </div>
@@ -1098,7 +1492,7 @@ export function GraphSubtab() {
                     }}
                   >
                     <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--accent)' }}>
-                      {selectedEntity.name}
+                      {humanizeEntityName(selectedEntity.name)}
                     </div>
                     <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '4px' }}>
                       {selectedEntity.entity_type} • {nodeDegreeMap.get(selectedEntity.entity_id) || 0} connections
