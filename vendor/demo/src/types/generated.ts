@@ -481,6 +481,8 @@ export interface EmbeddingConfig {
   voyage_model?: string; // default: "voyage-code-3"
   /** Local SentenceTransformer model */
   embedding_model_local?: string; // default: "all-MiniLM-L6-v2"
+  /** MLX-optimized embedding model (used when embedding_type=mlx) */
+  embedding_model_mlx?: string; // default: "mlx-community/all-MiniLM-L6-v2-4bit"
   /** Batch size for embedding generation */
   embedding_batch_size?: number; // default: 64
   /** Max tokens per embedding chunk */
@@ -1509,7 +1511,7 @@ export interface SystemPromptsConfig {
   semantic_chunk_summaries?: string; // default: "Analyze this database chunk and create a compre..."
   /** Extract metadata from code chunks during indexing */
   code_enrichment?: string; // default: "Analyze this database and return a JSON object ..."
-  /** Prompt for LLM-assisted semantic KG extraction (concepts + relations) */
+  /** Prompt for LLM-assisted semantic KG extraction (typed entities + relations) */
   semantic_kg_extraction?: string; // default: "You are a semantic knowledge graph extractor.\n..."
   /** Analyze eval regressions with skeptical approach - avoid false explanations */
   eval_analysis?: string; // default: "You are an expert RAG (Retrieval-Augmented Gene..."
