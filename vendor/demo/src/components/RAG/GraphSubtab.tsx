@@ -100,16 +100,16 @@ export function GraphSubtab() {
     const fromEntities = (entities || [])
       .map((e) => String(e.entity_type || '').trim())
       .filter(Boolean);
-    return mergeUniqueTypes(fromStats, fromEntities, visibleEntityTypes);
-  }, [stats, entities, visibleEntityTypes]);
+    return mergeUniqueTypes(fromStats, fromEntities, []);
+  }, [stats, entities]);
 
   const availableRelationTypes = useMemo(() => {
     const fromStats = rankKeysByBreakdownCount(stats?.relationship_breakdown as Record<string, number> | undefined);
     const fromRelationships = (relationships || [])
       .map((r) => String(r.relation_type || '').trim())
       .filter(Boolean);
-    return mergeUniqueTypes(fromStats, fromRelationships, visibleRelationTypes);
-  }, [stats, relationships, visibleRelationTypes]);
+    return mergeUniqueTypes(fromStats, fromRelationships, []);
+  }, [stats, relationships]);
 
   const effectiveEntityTypes = useMemo(() => {
     const allowed = new Set(availableEntityTypes);
