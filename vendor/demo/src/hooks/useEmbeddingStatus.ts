@@ -96,6 +96,7 @@ export function useEmbeddingStatus(): UseEmbeddingStatusResult {
       const configDim = Number(emb?.embedding_dim || 0);
       let configModel = String(emb?.embedding_model || '');
       if (provider === 'voyage') configModel = String(emb?.voyage_model || '');
+      if (provider === 'mlx') configModel = String(emb?.embedding_model_mlx || '');
       if (provider === 'local' || provider === 'huggingface') configModel = String(emb?.embedding_model_local || '');
 
       // Index config (from Postgres corpus metadata via /api/index/{corpus_id}/stats)

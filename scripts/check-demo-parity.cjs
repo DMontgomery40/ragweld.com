@@ -68,8 +68,9 @@ function matchesAllowed(relPath, pattern) {
   const pat = normalizeRel(pattern);
   if (!pat) return false;
   if (pat.endsWith('/**')) {
-    const prefix = pat.slice(0, -3);
-    return rel.startsWith(prefix);
+    const prefix = pat.slice(0, -3).replace(/\/+$/, '');
+    if (!prefix) return true;
+    return rel === prefix || rel.startsWith(`${prefix}/`);
   }
   return rel === pat;
 }
