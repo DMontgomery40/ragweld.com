@@ -13,6 +13,7 @@ import { useRepoStore } from '@/stores/useRepoStore';
 import { LiveTerminal, type LiveTerminalHandle } from '@/components/LiveTerminal/LiveTerminal';
 import { RepositoryConfig } from '@/components/RAG/RepositoryConfig';
 import { ModelPicker } from '@/components/RAG/ModelPicker';
+import { PromptLink } from '@/components/ui/PromptLink';
 import { EmbeddingMismatchWarning } from '@/components/ui/EmbeddingMismatchWarning';
 import { TooltipIcon } from '@/components/ui/TooltipIcon';
 import { indexingApi } from '@/api';
@@ -145,7 +146,6 @@ export function IndexingSubtab() {
 
   const [bm25Tokenizer, setBm25Tokenizer] = useConfigField<string>('indexing.bm25_tokenizer', '');
   const [bm25StemmerLang, setBm25StemmerLang] = useConfigField<string>('indexing.bm25_stemmer_lang', '');
-  const [bm25StopwordsLang, setBm25StopwordsLang] = useConfigField<string>('indexing.bm25_stopwords_lang', '');
   const [indexMaxFileSizeMb, setIndexMaxFileSizeMb] = useConfigField<number>('indexing.index_max_file_size_mb', 250);
   const [largeFileMode, setLargeFileMode] = useConfigField<'read_all' | 'stream'>('indexing.large_file_mode', 'stream');
   const [largeFileStreamChunkChars, setLargeFileStreamChunkChars] = useConfigField<number>(
@@ -178,6 +178,7 @@ export function IndexingSubtab() {
   const [semanticKgEnabled, setSemanticKgEnabled] = useConfigField<boolean>('graph_indexing.semantic_kg_enabled', false);
   const [semanticKgMode, setSemanticKgMode] = useConfigField<'heuristic' | 'llm'>('graph_indexing.semantic_kg_mode', 'heuristic');
   const [semanticKgMaxChunks, setSemanticKgMaxChunks] = useConfigField<number>('graph_indexing.semantic_kg_max_chunks', 200);
+  const [semanticKgLlmModel, setSemanticKgLlmModel] = useConfigField<string>('graph_indexing.semantic_kg_llm_model', '');
   const [semanticKgMaxConcepts, setSemanticKgMaxConcepts] = useConfigField<number>(
     'graph_indexing.semantic_kg_max_concepts_per_chunk',
     8
@@ -274,13 +275,12 @@ export function IndexingSubtab() {
     if (!tok) return '—';
     if (tok === 'stemmer') {
       const lang = bm25StemmerLang || '—';
-      const sw = bm25StopwordsLang || '—';
-      return `Stemmer (${lang}) with ${sw} stopwords`;
+      return `Stemmer (${lang})`;
     }
     if (tok === 'whitespace') return 'Whitespace-ish (no stemming)';
     if (tok === 'lowercase') return 'Lowercase (no stemming)';
     return tok;
-  }, [bm25Tokenizer, bm25StemmerLang, bm25StopwordsLang]);
+  }, [bm25Tokenizer, bm25StemmerLang]);
 
   const chunkingStrategyNorm = useMemo(() => String(chunkingStrategy || '').trim().toLowerCase(), [chunkingStrategy]);
   const usesTokenChunking = useMemo(
@@ -1849,7 +1849,7 @@ export function IndexingSubtab() {
               </div>
             </div>
 
-            <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
+            <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '20px' }}>
               <div className="input-group">
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
                   Postgres FTS tokenizer
@@ -1883,27 +1883,6 @@ export function IndexingSubtab() {
                   value={bm25StemmerLang}
                   onChange={(e) => setBm25StemmerLang(e.target.value)}
                   placeholder="english"
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    background: 'var(--input-bg)',
-                    border: '1px solid var(--line)',
-                    borderRadius: '6px',
-                    color: 'var(--fg)',
-                    fontSize: '13px',
-                  }}
-                />
-              </div>
-              <div className="input-group">
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
-                  Stopwords language
-                  <TooltipIcon name="BM25_STOPWORDS_LANG" />
-                </label>
-                <input
-                  type="text"
-                  value={bm25StopwordsLang}
-                  onChange={(e) => setBm25StopwordsLang(e.target.value)}
-                  placeholder="en"
                   style={{
                     width: '100%',
                     padding: '10px 12px',
@@ -2165,43 +2144,62 @@ export function IndexingSubtab() {
                 </label>
 
                 {semanticKgEnabled && (
-                  <div style={{ marginTop: '12px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
-                    <div className="input-group">
-                      <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Mode</label>
-                      <select
-                        data-testid="semantic-kg-mode"
-                        value={semanticKgMode}
-                        onChange={(e) => setSemanticKgMode(e.target.value as any)}
-                        style={{ width: '100%' }}
-                      >
-                        <option value="heuristic">Heuristic</option>
-                        <option value="llm">LLM</option>
-                      </select>
+                  <div style={{ marginTop: '12px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+                      <div className="input-group">
+                        <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Mode</label>
+                        <select
+                          data-testid="semantic-kg-mode"
+                          value={semanticKgMode}
+                          onChange={(e) => setSemanticKgMode(e.target.value as any)}
+                          style={{ width: '100%' }}
+                        >
+                          <option value="heuristic">Heuristic</option>
+                          <option value="llm">LLM</option>
+                        </select>
+                      </div>
+                      <div className="input-group">
+                        <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Max chunks</label>
+                        <input
+                          data-testid="semantic-kg-max-chunks"
+                          type="number"
+                          min={0}
+                          max={100000}
+                          value={semanticKgMaxChunks}
+                          onChange={(e) => setSemanticKgMaxChunks(parseInt(e.target.value || '0', 10))}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                      <div className="input-group">
+                        <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Max concepts / chunk</label>
+                        <input
+                          data-testid="semantic-kg-max-concepts"
+                          type="number"
+                          min={0}
+                          max={50}
+                          value={semanticKgMaxConcepts}
+                          onChange={(e) => setSemanticKgMaxConcepts(parseInt(e.target.value || '0', 10))}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
                     </div>
-                    <div className="input-group">
-                      <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Max chunks</label>
-                      <input
-                        data-testid="semantic-kg-max-chunks"
-                        type="number"
-                        min={0}
-                        max={100000}
-                        value={semanticKgMaxChunks}
-                        onChange={(e) => setSemanticKgMaxChunks(parseInt(e.target.value || '0', 10))}
-                        style={{ width: '100%' }}
-                      />
-                    </div>
-                    <div className="input-group">
-                      <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Max concepts / chunk</label>
-                      <input
-                        data-testid="semantic-kg-max-concepts"
-                        type="number"
-                        min={0}
-                        max={50}
-                        value={semanticKgMaxConcepts}
-                        onChange={(e) => setSemanticKgMaxConcepts(parseInt(e.target.value || '0', 10))}
-                        style={{ width: '100%' }}
-                      />
-                    </div>
+
+                    {semanticKgMode === 'llm' && (
+                      <div style={{ marginTop: '12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', alignItems: 'end' }}>
+                        <ModelPicker
+                          componentType="GEN"
+                          value={semanticKgLlmModel}
+                          onChange={setSemanticKgLlmModel}
+                          label="KG LLM Model"
+                          tooltipKey="SEMANTIC_KG_LLM_MODEL"
+                          allowCustom
+                        />
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <span style={{ fontSize: '11px', color: 'var(--fg-muted)' }}>empty = uses enrich_model</span>
+                          <PromptLink promptKey="semantic_kg_extraction">Edit KG Prompt</PromptLink>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -2310,6 +2308,22 @@ export function IndexingSubtab() {
                     <span style={{ fontSize: '12px', color: 'var(--fg)' }}>Include column names</span>
                     <TooltipIcon name="PARQUET_EXTRACT_INCLUDE_COLUMN_NAMES" />
                   </label>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  padding: '16px',
+                  background: 'var(--bg-elev2)',
+                  borderRadius: '8px',
+                  border: '1px solid var(--line)',
+                }}
+              >
+                <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)', marginBottom: '8px' }}>Prompt Templates</div>
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                  <PromptLink promptKey="code_enrichment">Edit Code Enrichment Prompt</PromptLink>
+                  <PromptLink promptKey="lightweight_chunk_summaries">Edit Lightweight Summary Prompt</PromptLink>
+                  <PromptLink promptKey="semantic_chunk_summaries">Edit Summary Prompt</PromptLink>
                 </div>
               </div>
             </div>

@@ -179,7 +179,7 @@ export interface ChatModelInfo {
   /** Catalog model identifier when sourced from /api/models */
   catalog_model?: string | null; // default: None
   /** Capabilities for this model option */
-  components?: "GEN" | "EMB" | "RERANK"[];
+  components?: ("GEN" | "EMB" | "RERANK")[];
   /** Model source group for UI grouping. */
   source: "cloud_direct" | "openrouter" | "local" | "ragweld";
   /** Provider type (ollama, llamacpp, openrouter, etc) */
@@ -902,12 +902,6 @@ export interface IndexStats {
 export interface IndexingConfig {
   /** PostgreSQL connection string (DSN) for pgvector + FTS storage */
   postgres_url?: string; // default: "postgresql://postgres:postgres@localhost:5432/t..."
-  /** pgvector table name template */
-  table_name?: string; // default: "code_chunks_{repo}"
-  /** Collection suffix for multi-index scenarios */
-  collection_suffix?: string; // default: "default"
-  /** Fallback repository path if not found in repos.json */
-  repo_path?: string; // default: ""
   /** Batch size for indexing */
   indexing_batch_size?: number; // default: 100
   /** Parallel workers for indexing */
@@ -916,8 +910,6 @@ export interface IndexingConfig {
   bm25_tokenizer?: string; // default: "stemmer"
   /** Stemmer language */
   bm25_stemmer_lang?: string; // default: "english"
-  /** Stopwords language code */
-  bm25_stopwords_lang?: string; // default: "en"
   /** Excluded file extensions (comma-separated) */
   index_excluded_exts?: string; // default: ".png,.jpg,.gif,.ico,.svg,.woff,.ttf"
   /** Max file size to index (MB) */
@@ -938,12 +930,6 @@ export interface IndexingConfig {
   parquet_extract_include_column_names?: number; // default: 1
   /** Skip dense vector indexing */
   skip_dense?: number; // default: 0
-  /** Base output directory */
-  out_dir_base?: string; // default: "./out"
-  /** Override for OUT_DIR_BASE if specified */
-  rag_out_base?: string; // default: ""
-  /** Repository configuration file */
-  repos_file?: string; // default: "./repos.json"
 }
 
 /** Discriminative keywords configuration. */
@@ -1067,7 +1053,7 @@ export interface ModelCatalogEntry {
   /** Model identifier */
   model: string;
   /** Capabilities supported by this model */
-  components?: "GEN" | "EMB" | "RERANK"[];
+  components?: ("GEN" | "EMB" | "RERANK")[];
   /** Maximum context tokens when known */
   context?: number | null; // default: None
   /** Embedding dimensions when applicable */
@@ -1485,6 +1471,36 @@ export interface ScoringConfig {
   path_boosts?: string; // default: "/gui,/server,/indexer,/retrieval"
 }
 
+/** Configuration for semantic caching across search/answer/chat endpoints. */
+export interface SemanticCacheConfig {
+  /** Enable semantic cache reads/writes (0=off, 1=on). */
+  enabled?: number; // default: 0
+  /** Cache mode when enabled. */
+  mode?: "read_write" | "read_only" | "write_only"; // default: "read_write"
+  /** Maximum cache rows to retain per scope/endpoint. */
+  max_entries?: number; // default: 5000
+  /** Minimum query length before cache is eligible. */
+  min_query_chars?: number; // default: 3
+  /** Minimum cosine similarity for semantic search cache hits. */
+  similarity_threshold_search?: number; // default: 0.9
+  /** Minimum cosine similarity for semantic answer cache hits. */
+  similarity_threshold_answer?: number; // default: 0.93
+  /** Minimum cosine similarity for semantic chat cache hits. */
+  similarity_threshold_chat?: number; // default: 0.95
+  /** TTL in seconds for search cache entries. */
+  ttl_seconds_search?: number; // default: 900
+  /** TTL in seconds for answer cache entries. */
+  ttl_seconds_answer?: number; // default: 1800
+  /** TTL in seconds for chat cache entries. */
+  ttl_seconds_chat?: number; // default: 600
+  /** Number of prior conversation turns included in chat cache fingerprint. */
+  chat_history_window?: number; // default: 6
+  /** Bypass chat generation cache when images are attached. */
+  bypass_if_images?: number; // default: 1
+  /** Skip generation-cache writes when temperature exceeds this value. */
+  max_temperature_for_write?: number; // default: 0.5
+}
+
 /** Configuration for sparse (BM25) search. */
 export interface SparseSearchConfig {
   /** Sparse retrieval engine. 'postgres_fts' uses built-in FTS; 'pg_search_bm25' uses ParadeDB pg_search. */
@@ -1900,6 +1916,8 @@ export interface AnswerRequest {
   system_prompt?: string | null;
   /** Override chat model for this request (empty=default) */
   model_override?: string;
+  /** Per-request cache mode override. */
+  cache_mode?: "default" | "bypass" | "refresh";
 }
 
 /** Response from AI answer generation. */
@@ -1951,6 +1969,8 @@ export interface ChatRequest {
   include_graph?: boolean;
   /** Override retrieval.final_k for this message (leave null to use config default) */
   top_k?: number | null;
+  /** Per-request cache mode override. */
+  cache_mode?: "default" | "bypass" | "refresh";
 }
 
 /** Response from chat endpoint. */
@@ -2792,6 +2812,8 @@ export interface SearchRequest {
   include_sparse?: boolean;
   /** Include graph search results */
   include_graph?: boolean;
+  /** Per-request cache mode override. */
+  cache_mode?: "default" | "bypass" | "refresh";
 }
 
 /** Response from tri-brid search. */
@@ -2823,6 +2845,7 @@ export interface TracesLatestResponse {
 /** TRIBRID RAG Engine tunable configuration parameters */
 export interface TriBridConfig {
   retrieval?: RetrievalConfig;
+  semantic_cache?: SemanticCacheConfig;
   scoring?: ScoringConfig;
   layer_bonus?: LayerBonusConfig;
   embedding?: EmbeddingConfig;
@@ -2861,8 +2884,6 @@ export interface VocabPreviewResponse {
   tokenizer: string;
   /** Stemmer language (indexing.bm25_stemmer_lang) */
   stemmer_lang?: string | null;
-  /** Stopwords language code (indexing.bm25_stopwords_lang) */
-  stopwords_lang?: string | null;
   /** Postgres text search configuration used for tsv + query parsing */
   ts_config: string;
   /** Total unique terms in the corpus vocabulary */

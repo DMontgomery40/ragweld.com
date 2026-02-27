@@ -8,27 +8,6 @@ import type { Community, Entity, Relationship } from '@/types/generated';
 /** Node with computed degree for importance labeling */
 type NodeWithDegree = Entity & { __degree?: number };
 
-function rankKeysByBreakdownCount(breakdown: Record<string, number> | undefined): string[] {
-  if (!breakdown || typeof breakdown !== 'object') return [];
-  return Object.entries(breakdown)
-    .map(([key, value]) => [String(key || '').trim(), Number(value) || 0] as const)
-    .filter(([key]) => Boolean(key))
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([key]) => key);
-}
-
-function mergeUniqueTypes(primary: string[], secondary: string[], fallback: string[]): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const item of [...primary, ...secondary, ...fallback]) {
-    const key = String(item || '').trim();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push(key);
-  }
-  return out;
-}
-
 function formatEntityLabel(e: Entity): string {
   const name = String(e.name || '').trim();
   const type = String(e.entity_type || '').trim();
@@ -47,7 +26,6 @@ export function GraphSubtab() {
   const { repos, activeRepo, loadRepos, setActiveRepo } = useRepoStore();
   const {
     entities,
-    relationships,
     communities,
     stats,
     selectedEntity,
@@ -95,41 +73,13 @@ export function GraphSubtab() {
     return new Map<string, Entity>((entities || []).map((e) => [e.entity_id, e]));
   }, [entities]);
 
-  const availableEntityTypes = useMemo(() => {
-    const fromStats = rankKeysByBreakdownCount(stats?.entity_breakdown as Record<string, number> | undefined);
-    const fromEntities = (entities || [])
-      .map((e) => String(e.entity_type || '').trim())
-      .filter(Boolean);
-    return mergeUniqueTypes(fromStats, fromEntities, []);
-  }, [stats, entities]);
-
-  const availableRelationTypes = useMemo(() => {
-    const fromStats = rankKeysByBreakdownCount(stats?.relationship_breakdown as Record<string, number> | undefined);
-    const fromRelationships = (relationships || [])
-      .map((r) => String(r.relation_type || '').trim())
-      .filter(Boolean);
-    return mergeUniqueTypes(fromStats, fromRelationships, []);
-  }, [stats, relationships]);
-
-  const effectiveEntityTypes = useMemo(() => {
-    const allowed = new Set(availableEntityTypes);
-    const valid = visibleEntityTypes.filter((t) => allowed.has(t));
-    return valid.length ? valid : availableEntityTypes;
-  }, [availableEntityTypes, visibleEntityTypes]);
-
-  const effectiveRelationTypes = useMemo(() => {
-    const allowed = new Set(availableRelationTypes);
-    const valid = visibleRelationTypes.filter((t) => allowed.has(t));
-    return valid.length ? valid : availableRelationTypes;
-  }, [availableRelationTypes, visibleRelationTypes]);
-
   const filteredEntities = useMemo(() => {
-    return getEntitiesByType(effectiveEntityTypes);
-  }, [getEntitiesByType, effectiveEntityTypes]);
+    return getEntitiesByType(visibleEntityTypes);
+  }, [getEntitiesByType, visibleEntityTypes]);
 
   const filteredRelationships = useMemo(() => {
-    return getRelationshipsByType(effectiveRelationTypes);
-  }, [getRelationshipsByType, effectiveRelationTypes]);
+    return getRelationshipsByType(visibleRelationTypes);
+  }, [getRelationshipsByType, visibleRelationTypes]);
 
   const vizEntityIdSet = useMemo(() => {
     return new Set<string>(filteredEntities.map((e) => e.entity_id));
@@ -362,13 +312,16 @@ export function GraphSubtab() {
     [selectedEntity, accentColor, importantNodeIds, nodeColor]
   );
 
+  const entityTypes = useMemo(() => {
+    return ['function', 'class', 'module', 'variable', 'concept'];
+  }, []);
+
+  const relationTypes = useMemo(() => {
+    return ['calls', 'imports', 'inherits', 'contains', 'references', 'related_to'];
+  }, []);
+
   const handleSearch = async () => {
-    const matches = await searchEntities(entityQuery, 200);
-    if (!matches.length) {
-      await selectEntity(null);
-      return;
-    }
-    await selectEntity(matches[0]);
+    await searchEntities(entityQuery, 200);
   };
 
   const handleClear = async () => {
@@ -691,18 +644,17 @@ export function GraphSubtab() {
               <div>
                 <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Entity types</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                  {availableEntityTypes.map((t) => {
-                    const checked = effectiveEntityTypes.includes(t);
+                  {entityTypes.map((t) => {
+                    const checked = visibleEntityTypes.includes(t);
                     return (
                       <label key={t} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--fg)' }}>
                         <input
                           type="checkbox"
                           checked={checked}
                           onChange={(e) => {
-                            const base = effectiveEntityTypes;
                             const next = e.target.checked
-                              ? Array.from(new Set([...base, t]))
-                              : base.filter((x) => x !== t);
+                              ? Array.from(new Set([...visibleEntityTypes, t]))
+                              : visibleEntityTypes.filter((x) => x !== t);
                             setVisibleEntityTypes(next);
                           }}
                         />
@@ -716,18 +668,17 @@ export function GraphSubtab() {
               <div>
                 <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Relationship types</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                  {availableRelationTypes.map((t) => {
-                    const checked = effectiveRelationTypes.includes(t);
+                  {relationTypes.map((t) => {
+                    const checked = visibleRelationTypes.includes(t);
                     return (
                       <label key={t} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--fg)' }}>
                         <input
                           type="checkbox"
                           checked={checked}
                           onChange={(e) => {
-                            const base = effectiveRelationTypes;
                             const next = e.target.checked
-                              ? Array.from(new Set([...base, t]))
-                              : base.filter((x) => x !== t);
+                              ? Array.from(new Set([...visibleRelationTypes, t]))
+                              : visibleRelationTypes.filter((x) => x !== t);
                             setVisibleRelationTypes(next);
                           }}
                         />
