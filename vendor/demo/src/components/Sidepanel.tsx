@@ -55,6 +55,7 @@ export function Sidepanel() {
     const embTypeLower = embType.toLowerCase();
     let embModel = String(config.embedding?.embedding_model || '');
     if (embTypeLower === 'voyage') embModel = String(config.embedding?.voyage_model || '');
+    if (embTypeLower === 'mlx') embModel = String(config.embedding?.embedding_model_mlx || '');
     if (embTypeLower === 'local' || embTypeLower === 'huggingface' || embTypeLower === 'ollama') {
       embModel = String(config.embedding?.embedding_model_local || '');
     }
@@ -121,6 +122,9 @@ export function Sidepanel() {
         if (p === 'voyage') {
           embeddingUpdates.embedding_type = 'voyage';
           if (embeddingModel) embeddingUpdates.voyage_model = embeddingModel;
+        } else if (p === 'mlx') {
+          embeddingUpdates.embedding_type = 'mlx';
+          if (embeddingModel) embeddingUpdates.embedding_model_mlx = embeddingModel;
         } else if (p === 'local' || p === 'ollama' || p === 'huggingface') {
           embeddingUpdates.embedding_type = 'local';
           if (embeddingModel) embeddingUpdates.embedding_model_local = embeddingModel;
