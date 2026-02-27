@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "source_repo": "DMontgomery40/ragweld",
+  "source_path": "web",
+  "source_sha": "5caeacb2b6e6ba75d0801df881f2d10d5af705b2",
+  "overlays_dir": "demo-overrides",
+  "allowlist_file": "scripts/demo-parity-allowlist.json"
+}

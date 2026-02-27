@@ -1,162 +1,202 @@
 #!/usr/bin/env node
 
 /**
- * Sync demo from ragweld/web
- * Usage: node scripts/sync-demo.cjs ../ragweld/web
+ * Deterministic sync from ragweld/web -> ragweld.com/vendor/demo.
+ *
+ * Pipeline:
+ * 1) Mirror source web tree into vendor/demo (excluding build/runtime artifacts)
+ * 2) Apply demo-owned overlays from demo-overrides/
+ * 3) Ensure mockServiceWorker.js is present/up-to-date (best-effort)
+ * 4) Sync glossary fallback for Astro pages (public/glossary.json)
+ * 5) Write sync metadata to vendor/demo/.parity.json
+ * 6) Run parity check (non-allowlisted drift fails)
+ *
+ * Usage:
+ *   node scripts/sync-demo.cjs --source ../ragweld/web --source-sha <sha> --source-repo DMontgomery40/ragweld
  */
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
-const { execSync } = require('child_process');
+const { execSync, spawnSync } = require('child_process');
 
-const sourceDir = process.argv[2] || '../ragweld/web';
-const targetDir = path.join(__dirname, '..', 'vendor', 'demo');
+const root = path.join(__dirname, '..');
+const targetDir = path.join(root, 'vendor', 'demo');
+const overlaysDir = path.join(root, 'demo-overrides');
+const ensureMswScript = path.join(__dirname, 'ensure-demo-msw.cjs');
+const parityScript = path.join(__dirname, 'check-demo-parity.cjs');
 
-// Ensure source exists
-if (!fs.existsSync(sourceDir)) {
-  console.error(`Source directory not found: ${sourceDir}`);
-  process.exit(1);
-}
+function parseArgs(argv) {
+  const out = {
+    source: null,
+    sourceSha: null,
+    sourceRepo: 'DMontgomery40/ragweld',
+  };
 
-function copyDirIfExists(src, dest) {
-  if (!fs.existsSync(src)) return false;
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  execSync(`cp -R "${src}" "${dest}"`);
-  return true;
-}
-
-function copyFileIfExists(src, dest) {
-  if (!fs.existsSync(src)) return false;
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.copyFileSync(src, dest);
-  return true;
-}
-
-// Preserve ragweld demo-only assets across sync (source repo doesn't include them).
-const preserveDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ragweld-demo-sync-'));
-const preserved = {
-  mocks: copyDirIfExists(path.join(targetDir, 'src', 'mocks'), path.join(preserveDir, 'mocks')),
-  mockServiceWorker: copyFileIfExists(
-    path.join(targetDir, 'public', 'mockServiceWorker.js'),
-    path.join(preserveDir, 'mockServiceWorker.js')
-  ),
-  grafanaEmbed: copyFileIfExists(
-    path.join(targetDir, 'src', 'pages', 'GrafanaEmbed.tsx'),
-    path.join(preserveDir, 'GrafanaEmbed.tsx')
-  ),
-  mswVersion: null,
-};
-
-try {
-  const existingPkgPath = path.join(targetDir, 'package.json');
-  if (fs.existsSync(existingPkgPath)) {
-    const existingPkg = JSON.parse(fs.readFileSync(existingPkgPath, 'utf-8'));
-    preserved.mswVersion =
-      existingPkg?.devDependencies?.msw ||
-      existingPkg?.dependencies?.msw ||
-      null;
-  }
-} catch {
-  // ignore
-}
-
-// Clean target (except node_modules)
-const itemsToRemove = fs.readdirSync(targetDir).filter(item => item !== 'node_modules');
-for (const item of itemsToRemove) {
-  fs.rmSync(path.join(targetDir, item), { recursive: true, force: true });
-}
-
-// Copy source to target
-const itemsToCopy = fs.readdirSync(sourceDir).filter(item => item !== 'node_modules' && item !== 'dist');
-for (const item of itemsToCopy) {
-  const src = path.join(sourceDir, item);
-  const dest = path.join(targetDir, item);
-  execSync(`cp -R "${src}" "${dest}"`);
-}
-
-console.log(`Synced ${sourceDir} to ${targetDir}`);
-
-// Restore preserved demo-only assets
-if (preserved.mocks) {
-  copyDirIfExists(path.join(preserveDir, 'mocks'), path.join(targetDir, 'src', 'mocks'));
-}
-if (preserved.mockServiceWorker) {
-  copyFileIfExists(path.join(preserveDir, 'mockServiceWorker.js'), path.join(targetDir, 'public', 'mockServiceWorker.js'));
-}
-if (preserved.grafanaEmbed) {
-  copyFileIfExists(path.join(preserveDir, 'GrafanaEmbed.tsx'), path.join(targetDir, 'src', 'pages', 'GrafanaEmbed.tsx'));
-}
-
-// Ensure MSW is available when mocks are present (keeps demo fallback working after sync)
-try {
-  const pkgPath = path.join(targetDir, 'package.json');
-  if (fs.existsSync(pkgPath)) {
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-    const hasMocks = fs.existsSync(path.join(targetDir, 'src', 'mocks'));
-    if (hasMocks) {
-      const mswVersion = preserved.mswVersion || '^2.12.8';
-      pkg.devDependencies = pkg.devDependencies || {};
-      if (!pkg.devDependencies.msw && !(pkg.dependencies && pkg.dependencies.msw)) {
-        pkg.devDependencies.msw = mswVersion;
-      }
-      fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+  for (let i = 2; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--source') {
+      out.source = argv[++i] || null;
+      continue;
+    }
+    if (arg === '--source-sha') {
+      out.sourceSha = argv[++i] || null;
+      continue;
+    }
+    if (arg === '--source-repo') {
+      out.sourceRepo = argv[++i] || out.sourceRepo;
+      continue;
+    }
+    if (!arg.startsWith('--') && !out.source) {
+      // Backward-compatible positional source argument.
+      out.source = arg;
+      continue;
     }
   }
-} catch (e) {
-  console.warn('Warning: failed to ensure MSW dependency:', e?.message || e);
+
+  if (!out.source) out.source = '../ragweld/web';
+  return out;
 }
 
-// Ensure mockServiceWorker.js exists and matches installed MSW worker (best-effort).
-try {
-  const ensureMswScript = path.join(__dirname, 'ensure-demo-msw.cjs');
-  execSync(`node "${ensureMswScript}"`, { stdio: 'inherit' });
-} catch (e) {
-  console.warn('Warning: failed to ensure demo MSW worker:', e?.message || e);
+function normalizeRel(p) {
+  return String(p || '').replace(/\\/g, '/');
 }
 
-// Sync glossary.json for ragweld.com marketing site (pinned fallback for CI/Netlify)
-const sourceGlossaryPath = path.join(sourceDir, 'public', 'glossary.json');
-const targetGlossaryPath = path.join(__dirname, '..', 'public', 'glossary.json');
-if (fs.existsSync(sourceGlossaryPath)) {
+function shouldSkipRel(relPath) {
+  const rel = normalizeRel(relPath);
+  if (!rel) return false;
+  if (rel === '.DS_Store' || rel.endsWith('/.DS_Store')) return true;
+  if (rel === 'node_modules' || rel.startsWith('node_modules/')) return true;
+  if (rel === 'dist' || rel.startsWith('dist/')) return true;
+  if (rel === '.tests' || rel.startsWith('.tests/')) return true;
+  return false;
+}
+
+function removeContentsExcept(dir, keep) {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  for (const entry of fs.readdirSync(dir)) {
+    if (keep.has(entry)) continue;
+    fs.rmSync(path.join(dir, entry), { recursive: true, force: true });
+  }
+}
+
+function copyTreeFiltered(srcRoot, dstRoot) {
+  function walk(curSrc) {
+    const entries = fs.readdirSync(curSrc, { withFileTypes: true });
+    for (const entry of entries) {
+      const srcAbs = path.join(curSrc, entry.name);
+      const rel = normalizeRel(path.relative(srcRoot, srcAbs));
+      if (shouldSkipRel(rel)) continue;
+
+      const dstAbs = path.join(dstRoot, rel);
+      if (entry.isDirectory()) {
+        fs.mkdirSync(dstAbs, { recursive: true });
+        walk(srcAbs);
+        continue;
+      }
+      if (entry.isSymbolicLink()) {
+        const linkTarget = fs.readlinkSync(srcAbs);
+        fs.mkdirSync(path.dirname(dstAbs), { recursive: true });
+        try {
+          fs.rmSync(dstAbs, { force: true });
+        } catch {
+          // ignore
+        }
+        fs.symlinkSync(linkTarget, dstAbs);
+        continue;
+      }
+      if (entry.isFile()) {
+        fs.mkdirSync(path.dirname(dstAbs), { recursive: true });
+        fs.copyFileSync(srcAbs, dstAbs);
+      }
+    }
+  }
+
+  walk(srcRoot);
+}
+
+function detectSourceSha(sourceDir) {
+  const guessedRepoRoot = path.resolve(sourceDir, '..');
+  const result = spawnSync('git', ['-C', guessedRepoRoot, 'rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+  });
+  if (result.status !== 0) return null;
+  const sha = String(result.stdout || '').trim();
+  return sha || null;
+}
+
+function syncGlossary(sourceDir) {
+  const sourceGlossaryPath = path.join(sourceDir, 'public', 'glossary.json');
+  const targetGlossaryPath = path.join(root, 'public', 'glossary.json');
+
+  if (!fs.existsSync(sourceGlossaryPath)) {
+    console.warn(`Warning: source glossary not found at ${sourceGlossaryPath}`);
+    return;
+  }
+
   fs.mkdirSync(path.dirname(targetGlossaryPath), { recursive: true });
   fs.copyFileSync(sourceGlossaryPath, targetGlossaryPath);
-  console.log(`Synced glossary.json to ${targetGlossaryPath}`);
-} else {
-  console.warn(`Warning: glossary.json not found at ${sourceGlossaryPath} (leaving existing ${targetGlossaryPath} as-is)`);
+  console.log(`Synced glossary fallback: ${targetGlossaryPath}`);
 }
 
-// Patch vite.config.ts to use /demo/ base
-const viteConfigPath = path.join(targetDir, 'vite.config.ts');
-if (fs.existsSync(viteConfigPath)) {
-  let content = fs.readFileSync(viteConfigPath, 'utf-8');
-  // Replace base: '/web/' or similar with base: '/demo/'
-  content = content.replace(/base:\s*['"][^'"]*['"]/g, "base: '/demo/'");
-  // If no base found, add it
-  if (!content.includes("base:")) {
-    content = content.replace(
-      /export default defineConfig\(\{/,
-      "export default defineConfig({\n  base: '/demo/',"
-    );
+function writeParityMetadata({ sourceRepo, sourceSha }) {
+  const parityMetaPath = path.join(targetDir, '.parity.json');
+  const payload = {
+    schema_version: 1,
+    source_repo: sourceRepo,
+    source_path: 'web',
+    source_sha: sourceSha || 'unknown',
+    overlays_dir: 'demo-overrides',
+    allowlist_file: 'scripts/demo-parity-allowlist.json',
+  };
+  fs.writeFileSync(parityMetaPath, JSON.stringify(payload, null, 2) + '\n');
+  console.log(`Wrote parity metadata: ${parityMetaPath}`);
+}
+
+function main() {
+  const args = parseArgs(process.argv);
+  const sourceDir = path.resolve(process.cwd(), args.source);
+  const sourceSha = args.sourceSha || detectSourceSha(sourceDir);
+
+  if (!fs.existsSync(sourceDir)) {
+    console.error(`Source directory not found: ${sourceDir}`);
+    process.exit(1);
   }
-  fs.writeFileSync(viteConfigPath, content);
-  console.log('Patched vite.config.ts with base: /demo/');
+
+  removeContentsExcept(targetDir, new Set(['node_modules']));
+  copyTreeFiltered(sourceDir, targetDir);
+  console.log(`Mirrored source: ${sourceDir} -> ${targetDir}`);
+
+  if (fs.existsSync(overlaysDir)) {
+    copyTreeFiltered(overlaysDir, targetDir);
+    console.log(`Applied overlays: ${overlaysDir} -> ${targetDir}`);
+  } else {
+    console.log(`No overlays found at ${overlaysDir} (continuing)`);
+  }
+
+  try {
+    execSync(`node "${ensureMswScript}"`, { cwd: root, stdio: 'inherit' });
+  } catch (e) {
+    console.warn(`Warning: ensure-demo-msw failed (continuing): ${e?.message || e}`);
+  }
+
+  const workerPath = path.join(targetDir, 'public', 'mockServiceWorker.js');
+  if (!fs.existsSync(workerPath)) {
+    console.error(`Missing required demo worker file: ${workerPath}`);
+    process.exit(1);
+  }
+
+  syncGlossary(sourceDir);
+  writeParityMetadata({
+    sourceRepo: args.sourceRepo,
+    sourceSha,
+  });
+
+  execSync(`node "${parityScript}" --source "${sourceDir}"`, {
+    cwd: root,
+    stdio: 'inherit',
+  });
+
+  console.log('Demo sync complete.');
 }
 
-// Patch demo entrypoint (basename + MSW bootstrap)
-try {
-  const patchScript = path.join(__dirname, 'patch-demo-entry.cjs');
-  execSync(`node "${patchScript}"`, { stdio: 'inherit' });
-} catch (e) {
-  console.warn('Warning: failed to patch demo entrypoint:', e?.message || e);
-}
-
-// Patch Grafana embed route + iframe params (hosted demo does not run a real Grafana)
-try {
-  const patchScript = path.join(__dirname, 'patch-demo-grafana.cjs');
-  execSync(`node "${patchScript}"`, { stdio: 'inherit' });
-} catch (e) {
-  console.warn('Warning: failed to patch demo Grafana:', e?.message || e);
-}
-
-console.log('Done! Run npm --prefix vendor/demo install to install dependencies.');
+main();

@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
-    "sync:demo": "node scripts/sync-demo.cjs ../ragweld/web",
+    "sync:demo": "node scripts/sync-demo.cjs --source ../ragweld/web",
+    "check:demo-parity": "node scripts/check-demo-parity.cjs --source ../ragweld/web",
+    "fix:demo-parity": "node scripts/check-demo-parity.cjs --source ../ragweld/web --fix",
     "deps:demo": "(npm --prefix vendor/demo ci || npm --prefix vendor/demo install) && node scripts/ensure-demo-msw.cjs",
-    "build:demo": "npm --prefix vendor/demo run build",
+    "build:demo": "VITE_BUILD_BASE=/demo/ VITE_ROUTER_BASENAME=/demo VITE_DEMO_MSW_MODE=partial npm --prefix vendor/demo run build",
     "build": "npm run deps:demo && npm run build:demo && astro build && node scripts/copy-demo.cjs",
     "test:e2e": "playwright test",
     "preview": "astro preview",

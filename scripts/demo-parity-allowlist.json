@@ -1,0 +1,7 @@
+{
+  "allowed_paths": [
+    "src/mocks/**",
+    "public/mockServiceWorker.js",
+    ".parity.json"
+  ]
+}
