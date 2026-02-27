@@ -2603,9 +2603,7 @@ export const handler = async (event) => {
 
     if (!run) {
       const errEvent = JSON.stringify({ type: 'error', message: 'No eval dataset entries found.' });
-      return sse(`data: ${errEvent}
-
-`);
+      return sse(`data: ${errEvent}\n\n`);
     }
 
     const events = [
@@ -2617,9 +2615,7 @@ export const handler = async (event) => {
       { type: 'progress', percent: 95, message: 'Finalizing metrics' },
       { type: 'complete' },
     ];
-    const body = events.map((e) => `data: ${JSON.stringify(e)}
-
-`).join('');
+    const body = events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('');
     return sse(body);
   }
 

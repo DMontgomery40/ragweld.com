@@ -680,6 +680,8 @@ export interface GenerationConfig {
   gen_retry_max?: number; // default: 2
   /** Model for code enrichment */
   enrich_model?: string; // default: "gpt-4o-mini"
+  /** Provider backend for gen_model and channel overrides */
+  gen_backend?: string; // default: "openai"
   /** Enrichment backend */
   enrich_backend?: string; // default: "openai"
   /** Disable code enrichment */
@@ -729,7 +731,7 @@ export interface GraphIndexingConfig {
   /** When true, semantic KG extraction preserves/uses typed entities (person, org, location, event, concept). */
   semantic_kg_typed_entities_enabled?: boolean; // default: False
   /** Allowed semantic KG entity types produced by extraction. */
-  semantic_kg_allowed_entity_types?: string[]; // default: ["concept"]
+  semantic_kg_allowed_entity_types?: ("person" | "org" | "location" | "event" | "concept")[]; // default: ["concept"]
   /** When true in LLM mode, fail semantic KG extraction for a chunk if LLM extraction fails instead of falling back. */
   semantic_kg_require_llm_success?: boolean; // default: False
   /** Reasoning effort for semantic KG extraction when using OpenAI Responses-compatible models. */
@@ -1086,6 +1088,16 @@ export interface ModelCatalogEntry {
   base_url?: string | null; // default: None
   /** Freeform notes */
   notes?: string | null; // default: None
+}
+
+/** A single soft warning about a model assignment in the config. */
+export interface ModelValidationWarning {
+  /** Dotted config field path (e.g. generation.gen_model) */
+  field: string;
+  /** The model string that triggered the warning */
+  model_value: string;
+  /** Human-readable warning message */
+  message: string;
 }
 
 /** Unified gateway to 400+ cloud models. OpenAI-compatible.  MANDATORY P0 provider. */
@@ -2500,6 +2512,14 @@ export interface ModelCatalogUpsertResponse {
   action: "created" | "updated";
   /** Upserted catalog model entry */
   model: ModelCatalogEntry;
+}
+
+/** Result of validating current config model assignments against the catalog. */
+export interface ModelValidationResult {
+  /** True when no hard errors found (warnings are soft) */
+  valid: boolean;
+  /** Soft warnings about model assignments */
+  warnings?: ModelValidationWarning[];
 }
 
 /** Generic ok response used by several endpoints. */

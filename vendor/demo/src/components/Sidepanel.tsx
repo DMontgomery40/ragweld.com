@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useConfigStore } from '@/stores';
 import { EmbeddingMismatchWarning } from './ui/EmbeddingMismatchWarning';
-import { useModels } from '@/hooks';
+import { useEmbeddingModel, useModels } from '@/hooks';
 
 export function Sidepanel() {
   const config = useConfigStore((s) => s.config);

@@ -8,10 +8,11 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useAPI, useConfig, useConfigField, useIndexing } from '@/hooks';
+import { useAPI, useConfig, useConfigField, useEmbeddingModel, useIndexing, useModels } from '@/hooks';
 import { useRepoStore } from '@/stores/useRepoStore';
 import { LiveTerminal, type LiveTerminalHandle } from '@/components/LiveTerminal/LiveTerminal';
 import { RepositoryConfig } from '@/components/RAG/RepositoryConfig';
+import { ModelPicker } from '@/components/RAG/ModelPicker';
 import { EmbeddingMismatchWarning } from '@/components/ui/EmbeddingMismatchWarning';
 import { TooltipIcon } from '@/components/ui/TooltipIcon';
 import { indexingApi } from '@/api';
@@ -46,7 +47,7 @@ const CHUNKING_STRATEGIES = [
 
 export function IndexingSubtab() {
   const { api } = useAPI();
-  const { config } = useConfig();
+  const { config, flushPendingPatches } = useConfig();
   const { activeRepo, repos, loadRepos, setActiveRepo } = useRepoStore();
   const {
     fetchStatus: fetchIndexStatus,
@@ -73,10 +74,7 @@ export function IndexingSubtab() {
 
   // Config fields (TriBridConfig-backed)
   const [embeddingType, setEmbeddingType] = useConfigField<string>('embedding.embedding_type', '');
-  const [embeddingModel, setEmbeddingModel] = useConfigField<string>('embedding.embedding_model', '');
-  const [voyageModel, setVoyageModel] = useConfigField<string>('embedding.voyage_model', '');
-  const [embeddingModelLocal, setEmbeddingModelLocal] = useConfigField<string>('embedding.embedding_model_local', '');
-  const [embeddingModelMlx, setEmbeddingModelMlx] = useConfigField<string>('embedding.embedding_model_mlx', '');
+  // (embedding model per-provider fields now managed by useEmbeddingModel hook)
   const [embeddingDim, setEmbeddingDim] = useConfigField<number>('embedding.embedding_dim', 0);
   const [embeddingBatchSize, setEmbeddingBatchSize] = useConfigField<number>('embedding.embedding_batch_size', 0);
   const [embeddingMaxTokens, setEmbeddingMaxTokens] = useConfigField<number>('embedding.embedding_max_tokens', 0);
@@ -185,11 +183,7 @@ export function IndexingSubtab() {
     8
   );
 
-  // Models (from /api/models, no hardcoded lists)
-  const [embedModels, setEmbedModels] = useState<any[]>([]);
-  const [embedProviders, setEmbedProviders] = useState<string[]>([]);
-  const [modelsLoading, setModelsLoading] = useState(true);
-  const [modelsError, setModelsError] = useState<string | null>(null);
+  // (Models loaded via useModels hook below — no manual state needed)
 
   // Index stats + status
   const [_indexStatus, setIndexStatus] = useState<IndexStatus | null>(null);
@@ -241,83 +235,23 @@ export function IndexingSubtab() {
     };
   }, []);
 
-  // Derived model field (based on provider)
-  const currentModel = useMemo(() => {
-    const t = String(embeddingType || '').toLowerCase();
-    if (t === 'voyage') return String(voyageModel || '');
-    if (t === 'openai') return String(embeddingModel || '');
-    if (t === 'mlx') return String(embeddingModelMlx || '');
-    return String(embeddingModelLocal || '');
-  }, [embeddingType, embeddingModel, embeddingModelLocal, embeddingModelMlx, voyageModel]);
+  // Derived model field (based on provider) — via shared hook
+  const { currentModel, setCurrentModel, tooltipKey: modelTooltipKey } = useEmbeddingModel();
 
-  const modelTooltipKey = useMemo(() => {
-    const t = String(embeddingType || '').toLowerCase();
-    if (t === 'voyage') return 'VOYAGE_MODEL';
-    if (t === 'openai') return 'EMBEDDING_MODEL';
-    if (t === 'mlx') return 'EMBEDDING_MODEL_MLX';
-    return 'EMBEDDING_MODEL_LOCAL';
-  }, [embeddingType]);
+  // Embedding model catalog (via useModels hook)
+  const {
+    providers: embedProviders,
+    getModelsForProvider: getEmbedModelsForProvider,
+    loading: modelsLoading,
+    error: modelsError,
+    findModel: findEmbedModel,
+  } = useModels('EMB');
 
-  const setCurrentModel = useCallback((modelName: string) => {
-    const t = String(embeddingType || '').toLowerCase();
-    if (t === 'voyage') {
-      setVoyageModel(modelName);
-      return;
-    }
-    if (t === 'openai') {
-      setEmbeddingModel(modelName);
-      return;
-    }
-    if (t === 'mlx') {
-      setEmbeddingModelMlx(modelName);
-      return;
-    }
-    setEmbeddingModelLocal(modelName);
-  }, [embeddingType, setEmbeddingModel, setEmbeddingModelLocal, setEmbeddingModelMlx, setVoyageModel]);
-
-  // Models loading (EMB only)
-  useEffect(() => {
-    (async () => {
-      setModelsLoading(true);
-      setModelsError(null);
-      try {
-        const r = await fetch(api('/api/models/by-type/EMB'));
-        if (!r.ok) throw new Error(`Failed to load embedding models (${r.status})`);
-        const data = await r.json();
-        const list = Array.isArray(data) ? data : [];
-        setEmbedModels(list);
-        const providers = Array.from(
-          new Set(
-            list
-              .map((m: any) => String(m?.provider || '').trim())
-              .filter(Boolean)
-          )
-        ).sort((a, b) => a.localeCompare(b));
-        setEmbedProviders(providers);
-      } catch (e) {
-        setModelsError(e instanceof Error ? e.message : 'Failed to load models');
-        setEmbedModels([]);
-        setEmbedProviders([]);
-      } finally {
-        setModelsLoading(false);
-      }
-    })();
-  }, [api]);
-
-  // Provider-specific embedding model list
+  // Auto-select first model when provider changes and current model is not valid
   const providerEmbedModels = useMemo(() => {
-    const p = String(embeddingType || '').toLowerCase();
-    if (!p) return [];
-    return embedModels
-      .filter((m: any) => String(m?.provider || '').toLowerCase() === p)
-      .map((m: any) => ({
-        model: String(m?.model || ''),
-        dimensions: typeof m?.dimensions === 'number' ? m.dimensions : null,
-      }))
-      .filter((m: any) => Boolean(m.model));
-  }, [embedModels, embeddingType]);
+    return getEmbedModelsForProvider(embeddingType);
+  }, [getEmbedModelsForProvider, embeddingType]);
 
-  // If provider changes and current model isn't valid, auto-select first model (from models.json only)
   useEffect(() => {
     if (!providerEmbedModels.length) return;
     const existing = String(currentModel || '').trim();
@@ -327,12 +261,12 @@ export function IndexingSubtab() {
 
   // If selected model has known dimensions, keep embedding_dim aligned (no hardcoded dims)
   useEffect(() => {
-    const hit = providerEmbedModels.find(m => m.model === currentModel);
+    const hit = findEmbedModel(embeddingType, currentModel);
     const dims = hit?.dimensions;
     if (autoSetDimensions && typeof dims === 'number' && dims > 0 && embeddingDim !== dims) {
       setEmbeddingDim(dims);
     }
-  }, [autoSetDimensions, currentModel, embeddingDim, providerEmbedModels, setEmbeddingDim]);
+  }, [autoSetDimensions, currentModel, embeddingDim, embeddingType, findEmbedModel, setEmbeddingDim]);
 
   // Resolved tokenizer description (UX-only helper)
   const resolvedTokenizerDesc = useMemo(() => {
@@ -458,6 +392,10 @@ export function IndexingSubtab() {
     if (!effectivePath.trim()) return;
 
     try {
+      // Flush any pending debounced config patches so the backend reads
+      // up-to-date settings when it loads scoped config for this index run.
+      await flushPendingPatches();
+
       const body: IndexRequest = {
         corpus_id: rid,
         repo_path: effectivePath,
@@ -563,6 +501,7 @@ export function IndexingSubtab() {
     currentModel,
     effectivePath,
     embeddingType,
+    flushPendingPatches,
     forceReindex,
     graphIndexingEnabled,
     loadStats,
@@ -991,33 +930,14 @@ export function IndexingSubtab() {
             {/* Model + dimensions */}
             <div className="input-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px' }}>
               <div className="input-group">
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
-                  Model
-                  <TooltipIcon name={modelTooltipKey} />
-                </label>
-                <select
+                <ModelPicker
+                  componentType="EMB"
+                  provider={embeddingType}
                   value={currentModel}
-                  onChange={(e) => setCurrentModel(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    background: 'var(--input-bg)',
-                    border: '1px solid var(--line)',
-                    borderRadius: '6px',
-                    color: 'var(--fg)',
-                    fontSize: '13px',
-                  }}
-                >
-                  {providerEmbedModels.length ? (
-                    providerEmbedModels.map((m) => (
-                      <option key={m.model} value={m.model}>
-                        {`${embeddingType} · ${m.model}`}
-                      </option>
-                    ))
-                  ) : (
-                    <option value={currentModel}>{currentModel || 'No models found for provider'}</option>
-                  )}
-                </select>
+                  onChange={setCurrentModel}
+                  label="Model"
+                  tooltipKey={modelTooltipKey}
+                />
               </div>
 
               <div className="input-group">

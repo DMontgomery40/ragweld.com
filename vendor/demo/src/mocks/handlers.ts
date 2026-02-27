@@ -350,19 +350,20 @@ export const handlersFull = [
 
   http.post('/api/eval/analyze_comparison', async () => {
     await delay(200);
+    const analysisLines = [
+      '# Eval Comparison',
+      '',
+      '## Summary',
+      '- Top-1 accuracy improved by +50% (0.50 → 1.00)',
+      '- MRR improved by +0.25',
+      '',
+      '## Config Diffs',
+      '- fusion.method: "rrf" → "rrf" (no change)',
+      '- retrieval.final_k: 5 → 5 (no change)',
+    ];
     return HttpResponse.json({
       ok: true,
-      analysis: [
-        '# Eval Comparison',
-        '',
-        '## Summary',
-        '- Top-1 accuracy improved by +50% (0.50 → 1.00)',
-        '- MRR improved by +0.25',
-        '',
-        '## Config Diffs',
-        '- fusion.method: "rrf" → "rrf" (no change)',
-        '- retrieval.final_k: 5 → 5 (no change)',
-      ].join('\n'),
+      analysis: analysisLines.join('\n'),
       model_used: 'demo-analysis',
       error: null,
     });
