@@ -179,7 +179,7 @@ export interface ChatModelInfo {
   /** Catalog model identifier when sourced from /api/models */
   catalog_model?: string | null; // default: None
   /** Capabilities for this model option */
-  components?: "GEN" | "EMB" | "RERANK"[];
+  components?: ("GEN" | "EMB" | "RERANK")[];
   /** Model source group for UI grouping. */
   source: "cloud_direct" | "openrouter" | "local" | "ragweld";
   /** Provider type (ollama, llamacpp, openrouter, etc) */
@@ -822,6 +822,8 @@ export interface GraphStorageConfig {
   neo4j_database_prefix?: string; // default: "tribrid_"
   /** Automatically create per-corpus Neo4j databases when missing (Enterprise). */
   neo4j_auto_create_databases?: boolean; // default: True
+  /** Neo4j chunk-vector query mode. 'auto' prefers runtime-safe defaults and only uses SEARCH where supported. */
+  neo4j_vector_query_mode?: "auto" | "procedure" | "search"; // default: "auto"
   /** Maximum traversal hops for graph search */
   max_hops?: number; // default: 2
   /** Include community detection in graph analysis */
@@ -902,12 +904,6 @@ export interface IndexStats {
 export interface IndexingConfig {
   /** PostgreSQL connection string (DSN) for pgvector + FTS storage */
   postgres_url?: string; // default: "postgresql://postgres:postgres@localhost:5432/t..."
-  /** pgvector table name template */
-  table_name?: string; // default: "code_chunks_{repo}"
-  /** Collection suffix for multi-index scenarios */
-  collection_suffix?: string; // default: "default"
-  /** Fallback repository path if not found in repos.json */
-  repo_path?: string; // default: ""
   /** Batch size for indexing */
   indexing_batch_size?: number; // default: 100
   /** Parallel workers for indexing */
@@ -916,8 +912,6 @@ export interface IndexingConfig {
   bm25_tokenizer?: string; // default: "stemmer"
   /** Stemmer language */
   bm25_stemmer_lang?: string; // default: "english"
-  /** Stopwords language code */
-  bm25_stopwords_lang?: string; // default: "en"
   /** Excluded file extensions (comma-separated) */
   index_excluded_exts?: string; // default: ".png,.jpg,.gif,.ico,.svg,.woff,.ttf"
   /** Max file size to index (MB) */
@@ -938,12 +932,6 @@ export interface IndexingConfig {
   parquet_extract_include_column_names?: number; // default: 1
   /** Skip dense vector indexing */
   skip_dense?: number; // default: 0
-  /** Base output directory */
-  out_dir_base?: string; // default: "./out"
-  /** Override for OUT_DIR_BASE if specified */
-  rag_out_base?: string; // default: ""
-  /** Repository configuration file */
-  repos_file?: string; // default: "./repos.json"
 }
 
 /** Discriminative keywords configuration. */
@@ -1067,7 +1055,7 @@ export interface ModelCatalogEntry {
   /** Model identifier */
   model: string;
   /** Capabilities supported by this model */
-  components?: "GEN" | "EMB" | "RERANK"[];
+  components?: ("GEN" | "EMB" | "RERANK")[];
   /** Maximum context tokens when known */
   context?: number | null; // default: None
   /** Embedding dimensions when applicable */
@@ -1259,7 +1247,7 @@ export interface Relationship {
   /** Target entity ID */
   target_id: string;
   /** Type of relationship */
-  relation_type: "calls" | "imports" | "inherits" | "contains" | "references" | "related_to";
+  relation_type: "calls" | "imports" | "inherits" | "contains" | "associated_with" | "met_with" | "communicated_with" | "works_for" | "member_of" | "founded" | "owns" | "funded" | "participated_in" | "located_in" | "references" | "related_to";
   /** Relationship strength */
   weight?: number; // default: 1.0
   /** Additional properties */
@@ -1483,6 +1471,36 @@ export interface ScoringConfig {
   vendor_mode?: string; // default: "prefer_first_party"
   /** Comma-separated path prefixes to boost */
   path_boosts?: string; // default: "/gui,/server,/indexer,/retrieval"
+}
+
+/** Configuration for semantic caching across search/answer/chat endpoints. */
+export interface SemanticCacheConfig {
+  /** Enable semantic cache reads/writes (0=off, 1=on). */
+  enabled?: number; // default: 0
+  /** Cache mode when enabled. */
+  mode?: "read_write" | "read_only" | "write_only"; // default: "read_write"
+  /** Maximum cache rows to retain per scope/endpoint. */
+  max_entries?: number; // default: 5000
+  /** Minimum query length before cache is eligible. */
+  min_query_chars?: number; // default: 3
+  /** Minimum cosine similarity for semantic search cache hits. */
+  similarity_threshold_search?: number; // default: 0.9
+  /** Minimum cosine similarity for semantic answer cache hits. */
+  similarity_threshold_answer?: number; // default: 0.93
+  /** Minimum cosine similarity for semantic chat cache hits. */
+  similarity_threshold_chat?: number; // default: 0.95
+  /** TTL in seconds for search cache entries. */
+  ttl_seconds_search?: number; // default: 900
+  /** TTL in seconds for answer cache entries. */
+  ttl_seconds_answer?: number; // default: 1800
+  /** TTL in seconds for chat cache entries. */
+  ttl_seconds_chat?: number; // default: 600
+  /** Number of prior conversation turns included in chat cache fingerprint. */
+  chat_history_window?: number; // default: 6
+  /** Bypass chat generation cache when images are attached. */
+  bypass_if_images?: number; // default: 1
+  /** Skip generation-cache writes when temperature exceeds this value. */
+  max_temperature_for_write?: number; // default: 0.5
 }
 
 /** Configuration for sparse (BM25) search. */
@@ -1900,6 +1918,8 @@ export interface AnswerRequest {
   system_prompt?: string | null;
   /** Override chat model for this request (empty=default) */
   model_override?: string;
+  /** Per-request cache mode override. */
+  cache_mode?: "default" | "bypass" | "refresh";
 }
 
 /** Response from AI answer generation. */
@@ -1951,6 +1971,8 @@ export interface ChatRequest {
   include_graph?: boolean;
   /** Override retrieval.final_k for this message (leave null to use config default) */
   top_k?: number | null;
+  /** Per-request cache mode override. */
+  cache_mode?: "default" | "bypass" | "refresh";
 }
 
 /** Response from chat endpoint. */
@@ -2413,6 +2435,54 @@ export interface IndexRequest {
   force_reindex?: boolean;
 }
 
+/** Persisted index terminal event for replay. */
+export interface IndexRunEvent {
+  /** Run identifier */
+  run_id: string;
+  /** Event timestamp (UTC) */
+  ts: string;
+  /** Event type (log/progress/warning/error/complete/cancelled) */
+  type: string;
+  /** Human-readable message */
+  message?: string | null;
+  /** Progress percentage when present */
+  percent?: number | null;
+  /** Current file when present */
+  current_file?: string | null;
+  /** Additional event payload */
+  meta?: Record<string, unknown>;
+}
+
+/** Persisted indexing run summary for replay/status truthfulness. */
+export interface IndexRunSummary {
+  /** Unique indexing run identifier */
+  run_id: string;
+  /** Corpus identifier */
+  corpus_id: string;
+  /** Final or current run state */
+  status: "indexing" | "complete" | "error" | "cancelled";
+  /** When indexing run started */
+  started_at: string;
+  /** When indexing run completed */
+  completed_at?: string | null;
+  /** Best-effort progress for this run */
+  progress?: number;
+  /** Error message when status='error' */
+  error?: string | null;
+  /** Indexed file count for this run */
+  total_files?: number;
+  /** Indexed chunk count for this run */
+  total_chunks?: number;
+  /** Indexed token count for this run */
+  total_tokens?: number;
+  /** Embedding provider used by this run */
+  embedding_provider?: string | null;
+  /** Embedding model used by this run */
+  embedding_model?: string | null;
+  /** Embedding dimensions used by this run */
+  embedding_dimensions?: number | null;
+}
+
 /** Current status of repository indexing. */
 export interface IndexStatus {
   /** Corpus identifier */
@@ -2792,6 +2862,8 @@ export interface SearchRequest {
   include_sparse?: boolean;
   /** Include graph search results */
   include_graph?: boolean;
+  /** Per-request cache mode override. */
+  cache_mode?: "default" | "bypass" | "refresh";
 }
 
 /** Response from tri-brid search. */
@@ -2823,6 +2895,7 @@ export interface TracesLatestResponse {
 /** TRIBRID RAG Engine tunable configuration parameters */
 export interface TriBridConfig {
   retrieval?: RetrievalConfig;
+  semantic_cache?: SemanticCacheConfig;
   scoring?: ScoringConfig;
   layer_bonus?: LayerBonusConfig;
   embedding?: EmbeddingConfig;
@@ -2861,8 +2934,6 @@ export interface VocabPreviewResponse {
   tokenizer: string;
   /** Stemmer language (indexing.bm25_stemmer_lang) */
   stemmer_lang?: string | null;
-  /** Stopwords language code (indexing.bm25_stopwords_lang) */
-  stopwords_lang?: string | null;
   /** Postgres text search configuration used for tsv + query parsing */
   ts_config: string;
   /** Total unique terms in the corpus vocabulary */

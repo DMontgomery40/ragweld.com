@@ -1,15 +1,17 @@
-import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react';
+import { useState, useEffect, useCallback, useRef, type CSSProperties } from 'react';
 import { EmbeddingMismatchWarning } from '@/components/ui/EmbeddingMismatchWarning';
 import { LiveTerminal, type LiveTerminalHandle } from '@/components/LiveTerminal/LiveTerminal';
 import { IntentMatrixEditor } from '@/components/RAG/IntentMatrixEditor';
+import { ModelAssignments } from '@/components/RAG/ModelAssignments';
+import { ModelPicker } from '@/components/RAG/ModelPicker';
 import { PromptLink } from '@/components/ui/PromptLink';
 import { ApiKeyStatus } from '@/components/ui/ApiKeyStatus';
 import { TooltipIcon } from '@/components/ui/TooltipIcon';
 import { createAlertError, createInlineError } from '@/utils/errorHelpers';
 import { useConfig, useConfigField } from '@/hooks';
-import { modelsApi, tracesApi } from '@/api';
+import { tracesApi } from '@/api';
 import { useRepoStore } from '@/stores/useRepoStore';
-import type { ModelCatalogEntry, TracesLatestResponse } from '@/types/generated';
+import type { TracesLatestResponse } from '@/types/generated';
 
 type RetrievalCardId = 'search_paths' | 'fusion_scoring' | 'generation' | 'ops_tracing';
 type OpsTracingViewId = 'runtime_compatibility' | 'observability_integrations';
@@ -101,7 +103,6 @@ const SECTION_DESC_STYLE: CSSProperties = {
 export function RetrievalSubtab() {
   const [selectedCard, setSelectedCard] = useState<RetrievalCardId>('search_paths');
   const [opsTracingView, setOpsTracingView] = useState<OpsTracingViewId>('runtime_compatibility');
-  const [availableModels, setAvailableModels] = useState<ModelCatalogEntry[]>([]);
   const [hydrating, setHydrating] = useState(true);
   const [traceLoading, setTraceLoading] = useState(false);
   const [traceStatus, setTraceStatus] = useState<{ type: 'info' | 'error'; message: string } | null>(null);
@@ -120,7 +121,7 @@ export function RetrievalSubtab() {
   const [genModelHttp, setGenModelHttp] = useConfigField<string>('generation.gen_model_http', '');
   const [genModelMcp, setGenModelMcp] = useConfigField<string>('generation.gen_model_mcp', '');
   const [genModelCli, setGenModelCli] = useConfigField<string>('generation.gen_model_cli', '');
-  const [genBackend, setGenBackend] = useConfigField<string>('generation.gen_backend', 'openai');
+  const [genBackend] = useConfigField<string>('generation.gen_backend', 'openai');
   const [enrichBackend, setEnrichBackend] = useConfigField<string>('generation.enrich_backend', 'openai');
   const [genMaxTokens, setGenMaxTokens] = useConfigField<number>('generation.gen_max_tokens', 2048);
   const [genTopP, setGenTopP] = useConfigField<number>('generation.gen_top_p', 1.0);
@@ -261,6 +262,29 @@ export function RetrievalSubtab() {
   const [hydrationMode, setHydrationMode] = useConfigField<string>('hydration.hydration_mode', 'lazy');
   const [hydrationMaxChars, setHydrationMaxChars] = useConfigField<number>('hydration.hydration_max_chars', 2000);
 
+  // --- Semantic cache -----------------------------------------------------
+  const [semanticCacheEnabled, setSemanticCacheEnabled] = useConfigField<number>('semantic_cache.enabled', 0);
+  const [semanticCacheMode, setSemanticCacheMode] =
+    useConfigField<'read_write' | 'read_only' | 'write_only'>('semantic_cache.mode', 'read_write');
+  const [semanticCacheMaxEntries, setSemanticCacheMaxEntries] = useConfigField<number>('semantic_cache.max_entries', 5000);
+  const [semanticCacheMinQueryChars, setSemanticCacheMinQueryChars] =
+    useConfigField<number>('semantic_cache.min_query_chars', 3);
+  const [semanticCacheThresholdSearch, setSemanticCacheThresholdSearch] =
+    useConfigField<number>('semantic_cache.similarity_threshold_search', 0.9);
+  const [semanticCacheThresholdAnswer, setSemanticCacheThresholdAnswer] =
+    useConfigField<number>('semantic_cache.similarity_threshold_answer', 0.93);
+  const [semanticCacheThresholdChat, setSemanticCacheThresholdChat] =
+    useConfigField<number>('semantic_cache.similarity_threshold_chat', 0.95);
+  const [semanticCacheTtlSearch, setSemanticCacheTtlSearch] = useConfigField<number>('semantic_cache.ttl_seconds_search', 900);
+  const [semanticCacheTtlAnswer, setSemanticCacheTtlAnswer] = useConfigField<number>('semantic_cache.ttl_seconds_answer', 1800);
+  const [semanticCacheTtlChat, setSemanticCacheTtlChat] = useConfigField<number>('semantic_cache.ttl_seconds_chat', 600);
+  const [semanticCacheChatHistoryWindow, setSemanticCacheChatHistoryWindow] =
+    useConfigField<number>('semantic_cache.chat_history_window', 6);
+  const [semanticCacheBypassIfImages, setSemanticCacheBypassIfImages] =
+    useConfigField<number>('semantic_cache.bypass_if_images', 1);
+  const [semanticCacheMaxTemperatureForWrite, setSemanticCacheMaxTemperatureForWrite] =
+    useConfigField<number>('semantic_cache.max_temperature_for_write', 0.5);
+
   const {
     config,
     loading: configLoading,
@@ -269,48 +293,12 @@ export function RetrievalSubtab() {
     clearError,
   } = useConfig();
 
-  const loadModels = useCallback(async () => {
-    try {
-      const rows = await modelsApi.listByType('GEN');
-      const unique: ModelCatalogEntry[] = [];
-      const seen = new Set<string>();
-      for (const row of rows) {
-        const provider = String(row.provider || '').trim();
-        const model = String(row.model || '').trim();
-        if (!provider || !model) continue;
-        const key = `${provider}::${model}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        unique.push(row);
-      }
-      setAvailableModels(unique);
-    } catch (error) {
-      console.error('Failed to load models from /api/models/by-type/GEN:', error);
-      setAvailableModels([]);
-    }
-  }, []);
-
-  const generationModelOptions = useMemo(() => {
-    return availableModels.map((row) => {
-      const provider = String(row.provider || '').trim();
-      const model = String(row.model || '').trim();
-      return {
-        key: `${provider}::${model}`,
-        value: model,
-        label: `${provider} · ${model}`,
-      };
-    });
-  }, [availableModels]);
 
   useEffect(() => {
     if (!repos.length) {
       void loadRepos();
     }
   }, [repos.length, loadRepos]);
-
-  useEffect(() => {
-    void loadModels();
-  }, [loadModels]);
 
   useEffect(() => {
     if (config) {
@@ -470,16 +458,15 @@ export function RetrievalSubtab() {
           </div>
 
           <div className="input-group">
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              Primary Model
-              <TooltipIcon name="GEN_MODEL" />
-            </label>
-            <select value={genModel} onChange={(e) => setGenModel(e.target.value)}>
-              <option value="">Select a model...</option>
-              {generationModelOptions.map((opt) => (
-                <option key={opt.key} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
+            <ModelPicker
+              componentType="GEN"
+              provider={genBackend}
+              value={genModel}
+              onChange={setGenModel}
+              label="Generation Model"
+              tooltipKey="GEN_MODEL"
+              allowCustom
+            />
           </div>
 
           <div className="input-group">
@@ -1323,15 +1310,16 @@ export function RetrievalSubtab() {
 
               <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16 }}>
                 <div className="input-group">
-                  <label>
-                    Primary Model <TooltipIcon name="GEN_MODEL" />
-                  </label>
-                  <select value={genModel} onChange={(e) => setGenModel(e.target.value)}>
-                    <option value="">Select a model...</option>
-                    {generationModelOptions.map((opt) => (
-                      <option key={opt.key} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  <ModelPicker
+                    componentType="GEN"
+                    provider={genBackend}
+                    value={genModel}
+                    onChange={setGenModel}
+                    label="Generation Model"
+                    tooltipKey="GEN_MODEL"
+                    allowCustom
+                  />
+                  <PromptLink promptKey="main_rag_chat">Edit Chat Prompt</PromptLink>
                 </div>
                 <div className="input-group">
                   <label>
@@ -1348,37 +1336,37 @@ export function RetrievalSubtab() {
 
               <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }}>
                 <div className="input-group">
-                  <label>
-                    HTTP Override <TooltipIcon name="GEN_MODEL_HTTP" />
-                  </label>
-                  <select value={genModelHttp} onChange={(e) => setGenModelHttp(e.target.value)}>
-                    <option value="">Select a model...</option>
-                    {generationModelOptions.map((opt) => (
-                      <option key={opt.key} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  <ModelPicker
+                    componentType="GEN"
+                    provider={genBackend}
+                    value={genModelHttp}
+                    onChange={setGenModelHttp}
+                    label="HTTP Override"
+                    tooltipKey="GEN_MODEL_HTTP"
+                    allowCustom
+                  />
                 </div>
                 <div className="input-group">
-                  <label>
-                    MCP Override <TooltipIcon name="GEN_MODEL_MCP" />
-                  </label>
-                  <select value={genModelMcp} onChange={(e) => setGenModelMcp(e.target.value)}>
-                    <option value="">Select a model...</option>
-                    {generationModelOptions.map((opt) => (
-                      <option key={opt.key} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  <ModelPicker
+                    componentType="GEN"
+                    provider={genBackend}
+                    value={genModelMcp}
+                    onChange={setGenModelMcp}
+                    label="MCP Override"
+                    tooltipKey="GEN_MODEL_MCP"
+                    allowCustom
+                  />
                 </div>
                 <div className="input-group">
-                  <label>
-                    CLI Override <TooltipIcon name="GEN_MODEL_CLI" />
-                  </label>
-                  <select value={genModelCli} onChange={(e) => setGenModelCli(e.target.value)}>
-                    <option value="">Select a model...</option>
-                    {generationModelOptions.map((opt) => (
-                      <option key={opt.key} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  <ModelPicker
+                    componentType="GEN"
+                    provider={genBackend}
+                    value={genModelCli}
+                    onChange={setGenModelCli}
+                    label="CLI Override"
+                    tooltipKey="GEN_MODEL_CLI"
+                    allowCustom
+                  />
                 </div>
               </div>
             </div>
@@ -1391,15 +1379,15 @@ export function RetrievalSubtab() {
 
               <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16 }}>
                 <div className="input-group">
-                  <label>
-                    Enrich Model <TooltipIcon name="ENRICH_MODEL" />
-                  </label>
-                  <select value={enrichModel} onChange={(e) => setEnrichModel(e.target.value)}>
-                    <option value="">Select a model...</option>
-                    {generationModelOptions.map((opt) => (
-                      <option key={opt.key} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  <ModelPicker
+                    componentType="GEN"
+                    provider={enrichBackend}
+                    value={enrichModel}
+                    onChange={setEnrichModel}
+                    label="Enrich Model"
+                    tooltipKey="ENRICH_MODEL"
+                    allowCustom
+                  />
                 </div>
                 <div className="input-group">
                   <label>
@@ -1615,6 +1603,15 @@ export function RetrievalSubtab() {
                 </div>
               </div>
             </div>
+
+            <details style={{ ...SECTION_STYLE, marginTop: 14 }} data-testid="retrieval-section-model-assignments">
+              <summary style={{ ...SECTION_TITLE_STYLE, cursor: 'pointer', marginBottom: 0 }}>
+                Model Assignments Overview
+              </summary>
+              <div style={{ marginTop: 12 }}>
+                <ModelAssignments />
+              </div>
+            </details>
           </div>
         )}
 
@@ -1851,7 +1848,7 @@ export function RetrievalSubtab() {
                   </div>
                 </div>
 
-                <div style={SECTION_STYLE} data-testid="retrieval-section-ops-retrieval-balance">
+                <div style={{ ...SECTION_STYLE, marginBottom: 14 }} data-testid="retrieval-section-ops-retrieval-balance">
                   <div style={SECTION_TITLE_STYLE}>3) Retrieval Balance</div>
                   <div style={SECTION_DESC_STYLE}>
                     Tune hybrid weighting and candidate fan-out for compatibility with existing retrieval/evaluation flows.
@@ -1918,6 +1915,169 @@ export function RetrievalSubtab() {
                         max={200}
                         value={topkSparse}
                         onChange={(e) => setTopkSparse(snapNumber(e.target.value, 75))}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div style={SECTION_STYLE} data-testid="retrieval-section-ops-semantic-cache">
+                  <div style={SECTION_TITLE_STYLE}>4) Semantic Cache</div>
+                  <div style={SECTION_DESC_STYLE}>
+                    Configure semantic cache policy for retrieval, answer generation, and chat generation.
+                  </div>
+
+                  <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16 }}>
+                    <div className="input-group">
+                      <label>Cache Enabled</label>
+                      <select value={semanticCacheEnabled} onChange={(e) => setSemanticCacheEnabled(parseInt(e.target.value, 10))}>
+                        <option value={1}>Enabled</option>
+                        <option value={0}>Disabled</option>
+                      </select>
+                    </div>
+                    <div className="input-group">
+                      <label>Cache Mode</label>
+                      <select
+                        value={semanticCacheMode}
+                        onChange={(e) => setSemanticCacheMode(e.target.value as 'read_write' | 'read_only' | 'write_only')}
+                        disabled={semanticCacheEnabled === 0}
+                      >
+                        <option value="read_write">read_write</option>
+                        <option value="read_only">read_only</option>
+                        <option value="write_only">write_only</option>
+                      </select>
+                    </div>
+                    <div className="input-group">
+                      <label>Max Entries</label>
+                      <input
+                        type="number"
+                        min={100}
+                        max={500000}
+                        value={semanticCacheMaxEntries}
+                        onChange={(e) => setSemanticCacheMaxEntries(snapNumber(e.target.value, 5000))}
+                        disabled={semanticCacheEnabled === 0}
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label>Min Query Chars</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={200}
+                        value={semanticCacheMinQueryChars}
+                        onChange={(e) => setSemanticCacheMinQueryChars(snapNumber(e.target.value, 3))}
+                        disabled={semanticCacheEnabled === 0}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }}>
+                    <div className="input-group">
+                      <label>Similarity Threshold (Search)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={semanticCacheThresholdSearch}
+                        onChange={(e) => setSemanticCacheThresholdSearch(snapNumber(e.target.value, 0.9))}
+                        disabled={semanticCacheEnabled === 0}
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label>Similarity Threshold (Answer)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={semanticCacheThresholdAnswer}
+                        onChange={(e) => setSemanticCacheThresholdAnswer(snapNumber(e.target.value, 0.93))}
+                        disabled={semanticCacheEnabled === 0}
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label>Similarity Threshold (Chat)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={semanticCacheThresholdChat}
+                        onChange={(e) => setSemanticCacheThresholdChat(snapNumber(e.target.value, 0.95))}
+                        disabled={semanticCacheEnabled === 0}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }}>
+                    <div className="input-group">
+                      <label>TTL Seconds (Search)</label>
+                      <input
+                        type="number"
+                        min={10}
+                        max={86400}
+                        value={semanticCacheTtlSearch}
+                        onChange={(e) => setSemanticCacheTtlSearch(snapNumber(e.target.value, 900))}
+                        disabled={semanticCacheEnabled === 0}
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label>TTL Seconds (Answer)</label>
+                      <input
+                        type="number"
+                        min={10}
+                        max={86400}
+                        value={semanticCacheTtlAnswer}
+                        onChange={(e) => setSemanticCacheTtlAnswer(snapNumber(e.target.value, 1800))}
+                        disabled={semanticCacheEnabled === 0}
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label>TTL Seconds (Chat)</label>
+                      <input
+                        type="number"
+                        min={10}
+                        max={86400}
+                        value={semanticCacheTtlChat}
+                        onChange={(e) => setSemanticCacheTtlChat(snapNumber(e.target.value, 600))}
+                        disabled={semanticCacheEnabled === 0}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }}>
+                    <div className="input-group">
+                      <label>Chat History Window</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={50}
+                        value={semanticCacheChatHistoryWindow}
+                        onChange={(e) => setSemanticCacheChatHistoryWindow(snapNumber(e.target.value, 6))}
+                        disabled={semanticCacheEnabled === 0}
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label>Bypass if Images</label>
+                      <select
+                        value={semanticCacheBypassIfImages}
+                        onChange={(e) => setSemanticCacheBypassIfImages(parseInt(e.target.value, 10))}
+                        disabled={semanticCacheEnabled === 0}
+                      >
+                        <option value={1}>Enabled</option>
+                        <option value={0}>Disabled</option>
+                      </select>
+                    </div>
+                    <div className="input-group">
+                      <label>Max Temperature for Write</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={2}
+                        step={0.05}
+                        value={semanticCacheMaxTemperatureForWrite}
+                        onChange={(e) => setSemanticCacheMaxTemperatureForWrite(snapNumber(e.target.value, 0.5))}
+                        disabled={semanticCacheEnabled === 0}
                       />
                     </div>
                   </div>
