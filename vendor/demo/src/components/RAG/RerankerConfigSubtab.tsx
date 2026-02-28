@@ -280,13 +280,13 @@ export function RerankerConfigSubtab() {
               </select>
             </div>
             <div className="input-group">
-              <label>
-                Base model <TooltipIcon name="LEARNING_RERANKER_BASE_MODEL" />
-              </label>
-              <input
-                type="text"
+              <ModelPicker
+                componentType="RERANK"
                 value={learningBaseModel}
-                onChange={(e) => setLearningBaseModel(e.target.value)}
+                onChange={setLearningBaseModel}
+                label="Base model"
+                tooltipKey="LEARNING_RERANKER_BASE_MODEL"
+                allowCustom
               />
             </div>
           </div>
