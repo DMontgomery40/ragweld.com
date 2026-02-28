@@ -179,7 +179,7 @@ export interface ChatModelInfo {
   /** Catalog model identifier when sourced from /api/models */
   catalog_model?: string | null; // default: None
   /** Capabilities for this model option */
-  components?: "GEN" | "EMB" | "RERANK"[];
+  components?: ("GEN" | "EMB" | "RERANK")[];
   /** Model source group for UI grouping. */
   source: "cloud_direct" | "openrouter" | "local" | "ragweld";
   /** Provider type (ollama, llamacpp, openrouter, etc) */
@@ -266,6 +266,16 @@ export interface ChunkSummary {
   technical_details?: string | null; // default: None
   /** Domain concepts mentioned in this chunk */
   domain_concepts?: string[];
+  /** Detected route/path signals */
+  routes?: string[];
+  /** Key dependencies/imports */
+  dependencies?: string[];
+  /** Implementation patterns */
+  patterns?: string[];
+  /** How this summary was produced */
+  card_source?: "deterministic" | "llm"; // default: "deterministic"
+  /** Optional quality score for llm-enriched summaries */
+  card_score?: number | null; // default: None
 }
 
 /** Chunk summary builder filtering configuration. */
@@ -361,6 +371,10 @@ export interface DashboardIndexCosts {
   total_tokens?: number; // default: 0
   /** Estimated embedding cost (USD) when pricing data is available. */
   embedding_cost?: number | null; // default: None
+  /** Estimated semantic KG extraction cost (USD) when semantic_kg_mode='llm'. */
+  semantic_kg_cost?: number | null; // default: None
+  /** Estimated total indexing cost (USD): embedding + semantic KG (when applicable). */
+  total_cost?: number | null; // default: None
 }
 
 /** Metadata payload for the dashboard index status panel. */
@@ -822,6 +836,8 @@ export interface GraphStorageConfig {
   neo4j_database_prefix?: string; // default: "tribrid_"
   /** Automatically create per-corpus Neo4j databases when missing (Enterprise). */
   neo4j_auto_create_databases?: boolean; // default: True
+  /** Neo4j chunk-vector query mode. 'auto' prefers runtime-safe defaults and only uses SEARCH where supported. */
+  neo4j_vector_query_mode?: "auto" | "procedure" | "search"; // default: "auto"
   /** Maximum traversal hops for graph search */
   max_hops?: number; // default: 2
   /** Include community detection in graph analysis */
@@ -902,12 +918,6 @@ export interface IndexStats {
 export interface IndexingConfig {
   /** PostgreSQL connection string (DSN) for pgvector + FTS storage */
   postgres_url?: string; // default: "postgresql://postgres:postgres@localhost:5432/t..."
-  /** pgvector table name template */
-  table_name?: string; // default: "code_chunks_{repo}"
-  /** Collection suffix for multi-index scenarios */
-  collection_suffix?: string; // default: "default"
-  /** Fallback repository path if not found in repos.json */
-  repo_path?: string; // default: ""
   /** Batch size for indexing */
   indexing_batch_size?: number; // default: 100
   /** Parallel workers for indexing */
@@ -916,8 +926,6 @@ export interface IndexingConfig {
   bm25_tokenizer?: string; // default: "stemmer"
   /** Stemmer language */
   bm25_stemmer_lang?: string; // default: "english"
-  /** Stopwords language code */
-  bm25_stopwords_lang?: string; // default: "en"
   /** Excluded file extensions (comma-separated) */
   index_excluded_exts?: string; // default: ".png,.jpg,.gif,.ico,.svg,.woff,.ttf"
   /** Max file size to index (MB) */
@@ -938,12 +946,8 @@ export interface IndexingConfig {
   parquet_extract_include_column_names?: number; // default: 1
   /** Skip dense vector indexing */
   skip_dense?: number; // default: 0
-  /** Base output directory */
-  out_dir_base?: string; // default: "./out"
-  /** Override for OUT_DIR_BASE if specified */
-  rag_out_base?: string; // default: ""
-  /** Repository configuration file */
-  repos_file?: string; // default: "./repos.json"
+  /** Optional local embedding throughput override for index-time estimates (tokens/sec). */
+  estimated_tokens_per_second_local?: number | null; // default: None
 }
 
 /** Discriminative keywords configuration. */
@@ -1067,7 +1071,7 @@ export interface ModelCatalogEntry {
   /** Model identifier */
   model: string;
   /** Capabilities supported by this model */
-  components?: "GEN" | "EMB" | "RERANK"[];
+  components?: ("GEN" | "EMB" | "RERANK")[];
   /** Maximum context tokens when known */
   context?: number | null; // default: None
   /** Embedding dimensions when applicable */
@@ -1259,7 +1263,7 @@ export interface Relationship {
   /** Target entity ID */
   target_id: string;
   /** Type of relationship */
-  relation_type: "calls" | "imports" | "inherits" | "contains" | "references" | "related_to";
+  relation_type: "calls" | "imports" | "inherits" | "contains" | "associated_with" | "met_with" | "communicated_with" | "works_for" | "member_of" | "founded" | "owns" | "funded" | "participated_in" | "located_in" | "references" | "related_to";
   /** Relationship strength */
   weight?: number; // default: 1.0
   /** Additional properties */
@@ -1485,6 +1489,36 @@ export interface ScoringConfig {
   path_boosts?: string; // default: "/gui,/server,/indexer,/retrieval"
 }
 
+/** Configuration for semantic caching across search/answer/chat endpoints. */
+export interface SemanticCacheConfig {
+  /** Enable semantic cache reads/writes (0=off, 1=on). */
+  enabled?: number; // default: 0
+  /** Cache mode when enabled. */
+  mode?: "read_write" | "read_only" | "write_only"; // default: "read_write"
+  /** Maximum cache rows to retain per scope/endpoint. */
+  max_entries?: number; // default: 5000
+  /** Minimum query length before cache is eligible. */
+  min_query_chars?: number; // default: 3
+  /** Minimum cosine similarity for semantic search cache hits. */
+  similarity_threshold_search?: number; // default: 0.9
+  /** Minimum cosine similarity for semantic answer cache hits. */
+  similarity_threshold_answer?: number; // default: 0.93
+  /** Minimum cosine similarity for semantic chat cache hits. */
+  similarity_threshold_chat?: number; // default: 0.95
+  /** TTL in seconds for search cache entries. */
+  ttl_seconds_search?: number; // default: 900
+  /** TTL in seconds for answer cache entries. */
+  ttl_seconds_answer?: number; // default: 1800
+  /** TTL in seconds for chat cache entries. */
+  ttl_seconds_chat?: number; // default: 600
+  /** Number of prior conversation turns included in chat cache fingerprint. */
+  chat_history_window?: number; // default: 6
+  /** Bypass chat generation cache when images are attached. */
+  bypass_if_images?: number; // default: 1
+  /** Skip generation-cache writes when temperature exceeds this value. */
+  max_temperature_for_write?: number; // default: 0.5
+}
+
 /** Configuration for sparse (BM25) search. */
 export interface SparseSearchConfig {
   /** Sparse retrieval engine. 'postgres_fts' uses built-in FTS; 'pg_search_bm25' uses ParadeDB pg_search. */
@@ -1511,6 +1545,55 @@ export interface SparseSearchConfig {
   bm25_b?: number; // default: 0.4
 }
 
+export interface SyntheticArtifactRef {
+  kind: "eval_dataset_json" | "semantic_cards_jsonl" | "keywords_json" | "triplets_jsonl" | "config_patch_json" | "quality_eval_json" | "report_md";
+  path: string;
+  bytes?: number | null; // default: None
+  created_at: string;
+}
+
+export interface SyntheticRunMeta {
+  run_id: string;
+  corpus_id: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  started_at: string;
+  completed_at?: string | null; // default: None
+  recipe: "eval_dataset" | "semantic_cards" | "keywords" | "triplets" | "autotune_retrieval" | "full_stack";
+  provider: "internal_ragweld" | "synthetic_data_kit";
+  items_generated?: number | null; // default: None
+}
+
+export interface SyntheticRunStartRequest {
+  corpus_id: string;
+  provider?: "internal_ragweld" | "synthetic_data_kit"; // default: "internal_ragweld"
+  recipe?: "eval_dataset" | "semantic_cards" | "keywords" | "triplets" | "autotune_retrieval" | "full_stack"; // default: "eval_dataset"
+  max_source_chunks?: number | null; // default: 300
+  max_pairs?: number | null; // default: 200
+  pairs_per_source?: number | null; // default: 2
+  curate_enabled?: boolean; // default: True
+  curate_threshold?: number; // default: 7.0
+  include_expected_answer?: boolean; // default: True
+  include_tags?: boolean; // default: True
+  seed?: number | null; // default: 1337
+  generator_model: string;
+  judge_model: string;
+}
+
+export interface SyntheticRunSummary {
+  sources_used?: number; // default: 0
+  items_generated?: number; // default: 0
+  items_curated_in?: number; // default: 0
+  items_curated_out?: number; // default: 0
+  avg_judge_score?: number | null; // default: None
+  quality_top1_accuracy?: number | null; // default: None
+  quality_topk_accuracy?: number | null; // default: None
+  quality_mrr?: number | null; // default: None
+  quality_sample_size?: number | null; // default: None
+  quality_gate_threshold?: number | null; // default: None
+  quality_gate_passed?: boolean | null; // default: None
+  quality_failure_reason?: string | null; // default: None
+}
+
 /** System prompts for LLM interactions - affects RAG pipeline behavior.  These prompts control how LLMs behave during query processing, code analysis, and result generation. Changes here can significantly impact RAG accuracy. */
 export interface SystemPromptsConfig {
   /** Main conversational AI system prompt for answering database questions */
@@ -1527,6 +1610,8 @@ export interface SystemPromptsConfig {
   semantic_kg_extraction?: string; // default: "You are a semantic knowledge graph extractor.\n..."
   /** Analyze eval regressions with skeptical approach - avoid false explanations */
   eval_analysis?: string; // default: "You are an expert RAG (Retrieval-Augmented Gene..."
+  /** Judge prompt for synthetic eval row curation and quality filtering */
+  synthetic_judge?: string; // default: "You are a strict evaluator for synthetic retrie..."
   /** Lightweight chunk_summary generation prompt for faster indexing */
   lightweight_chunk_summaries?: string; // default: "Extract key information from this database: sym..."
 }
@@ -1871,7 +1956,7 @@ export interface AgentTrainStartRequest {
   lr?: number | null;
   warmup_ratio?: number | null;
   max_length?: number | null;
-  /** Optional dataset path override. If empty/omitted, uses training.ragweld_agent_train_dataset_path; if that is empty, uses evaluation.eval_dataset_path. */
+  /** Optional dataset path override. If empty/omitted, uses training.ragweld_agent_train_dataset_path; then evaluation.eval_dataset_path; then corpus eval dataset under data/eval_datasets/<corpus>.json. */
   dataset_path?: string | null;
 }
 
@@ -1900,6 +1985,8 @@ export interface AnswerRequest {
   system_prompt?: string | null;
   /** Override chat model for this request (empty=default) */
   model_override?: string;
+  /** Per-request cache mode override. */
+  cache_mode?: "default" | "bypass" | "refresh";
 }
 
 /** Response from AI answer generation. */
@@ -1951,6 +2038,8 @@ export interface ChatRequest {
   include_graph?: boolean;
   /** Override retrieval.final_k for this message (leave null to use config default) */
   top_k?: number | null;
+  /** Per-request cache mode override. */
+  cache_mode?: "default" | "bypass" | "refresh";
 }
 
 /** Response from chat endpoint. */
@@ -2369,7 +2458,7 @@ export interface HealthStatus {
   services?: Record<string, HealthServiceStatus>;
 }
 
-/** Best-effort estimate for indexing cost/time before running the indexer.  Notes: - Token count is an approximation (byte-based heuristic). - Time is an intentionally rough range (depends on machine, provider latency, DB speed, etc.). */
+/** Best-effort estimate for indexing cost/time before running the indexer.  Notes: - Token count is an approximation (byte-based heuristic). - Time is an intentionally rough range (depends on machine, provider latency,   semantic KG mode, and local hardware throughput). */
 export interface IndexEstimate {
   /** Corpus identifier */
   corpus_id: string;
@@ -2395,10 +2484,16 @@ export interface IndexEstimate {
   skip_dense: boolean;
   /** Estimated embedding cost (USD) when pricing data is available (0 for local/deterministic). */
   embedding_cost_usd?: number | null;
+  /** Estimated semantic KG extraction cost (USD) when semantic_kg_mode='llm' and pricing is available. */
+  semantic_kg_cost_usd?: number | null;
+  /** Estimated total indexing cost (USD): embedding + semantic KG (when applicable). */
+  total_cost_usd?: number | null;
   /** Very rough low-end estimate for total indexing time (seconds) */
   estimated_seconds_low?: number | null;
   /** Very rough high-end estimate for total indexing time (seconds) */
   estimated_seconds_high?: number | null;
+  /** Estimated semantic KG phase time (seconds) when semantic_kg_mode='llm'. */
+  estimated_seconds_semantic_kg?: number | null;
   /** Human-readable assumptions used for the estimate */
   assumptions?: string[];
 }
@@ -2411,6 +2506,54 @@ export interface IndexRequest {
   repo_path: string;
   /** Force full reindex even if up-to-date */
   force_reindex?: boolean;
+}
+
+/** Persisted index terminal event for replay. */
+export interface IndexRunEvent {
+  /** Run identifier */
+  run_id: string;
+  /** Event timestamp (UTC) */
+  ts: string;
+  /** Event type (log/progress/warning/error/complete/cancelled) */
+  type: string;
+  /** Human-readable message */
+  message?: string | null;
+  /** Progress percentage when present */
+  percent?: number | null;
+  /** Current file when present */
+  current_file?: string | null;
+  /** Additional event payload */
+  meta?: Record<string, unknown>;
+}
+
+/** Persisted indexing run summary for replay/status truthfulness. */
+export interface IndexRunSummary {
+  /** Unique indexing run identifier */
+  run_id: string;
+  /** Corpus identifier */
+  corpus_id: string;
+  /** Final or current run state */
+  status: "indexing" | "complete" | "error" | "cancelled";
+  /** When indexing run started */
+  started_at: string;
+  /** When indexing run completed */
+  completed_at?: string | null;
+  /** Best-effort progress for this run */
+  progress?: number;
+  /** Error message when status='error' */
+  error?: string | null;
+  /** Indexed file count for this run */
+  total_files?: number;
+  /** Indexed chunk count for this run */
+  total_chunks?: number;
+  /** Indexed token count for this run */
+  total_tokens?: number;
+  /** Embedding provider used by this run */
+  embedding_provider?: string | null;
+  /** Embedding model used by this run */
+  embedding_model?: string | null;
+  /** Embedding dimensions used by this run */
+  embedding_dimensions?: number | null;
 }
 
 /** Current status of repository indexing. */
@@ -2792,6 +2935,8 @@ export interface SearchRequest {
   include_sparse?: boolean;
   /** Include graph search results */
   include_graph?: boolean;
+  /** Per-request cache mode override. */
+  cache_mode?: "default" | "bypass" | "refresh";
 }
 
 /** Response from tri-brid search. */
@@ -2810,6 +2955,61 @@ export interface SearchResponse {
   debug?: Record<string, unknown> | null;
 }
 
+export interface SyntheticArtifactPreviewResponse {
+  ok?: boolean;
+  run_id: string;
+  kind: "eval_dataset_json" | "semantic_cards_jsonl" | "keywords_json" | "triplets_jsonl" | "config_patch_json" | "quality_eval_json" | "report_md";
+  rows?: Record<string, unknown>[];
+}
+
+export interface SyntheticConfigPatchResponse {
+  ok?: boolean;
+  run_id: string;
+  corpus_id: string;
+  patch?: Record<string, unknown>;
+  artifact_path?: string | null;
+}
+
+export interface SyntheticPublishResponse {
+  ok?: boolean;
+  run_id: string;
+  corpus_id: string;
+  kind: "eval_dataset_json" | "semantic_cards_jsonl" | "keywords_json" | "triplets_jsonl" | "config_patch_json" | "quality_eval_json" | "report_md";
+  target_path?: string | null;
+  message?: string | null;
+}
+
+export interface SyntheticRun {
+  run_id: string;
+  corpus_id: string;
+  status?: "queued" | "running" | "completed" | "failed" | "cancelled";
+  started_at: string;
+  completed_at?: string | null;
+  provider: "internal_ragweld" | "synthetic_data_kit";
+  recipe: "eval_dataset" | "semantic_cards" | "keywords" | "triplets" | "autotune_retrieval" | "full_stack";
+  config_snapshot?: Record<string, unknown>;
+  config?: Record<string, unknown>;
+  request: SyntheticRunStartRequest;
+  artifacts?: SyntheticArtifactRef[];
+  summary?: SyntheticRunSummary;
+  error?: string | null;
+}
+
+export interface SyntheticRunEvent {
+  type: "log" | "progress" | "state" | "error" | "complete" | "artifact";
+  ts: string;
+  run_id: string;
+  message?: string | null;
+  percent?: number | null;
+  status?: "queued" | "running" | "completed" | "failed" | "cancelled" | null;
+  artifact?: SyntheticArtifactRef | null;
+}
+
+export interface SyntheticRunsResponse {
+  ok?: boolean;
+  runs?: SyntheticRunMeta[];
+}
+
 /** Response payload for /api/traces/latest. */
 export interface TracesLatestResponse {
   /** Corpus identifier for the returned trace (if any) */
@@ -2823,6 +3023,7 @@ export interface TracesLatestResponse {
 /** TRIBRID RAG Engine tunable configuration parameters */
 export interface TriBridConfig {
   retrieval?: RetrievalConfig;
+  semantic_cache?: SemanticCacheConfig;
   scoring?: ScoringConfig;
   layer_bonus?: LayerBonusConfig;
   embedding?: EmbeddingConfig;
@@ -2861,8 +3062,6 @@ export interface VocabPreviewResponse {
   tokenizer: string;
   /** Stemmer language (indexing.bm25_stemmer_lang) */
   stemmer_lang?: string | null;
-  /** Stopwords language code (indexing.bm25_stopwords_lang) */
-  stopwords_lang?: string | null;
   /** Postgres text search configuration used for tsv + query parsing */
   ts_config: string;
   /** Total unique terms in the corpus vocabulary */
