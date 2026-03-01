@@ -2,32 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ForceGraph2D from 'react-force-graph-2d';
 import { useGraph } from '@/hooks/useGraph';
+import { SyntheticCallout } from '@/components/RAG/SyntheticCallout';
 import { useRepoStore } from '@/stores/useRepoStore';
 import type { Community, Entity, Relationship } from '@/types/generated';
 
 /** Node with computed degree for importance labeling */
 type NodeWithDegree = Entity & { __degree?: number };
-
-function rankKeysByBreakdownCount(breakdown: Record<string, number> | undefined): string[] {
-  if (!breakdown || typeof breakdown !== 'object') return [];
-  return Object.entries(breakdown)
-    .map(([key, value]) => [String(key || '').trim(), Number(value) || 0] as const)
-    .filter(([key]) => Boolean(key))
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([key]) => key);
-}
-
-function mergeUniqueTypes(primary: string[], secondary: string[], fallback: string[]): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const item of [...primary, ...secondary, ...fallback]) {
-    const key = String(item || '').trim();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push(key);
-  }
-  return out;
-}
 
 function formatEntityLabel(e: Entity): string {
   const name = String(e.name || '').trim();
@@ -41,6 +21,21 @@ function formatRelLabel(r: Relationship, byId: Map<string, Entity>): string {
   const srcName = src ? src.name : r.source_id;
   const dstName = dst ? dst.name : r.target_id;
   return `${srcName} ─ ${r.relation_type} → ${dstName}`;
+}
+
+function formatRelProvenance(r: Relationship): string {
+  const props = (r.properties || {}) as Record<string, unknown>;
+  const chunk = String(props.chunk_id || '').trim();
+  const filePath = String(props.file_path || '').trim();
+  const runId = String(props.run_id || '').trim();
+  const model = String(props.model || '').trim();
+  const bits: string[] = [];
+  if (chunk) bits.push(`chunk:${chunk}`);
+  if (filePath) bits.push(`file:${filePath}`);
+  if (runId) bits.push(`run:${runId}`);
+  if (model) bits.push(`model:${model}`);
+  if (!bits.length) return 'No provenance';
+  return bits.join(' • ');
 }
 
 export function GraphSubtab() {
@@ -95,41 +90,13 @@ export function GraphSubtab() {
     return new Map<string, Entity>((entities || []).map((e) => [e.entity_id, e]));
   }, [entities]);
 
-  const availableEntityTypes = useMemo(() => {
-    const fromStats = rankKeysByBreakdownCount(stats?.entity_breakdown as Record<string, number> | undefined);
-    const fromEntities = (entities || [])
-      .map((e) => String(e.entity_type || '').trim())
-      .filter(Boolean);
-    return mergeUniqueTypes(fromStats, fromEntities, []);
-  }, [stats, entities]);
-
-  const availableRelationTypes = useMemo(() => {
-    const fromStats = rankKeysByBreakdownCount(stats?.relationship_breakdown as Record<string, number> | undefined);
-    const fromRelationships = (relationships || [])
-      .map((r) => String(r.relation_type || '').trim())
-      .filter(Boolean);
-    return mergeUniqueTypes(fromStats, fromRelationships, []);
-  }, [stats, relationships]);
-
-  const effectiveEntityTypes = useMemo(() => {
-    const allowed = new Set(availableEntityTypes);
-    const valid = visibleEntityTypes.filter((t) => allowed.has(t));
-    return valid.length ? valid : availableEntityTypes;
-  }, [availableEntityTypes, visibleEntityTypes]);
-
-  const effectiveRelationTypes = useMemo(() => {
-    const allowed = new Set(availableRelationTypes);
-    const valid = visibleRelationTypes.filter((t) => allowed.has(t));
-    return valid.length ? valid : availableRelationTypes;
-  }, [availableRelationTypes, visibleRelationTypes]);
-
   const filteredEntities = useMemo(() => {
-    return getEntitiesByType(effectiveEntityTypes);
-  }, [getEntitiesByType, effectiveEntityTypes]);
+    return getEntitiesByType(visibleEntityTypes);
+  }, [getEntitiesByType, visibleEntityTypes]);
 
   const filteredRelationships = useMemo(() => {
-    return getRelationshipsByType(effectiveRelationTypes);
-  }, [getRelationshipsByType, effectiveRelationTypes]);
+    return getRelationshipsByType(visibleRelationTypes);
+  }, [getRelationshipsByType, visibleRelationTypes]);
 
   const vizEntityIdSet = useMemo(() => {
     return new Set<string>(filteredEntities.map((e) => e.entity_id));
@@ -292,6 +259,14 @@ export function GraphSubtab() {
         return '#a78bfa';
       case 'concept':
         return '#94a3b8';
+      case 'person':
+        return '#f97316';
+      case 'org':
+        return '#0ea5e9';
+      case 'location':
+        return '#10b981';
+      case 'event':
+        return '#eab308';
       default:
         return '#9fb1c7';
     }
@@ -362,13 +337,32 @@ export function GraphSubtab() {
     [selectedEntity, accentColor, importantNodeIds, nodeColor]
   );
 
+  const entityTypes = useMemo(() => {
+    const types = new Set<string>();
+    Object.keys(stats?.entity_breakdown || {}).forEach((k) => {
+      if (k) types.add(String(k));
+    });
+    (entities || []).forEach((e) => {
+      const t = String(e.entity_type || '').trim();
+      if (t) types.add(t);
+    });
+    return Array.from(types).sort((a, b) => a.localeCompare(b));
+  }, [stats, entities]);
+
+  const relationTypes = useMemo(() => {
+    const types = new Set<string>();
+    Object.keys(stats?.relationship_breakdown || {}).forEach((k) => {
+      if (k) types.add(String(k));
+    });
+    (relationships || []).forEach((r) => {
+      const t = String(r.relation_type || '').trim();
+      if (t) types.add(t);
+    });
+    return Array.from(types).sort((a, b) => a.localeCompare(b));
+  }, [stats, relationships]);
+
   const handleSearch = async () => {
-    const matches = await searchEntities(entityQuery, 200);
-    if (!matches.length) {
-      await selectEntity(null);
-      return;
-    }
-    await selectEntity(matches[0]);
+    await searchEntities(entityQuery, 200);
   };
 
   const handleClear = async () => {
@@ -428,6 +422,8 @@ export function GraphSubtab() {
           </button>
         </div>
       </div>
+
+      <SyntheticCallout context="graph" />
 
       {error && (
         <div
@@ -691,18 +687,17 @@ export function GraphSubtab() {
               <div>
                 <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Entity types</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                  {availableEntityTypes.map((t) => {
-                    const checked = effectiveEntityTypes.includes(t);
+                  {entityTypes.map((t) => {
+                    const checked = visibleEntityTypes.includes(t);
                     return (
                       <label key={t} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--fg)' }}>
                         <input
                           type="checkbox"
                           checked={checked}
                           onChange={(e) => {
-                            const base = effectiveEntityTypes;
                             const next = e.target.checked
-                              ? Array.from(new Set([...base, t]))
-                              : base.filter((x) => x !== t);
+                              ? Array.from(new Set([...visibleEntityTypes, t]))
+                              : visibleEntityTypes.filter((x) => x !== t);
                             setVisibleEntityTypes(next);
                           }}
                         />
@@ -716,18 +711,17 @@ export function GraphSubtab() {
               <div>
                 <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Relationship types</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                  {availableRelationTypes.map((t) => {
-                    const checked = effectiveRelationTypes.includes(t);
+                  {relationTypes.map((t) => {
+                    const checked = visibleRelationTypes.includes(t);
                     return (
                       <label key={t} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--fg)' }}>
                         <input
                           type="checkbox"
                           checked={checked}
                           onChange={(e) => {
-                            const base = effectiveRelationTypes;
                             const next = e.target.checked
-                              ? Array.from(new Set([...base, t]))
-                              : base.filter((x) => x !== t);
+                              ? Array.from(new Set([...visibleRelationTypes, t]))
+                              : visibleRelationTypes.filter((x) => x !== t);
                             setVisibleRelationTypes(next);
                           }}
                         />
@@ -829,6 +823,9 @@ export function GraphSubtab() {
                       }}
                     >
                       <div style={{ fontFamily: 'var(--font-mono)' }}>{formatRelLabel(r, entityById)}</div>
+                      <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--fg-muted)' }}>
+                        {formatRelProvenance(r)}
+                      </div>
                     </div>
                   ))}
                   {!filteredRelationships.length && (
@@ -874,6 +871,19 @@ export function GraphSubtab() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <div style={{ fontSize: '11px', color: 'var(--fg-muted)' }}>
                   {filteredEntities.length} nodes • {vizRelationships.length} edges
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '11px', color: 'var(--fg-muted)' }}>
+                  {[
+                    ['person', '#f97316'],
+                    ['org', '#0ea5e9'],
+                    ['location', '#10b981'],
+                    ['event', '#eab308'],
+                  ].map(([label, color]) => (
+                    <span key={label as string} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                      <span style={{ width: '8px', height: '8px', borderRadius: '999px', background: color as string, display: 'inline-block' }} />
+                      {label as string}
+                    </span>
+                  ))}
                 </div>
                 <button
                   onClick={handleOpenFullscreen}
