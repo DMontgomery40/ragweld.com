@@ -4,13 +4,14 @@ import Nav from '../components/Nav.astro';
 import Hero from '../components/Hero.astro';
 import Offerings from '../components/Offerings.astro';
 import LandingScreenshots from '../components/LandingScreenshots.astro';
+import CapabilityPanels from '../components/CapabilityPanels.astro';
 import CTA from '../components/CTA.astro';
 import Footer from '../components/Footer.astro';
 ---
 
 <BaseLayout
   title="ragweld — Open-source MLOps Engineering Platform"
-  description="ragweld is an open-source MLOps Engineering Platform for RAG: vector+sparse+graph retrieval, synthetic data lab, dual training studios (reranker + agent LLM), run diffs across hundreds of parameters, tracing + Grafana observability, and production routing controls."
+  description="ragweld is an open-source MLOps Engineering Platform for retrieval and agent systems: API-first orchestration, synthetic data lab, dual training studios, eval drilldowns, tracing, observability, and MCP integration."
   canonical="https://ragweld.com/"
   ogImage="/og-image.png"
 >
@@ -19,7 +20,7 @@ import Footer from '../components/Footer.astro';
       "@context": "https://schema.org",
       "@type": "SoftwareApplication",
       "name": "ragweld",
-      "description": "Open-source MLOps Engineering Platform for retrieval systems with vector+sparse+graph search, synthetic data generation, dual training studios (reranker + agent LLM), tracing, and embedded Grafana observability.",
+      "description": "Open-source MLOps Engineering Platform with API-first retrieval orchestration, synthetic data generation, training studios, eval drilldowns, tracing, and MCP integration.",
       "url": "https://ragweld.com",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Linux, macOS, Windows (Docker)",
@@ -43,150 +44,43 @@ import Footer from '../components/Footer.astro';
     <Hero />
     <section id="what" class="bg-[#09090b] pb-16">
       <div class="mx-auto max-w-7xl px-4">
-        <div class="mx-auto max-w-3xl text-center">
-          <h2 class="text-3xl font-bold text-white">What ragweld actually is</h2>
+        <div class="mx-auto max-w-4xl text-center">
+          <h2 class="text-3xl font-bold text-white">What ragweld is now</h2>
           <p class="mt-3 text-gray-400">
-            A full-blown MLOps Engineering Platform for retrieval systems. You get generation + retrieval + training + eval + tracing + operations in one surface.
+            A full MLOps engineering platform for retrieval + agent systems. The product center is API-first orchestration
+            for indexing, retrieval, evals, training, tracing, and routing.
           </p>
           <p class="mt-3 text-gray-500">
-            It’s built for senior engineers who need to answer: what changed, why quality moved, and whether to promote or roll back.
+            MCP support is first-class, but it sits on top of the API contract rather than replacing it. The panels below
+            map core workflows to their matching docs destinations.
           </p>
-          <div class="mt-6 flex justify-center">
+          <div class="mt-6 flex flex-wrap items-center justify-center gap-3">
+            <a
+              href="https://dmontgomery40.github.io/ragweld/latest/api/"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex items-center gap-2 rounded-lg border border-[#334155] bg-[#111827] px-5 py-2.5 text-sm font-semibold text-[#cbd5e1] hover:border-[#64748b] hover:text-white transition-colors"
+            >
+              API docs first →
+            </a>
+            <a
+              href="https://dmontgomery40.github.io/ragweld/latest/integrations/mcp/"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex items-center gap-2 rounded-lg border border-[#27272a] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#18181b] transition-colors"
+            >
+              MCP integration docs →
+            </a>
             <a
               href="/glossary"
               class="inline-flex items-center gap-2 rounded-lg border border-[#27272a] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#18181b] transition-colors"
             >
-              Browse the parameter glossary →
+              Parameter glossary →
             </a>
           </div>
         </div>
 
-        <div class="mt-10 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-
-          <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-[#64748b]">Retrieval</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Three retrieval legs, independently tunable</h3>
-            <p class="mt-2 text-sm text-gray-400">
-              Vector, sparse (BM25), and graph — each with its own weights, top-k, similarity thresholds, and fusion
-              parameters. Inspect which leg surfaced each result. Not a black box with one slider.
-            </p>
-          </div>
-
-          <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-[#64748b]">Configuration</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Big surface area, hard guardrails for indexing</h3>
-            <p class="mt-2 text-sm text-gray-400">
-              Embedding mismatch detection, index contract locking, guided reindex actions, and force-reindex controls keep teams from silently corrupting retrieval.
-              You can still tune chunking, tokenization, graph behavior, and fusion deeply, but the platform blocks the common foot-guns.
-            </p>
-          </div>
-
-          <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-[#94a3b8]">Synthetic Data Lab</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Recipe-driven data generation with quality gates</h3>
-            <p class="mt-2 text-sm text-gray-400">
-              Generate eval datasets, semantic cards, keywords, triplets, autotune patches, and full-stack outputs from one lab.
-              Run with Synthetic Data Kit or ragweld’s internal flow, then enforce LLM-as-a-judge quality gates that hard-block bad artifact publishing.
-            </p>
-          </div>
-
-          <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-[#94a3b8]">Eval drilldown</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Diff the "why" across the full system</h3>
-            <p class="mt-2 text-sm text-gray-400">
-              Per-query, per-source drilldown. Diff two runs down to embeddings, tokenization, chunking strategy,
-              reranker config, and routing settings. Pair that with traces and dashboards so regression triage is operational, not speculative.
-            </p>
-          </div>
-
-          <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-gray-300">Training Studios</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Two trainable systems, first-class in product</h3>
-            <p class="mt-2 text-sm text-gray-400">
-              Learning Reranker trains Qwen3-based LoRA adapters on your feedback data.
-              Learning Agent Studio trains the in-product LLM agent with the same operational loop:
-              live gradient descent visualization, checkpoints, compare, promote, and rollback.
-            </p>
-            <p class="mt-3 text-sm text-gray-500">
-              <a href="/blog/posts/learning-reranker-qwen3-mlx/" class="text-[#94a3b8] hover:underline">
-                Read the reranking paradigm shift →
-              </a>
-            </p>
-          </div>
-
-          <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-[#94a3b8]">Tracing + Observability</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Native local traces, LangSmith-compatible mode, embedded dashboards</h3>
-            <p class="mt-2 text-sm text-gray-400">
-              Use local tracing out of the box, switch tracing mode for external backends, and keep Grafana embedded in split-view.
-              Dashboard JSONs can be dropped into infra paths and surfaced quickly without rebuilding the app.
-            </p>
-          </div>
-
-          <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-[#64748b]">Alerting</div>
-            <h3 class="mt-2 text-lg font-bold text-white">MRR drops at 2am? Someone gets woken up.</h3>
-            <p class="mt-2 text-sm text-gray-400">
-              Slack and Discord webhook alerts on any metric, any threshold. Canary score, MRR, precision, latency
-              p99 — your rules. If Asia is waking up and hitting your RAG endpoint and quality drops, your on-call
-              in the US knows about it before users start complaining. This is production ops plumbing, not a dashboard.
-            </p>
-          </div>
-
-          <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-gray-300">Routing + Catalog</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Provider routing with daily-refresh catalogs and custom models</h3>
-            <p class="mt-2 text-sm text-gray-400">
-              Route across local, cloud, and OpenRouter providers from one control plane.
-              Model catalog data refreshes daily, and teams can upsert custom local or cloud models immediately for routing and cost workflows.
-            </p>
-          </div>
-
-          <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-gray-300">Semantic Cache + Recall</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Cost control and memory gating in the chat path</h3>
-            <p class="mt-2 text-sm text-gray-400">
-              Semantic cache policy is built in for retrieval and answer paths, and Recall supports smart gating with intensity controls.
-              Teams can choose whether conversation history is indexed, when it is queried, and how it blends with corpus retrieval.
-            </p>
-            <p class="mt-3 text-sm text-gray-500">
-              <a href="/blog/posts/when-to-query-chat-memory-vs-your-corpus/" class="text-[#94a3b8] hover:underline">
-                Read the routing policy →
-              </a>
-            </p>
-          </div>
-
-          <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-[#64748b]">Glossary</div>
-            <h3 class="mt-2 text-lg font-bold text-white">396 parameters, documented with arxiv links</h3>
-            <p class="mt-2 text-sm text-gray-400">
-              Every knob has an in-app tooltip explanation. The technical ones link directly to arxiv papers and
-              GitHub repos. The full glossary is also a standalone
-              <a href="/glossary" class="text-[#94a3b8] hover:underline">searchable reference</a> — because
-              "what does RRF_K_DIV do" shouldn't require reading source code.
-            </p>
-          </div>
-
-          <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-[#64748b]">Onboarding</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Fast start for teams, full control for specialists</h3>
-            <p class="mt-2 text-sm text-gray-400">
-              The <a href="/demo/start" class="text-[#94a3b8] hover:underline">Get Started wizard</a>: pick a folder
-              or GitHub repo, index it, ask golden questions, tune with sliders, save. You go from first run to a governed pipeline quickly,
-              then progressively open the full platform surface as needed.
-            </p>
-          </div>
-
-          <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-[#94a3b8]">MCP</div>
-            <h3 class="mt-2 text-lg font-bold text-white">MCP server built in. Table stakes.</h3>
-            <p class="mt-2 text-sm text-gray-400">
-              Use ragweld tools from any MCP client — IDEs, agents, automation pipelines, other apps.
-              HTTP and stdio transports. No separate integration work per surface.
-            </p>
-          </div>
-
-        </div>
+        <CapabilityPanels />
       </div>
     </section>
 

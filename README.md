@@ -2,7 +2,7 @@
 
 > See inside your RAG pipeline. Then fix it.
 
-This repo powers the public ragweld site and live hosted demo. It is the product-facing surface for the open-source ragweld **MLOps Engineering Platform**: tri-brid retrieval (vector + sparse + graph), synthetic data generation, dual training studios, evaluation/drilldowns, observability, routing, and ops tooling.
+This repo powers the public ragweld site and live hosted demo. It is the product-facing surface for the open-source ragweld MLOps Engineering Platform: API-first retrieval orchestration, tri-brid search, synthetic data + eval workflows, dual training studios, and observability tooling.
 
 ## Live Surfaces
 
@@ -15,18 +15,56 @@ This repo powers the public ragweld site and live hosted demo. It is the product
 
 ## What ragweld is (from the website)
 
-- MLOps Engineering Platform for retrieval + agent systems.
+- API-first MLOps engineering platform for retrieval + agent systems.
+- MCP support is built in, but API is the primary production contract.
 - Three retrieval legs, independently tunable: vector + sparse (BM25) + graph.
-- Synthetic Data Lab for eval datasets, semantic cards, triplets, keywords, and autotune outputs.
-- Dual training studios: trainable reranker + trainable in-product agent LLM.
+- Synthetic Data Lab and eval workflows for regression-resistant iteration.
+- Dual training studios (reranker + agent adapters) with promotion controls.
 - Benchmark + eval workflow: run, compare, drill down, and ship changes based on evidence.
 - Learning reranker: Qwen3-style yes/no logits scoring plus LoRA training from feedback.
 - Embedded observability: tracing + Grafana split-view inside the workbench.
-- Semantic cache + recall gating controls in the chat path.
-- Model/provider routing with daily-refresh catalog and custom model registration.
 - Alerting hooks: threshold-based webhook alerts for quality and latency regressions.
 - MCP-native: use ragweld capabilities from IDEs, agents, and automation clients.
 - Parameter glossary: searchable reference for the full config surface.
+- Docs-autopilot keeps GitHub Pages docs aligned from code diffs: [workflow docs](https://dmontgomery40.github.io/ragweld/latest/dev/docs-autopilot/).
+
+## Current Screenshot Set
+
+### 1) API routing control plane (API first, MCP override second)
+
+![API routing panel](public/screenshots/routing-api-mcp.png)
+
+- Docs: [API](https://dmontgomery40.github.io/ragweld/latest/api/) · [MCP integration](https://dmontgomery40.github.io/ragweld/latest/integrations/mcp/)
+
+### 2) Indexing guardrails and mismatch detection
+
+![Indexing guardrails](public/screenshots/indexing-guardrails.png)
+
+- Docs: [Indexing manual](https://dmontgomery40.github.io/ragweld/latest/manual/indexing/) · [Indexing config](https://dmontgomery40.github.io/ragweld/latest/reference/config/indexing/)
+
+### 3) Learning Agent Studio (train + inspect + promote)
+
+![Learning Agent Studio](public/screenshots/learning-agent-studio.png)
+
+- Docs: [Training config](https://dmontgomery40.github.io/ragweld/latest/reference/config/training/) · [Reranker workflow](https://dmontgomery40.github.io/ragweld/latest/howto/reranker/)
+
+### 4) Live gradient-descent visualizer for training runs
+
+![Learning visualizer](public/screenshots/learning-agent-visualizer.png)
+
+- Docs: [Training config](https://dmontgomery40.github.io/ragweld/latest/reference/config/training/) · [Reranker workflow](https://dmontgomery40.github.io/ragweld/latest/howto/reranker/)
+
+### 5) Graph explorer for entity/relationship retrieval
+
+![Graph explorer](public/screenshots/graph-explorer.png)
+
+- Docs: [Retrieval overview](https://dmontgomery40.github.io/ragweld/latest/retrieval/overview/) · [Graph search config](https://dmontgomery40.github.io/ragweld/latest/reference/config/graph_search/)
+
+### 6) Recall gating and memory controls
+
+![Recall gating](public/screenshots/recall-gating.png)
+
+- Docs: [Chat config](https://dmontgomery40.github.io/ragweld/latest/reference/config/chat/) · [Semantic cache config](https://dmontgomery40.github.io/ragweld/latest/reference/config/semantic_cache/)
 
 ## Quickstart
 
@@ -78,26 +116,17 @@ High-level flow:
 3. GUI calls same-origin `/api/*` endpoints.
 4. Netlify Function routes and serves backend responses (Neon-backed via Netlify DB).
 
-## Demo Sync + Parity
+## Sync + Deploy (concise)
 
 ```bash
-# Sync demo UI from sibling ragweld repo (source wins)
+# Sync demo UI from sibling ragweld repo
 npm run sync:demo
 
-# Strict parity check (fails on non-allowlisted drift)
-npm run check:demo-parity
-
-# Build demo + site
+# Build and validate distributable output
 npm run build
 ```
 
-Parity policy:
-
-- Source of truth for vendored UI is `../ragweld/web`.
-- Hosted-specific UI changes must be implemented in `demo-overrides/`, not by direct edits under `vendor/demo/`.
-- Non-allowlisted drift in `vendor/demo/` should be reconciled with `npm run sync:demo`.
-
-Netlify build config uses:
+Netlify build config in this repo uses:
 
 - Build command: `npm run build && node scripts/validate-demo.cjs`
 - Publish directory: `dist`

@@ -1,0 +1,147 @@
+---
+const docsBase = 'https://dmontgomery40.github.io/ragweld/latest';
+
+const panels = [
+  {
+    eyebrow: 'API-first core',
+    badge: 'API > MCP',
+    title: 'Use the HTTP API as the contract. MCP rides on top of it.',
+    description:
+      'ragweld is API-first in production: routing, retrieval, evals, and observability all anchor to /api. MCP is built in for agent tooling, but the API surface is the primary integration layer.',
+    src: '/screenshots/routing-api-mcp.png',
+    alt: 'RAG retrieval generation panel showing HTTP and MCP model routing overrides.',
+    href: `${docsBase}/api/`,
+    hrefLabel: 'API docs',
+    secondaryHref: `${docsBase}/integrations/mcp/`,
+    secondaryLabel: 'MCP integration',
+    sizeClass: 'lg:col-span-2',
+  },
+  {
+    eyebrow: 'Indexing guardrails',
+    title: 'Deep tuning surface, but guarded against easy failures',
+    description:
+      'Embedding mismatch detection, index contract locking, and guided reindex actions keep high-option indexing from drifting silently in production.',
+    src: '/screenshots/indexing-guardrails.png',
+    alt: 'Indexing screen with embedding mismatch warnings, index contract lock notices, and model assignment controls.',
+    href: `${docsBase}/manual/indexing/`,
+    hrefLabel: 'Indexing manual',
+    secondaryHref: `${docsBase}/reference/config/indexing/`,
+    secondaryLabel: 'Indexing config reference',
+    sizeClass: '',
+  },
+  {
+    eyebrow: 'Training studios',
+    title: 'Train reranker and agent adapters in-product',
+    description:
+      'Dual training studios support live telemetry, promotion gates, rollback paths, and run inspection so quality moves are operational, not guesswork.',
+    src: '/screenshots/learning-agent-studio.png',
+    alt: 'Learning Agent Studio with neural visualizer and training controls in split layout.',
+    href: `${docsBase}/howto/reranker/`,
+    hrefLabel: 'Training workflow',
+    secondaryHref: `${docsBase}/reference/config/training/`,
+    secondaryLabel: 'Training config',
+    sizeClass: 'lg:col-span-2',
+  },
+  {
+    eyebrow: 'Live gradient descent',
+    title: 'Watch training dynamics while runs are still active',
+    description:
+      'Neural visualizer panels show loss movement and stability in real time, so you can decide when to checkpoint, promote, or rollback without waiting for post-hoc reports.',
+    src: '/screenshots/learning-agent-visualizer.png',
+    alt: 'Learning visualizer panel showing live gradient descent telemetry and inspector controls.',
+    href: `${docsBase}/reference/config/training/`,
+    hrefLabel: 'Visualizer and training settings',
+    secondaryHref: `${docsBase}/howto/reranker/`,
+    secondaryLabel: 'Reranker training guide',
+    sizeClass: '',
+  },
+  {
+    eyebrow: 'Graph + retrieval',
+    title: 'Inspect entities, relationships, and retrieval context directly',
+    description:
+      'Graph explorer and retrieval controls are in the same workbench, so structural signals are measurable, debuggable, and part of normal iteration.',
+    src: '/screenshots/graph-explorer.png',
+    alt: 'Graph explorer with entity table and interactive relationship visualization.',
+    href: `${docsBase}/retrieval/overview/`,
+    hrefLabel: 'Retrieval overview',
+    secondaryHref: `${docsBase}/reference/config/graph_search/`,
+    secondaryLabel: 'Graph search config',
+    sizeClass: '',
+  },
+  {
+    eyebrow: 'Recall + semantic cache',
+    title: 'Control memory retrieval, not just chat history storage',
+    description:
+      'Smart gating and intensity controls decide when conversational memory is injected, while semantic cache controls token spend in repeated query patterns.',
+    src: '/screenshots/recall-gating.png',
+    alt: 'Chat recall settings with retrieval gate toggles, intensity controls, and recency weighting.',
+    href: `${docsBase}/reference/config/chat/`,
+    hrefLabel: 'Chat settings reference',
+    secondaryHref: `${docsBase}/reference/config/semantic_cache/`,
+    secondaryLabel: 'Semantic cache config',
+    sizeClass: '',
+  },
+  {
+    eyebrow: 'Docs Autopilot',
+    title: 'Docs are generated and published from code changes',
+    description:
+      'MkDocs + mike publishing is wired to docs-autopilot. Update source-of-truth models and prompts; generated docs catch up automatically on push.',
+    src: '/screenshots/indexing-settings-with-grafana-on-side.png',
+    alt: 'Indexing controls shown alongside embedded Grafana for operational documentation context.',
+    href: `${docsBase}/dev/docs-autopilot/`,
+    hrefLabel: 'Docs-autopilot workflow',
+    secondaryHref: `${docsBase}/configuration/`,
+    secondaryLabel: 'Configuration docs',
+    sizeClass: '',
+  },
+];
+---
+
+<section id="capabilities" class="mt-12">
+  <div class="grid gap-6 lg:grid-cols-3">
+    {
+      panels.map((panel) => (
+        <article class={`group overflow-hidden rounded-2xl border border-[#27272a] bg-[#0f0f12] ${panel.sizeClass}`}>
+          <a href={panel.href} target="_blank" rel="noopener noreferrer" class="block">
+            <div class="relative h-52 overflow-hidden border-b border-[#27272a] md:h-60">
+              <img
+                src={panel.src}
+                alt={panel.alt}
+                loading="lazy"
+                decoding="async"
+                class="h-full w-full object-cover object-left-top transition duration-500 group-hover:scale-[1.02]"
+              />
+              <div class="absolute inset-0 bg-gradient-to-t from-[#0f0f12] via-transparent to-transparent"></div>
+              <div class="absolute left-4 top-4 inline-flex items-center gap-2 rounded-full border border-[#374151] bg-[#09090bcc] px-3 py-1 text-xs font-semibold text-[#cbd5e1]">
+                {panel.eyebrow}
+                {panel.badge ? <span class="text-[#fbbf24]">• {panel.badge}</span> : null}
+              </div>
+            </div>
+          </a>
+          <div class="space-y-3 p-6">
+            <h3 class="text-xl font-bold leading-tight text-white">{panel.title}</h3>
+            <p class="text-sm leading-relaxed text-gray-400">{panel.description}</p>
+            <div class="flex flex-wrap gap-2 pt-1">
+              <a
+                href={panel.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center rounded-md border border-[#334155] bg-[#111827] px-3 py-1.5 text-xs font-semibold text-[#cbd5e1] hover:border-[#64748b] hover:text-white transition-colors"
+              >
+                {panel.hrefLabel}
+              </a>
+              <a
+                href={panel.secondaryHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center rounded-md border border-[#27272a] px-3 py-1.5 text-xs font-semibold text-gray-400 hover:text-gray-200 hover:border-[#3f3f46] transition-colors"
+              >
+                {panel.secondaryLabel}
+              </a>
+            </div>
+          </div>
+        </article>
+      ))
+    }
+  </div>
+</section>
