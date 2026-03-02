@@ -2,7 +2,7 @@
 
 > See inside your RAG pipeline. Then fix it.
 
-This repo powers the public ragweld site and live hosted demo. It is the product-facing surface for the open-source ragweld workbench: tri-brid retrieval (vector + sparse + graph), evaluation and run diffs, learning reranker training, observability, and operations tooling.
+This repo powers the public ragweld site and live hosted demo. It is the product-facing surface for the open-source ragweld **MLOps Engineering Platform**: tri-brid retrieval (vector + sparse + graph), synthetic data generation, dual training studios, evaluation/drilldowns, observability, routing, and ops tooling.
 
 ## Live Surfaces
 
@@ -15,10 +15,15 @@ This repo powers the public ragweld site and live hosted demo. It is the product
 
 ## What ragweld is (from the website)
 
+- MLOps Engineering Platform for retrieval + agent systems.
 - Three retrieval legs, independently tunable: vector + sparse (BM25) + graph.
+- Synthetic Data Lab for eval datasets, semantic cards, triplets, keywords, and autotune outputs.
+- Dual training studios: trainable reranker + trainable in-product agent LLM.
 - Benchmark + eval workflow: run, compare, drill down, and ship changes based on evidence.
 - Learning reranker: Qwen3-style yes/no logits scoring plus LoRA training from feedback.
-- Embedded observability: Grafana split-view inside the workbench.
+- Embedded observability: tracing + Grafana split-view inside the workbench.
+- Semantic cache + recall gating controls in the chat path.
+- Model/provider routing with daily-refresh catalog and custom model registration.
 - Alerting hooks: threshold-based webhook alerts for quality and latency regressions.
 - MCP-native: use ragweld capabilities from IDEs, agents, and automation clients.
 - Parameter glossary: searchable reference for the full config surface.
@@ -73,17 +78,26 @@ High-level flow:
 3. GUI calls same-origin `/api/*` endpoints.
 4. Netlify Function routes and serves backend responses (Neon-backed via Netlify DB).
 
-## Sync + Deploy (concise)
+## Demo Sync + Parity
 
 ```bash
-# Sync demo UI from sibling ragweld repo
+# Sync demo UI from sibling ragweld repo (source wins)
 npm run sync:demo
 
-# Build and validate distributable output
+# Strict parity check (fails on non-allowlisted drift)
+npm run check:demo-parity
+
+# Build demo + site
 npm run build
 ```
 
-Netlify build config in this repo uses:
+Parity policy:
+
+- Source of truth for vendored UI is `../ragweld/web`.
+- Hosted-specific UI changes must be implemented in `demo-overrides/`, not by direct edits under `vendor/demo/`.
+- Non-allowlisted drift in `vendor/demo/` should be reconciled with `npm run sync:demo`.
+
+Netlify build config uses:
 
 - Build command: `npm run build && node scripts/validate-demo.cjs`
 - Publish directory: `dist`
