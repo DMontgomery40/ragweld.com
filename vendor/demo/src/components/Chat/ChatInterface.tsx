@@ -4,7 +4,7 @@
 
 import type React from 'react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { useAPI, useConfig, useConfigField } from '@/hooks';
+import { useAPI, useConfig, useConfigField, useEmbeddingStatus } from '@/hooks';
 import { useUIHelpers } from '@/hooks/useUIHelpers';
 import { withCorpusScope } from '@/api/client';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
@@ -146,6 +146,30 @@ const CATEGORY_ICONS: Record<string, string> = {
   advanced: '🚀',
 };
 
+const CHAT_REQUEST_ABORT_TIMEOUT = 'timeout';
+const DEFAULT_CHAT_REQUEST_TIMEOUT_MS = 120_000;
+
+class ChatRequestAbortedError extends Error {
+  reason: string;
+
+  constructor(reason: string) {
+    super('Chat request aborted');
+    this.name = 'ChatRequestAbortedError';
+    this.reason = String(reason || 'aborted');
+  }
+}
+
+function toAbortReason(error: unknown, signal?: AbortSignal): string | null {
+  if (error instanceof ChatRequestAbortedError) {
+    return String(error.reason || 'aborted');
+  }
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    const reason = signal?.reason;
+    return typeof reason === 'string' && reason.trim() ? reason.trim() : 'aborted';
+  }
+  return null;
+}
+
 interface Message {
   id: string;
   role: 'user' | 'assistant';
@@ -222,17 +246,18 @@ interface ChatInterfaceProps {
 type ChatComposerProps = {
   sending: boolean;
   multimodal: ChatMultimodalConfig | null;
+  blockedReason?: string | null;
   onSend: (text: string, images: ImageAttachment[]) => void;
 };
 
-const ChatComposer = memo(function ChatComposer({ sending, multimodal, onSend }: ChatComposerProps) {
+const ChatComposer = memo(function ChatComposer({ sending, multimodal, blockedReason, onSend }: ChatComposerProps) {
   const { showToast } = useUIHelpers();
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const canSend = draft.trim().length > 0 && !sending;
+  const canSend = draft.trim().length > 0 && !sending && !blockedReason;
 
   const visionEnabled = Boolean(multimodal?.vision_enabled ?? true);
   const maxImages = Math.max(1, Math.min(10, Number(multimodal?.max_images_per_message ?? 5)));
@@ -309,12 +334,12 @@ const ChatComposer = memo(function ChatComposer({ sending, multimodal, onSend }:
 
   const handleSend = useCallback(() => {
     const trimmed = draft.trim();
-    if (!trimmed || sending) return;
+    if (!trimmed || sending || blockedReason) return;
     onSend(trimmed, attachments);
     setDraft('');
     setAttachments([]);
     requestAnimationFrame(() => textareaRef.current?.focus());
-  }, [attachments, draft, onSend, sending]);
+  }, [attachments, blockedReason, draft, onSend, sending]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -427,7 +452,7 @@ const ChatComposer = memo(function ChatComposer({ sending, multimodal, onSend }:
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
           placeholder="Ask a question about your codebase... (paste screenshot to attach)"
-          disabled={sending}
+          disabled={sending || Boolean(blockedReason)}
           style={{
             flex: 1,
             background: 'var(--input-bg)',
@@ -460,17 +485,26 @@ const ChatComposer = memo(function ChatComposer({ sending, multimodal, onSend }:
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          disabled={sending || !visionEnabled || attachments.length >= maxImages}
+          disabled={sending || Boolean(blockedReason) || !visionEnabled || attachments.length >= maxImages}
           data-testid="chat-attach-button"
           style={{
-            background: sending || !visionEnabled || attachments.length >= maxImages ? 'var(--bg-elev2)' : 'var(--bg-elev1)',
-            color: sending || !visionEnabled || attachments.length >= maxImages ? 'var(--fg-muted)' : 'var(--fg)',
+            background:
+              sending || Boolean(blockedReason) || !visionEnabled || attachments.length >= maxImages
+                ? 'var(--bg-elev2)'
+                : 'var(--bg-elev1)',
+            color:
+              sending || Boolean(blockedReason) || !visionEnabled || attachments.length >= maxImages
+                ? 'var(--fg-muted)'
+                : 'var(--fg)',
             border: '1px solid var(--line)',
             padding: '10px 12px',
             borderRadius: '6px',
             fontSize: '14px',
             fontWeight: 700,
-            cursor: sending || !visionEnabled || attachments.length >= maxImages ? 'not-allowed' : 'pointer',
+            cursor:
+              sending || Boolean(blockedReason) || !visionEnabled || attachments.length >= maxImages
+                ? 'not-allowed'
+                : 'pointer',
           }}
           aria-label="Attach image"
           title={!visionEnabled ? 'Vision disabled' : attachments.length >= maxImages ? `Max ${maxImages} images` : 'Attach an image'}
@@ -497,6 +531,11 @@ const ChatComposer = memo(function ChatComposer({ sending, multimodal, onSend }:
           {sending ? 'Sending...' : 'Send'}
         </button>
       </div>
+      {blockedReason && (
+        <div style={{ fontSize: '11px', color: 'var(--warn)' }}>
+          {blockedReason}
+        </div>
+      )}
     </div>
   );
 });
@@ -673,6 +712,7 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content }: Assistant
 export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) {
   const { api } = useAPI();
   const { showToast } = useUIHelpers();
+  const { status: embeddingStatus, loading: embeddingStatusLoading, error: embeddingStatusError } = useEmbeddingStatus();
   const [messages, setMessages] = useState<Message[]>([]);
   const [sending, setSending] = useState(false);
   const [streaming, setStreaming] = useState(false);
@@ -695,6 +735,10 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
   const recallGateShowSignals = Boolean(config?.chat?.recall_gate?.show_signals ?? false);
   const chatHistoryMax = Math.max(10, Math.min(500, Number(config?.ui?.chat_history_max ?? 50)));
   const multimodalCfg = (config?.chat?.multimodal ?? null) as ChatMultimodalConfig | null;
+  const configuredChatTimeoutSeconds = Number(config?.ui?.chat_stream_timeout ?? 120);
+  const chatRequestTimeoutMs = Number.isFinite(configuredChatTimeoutSeconds)
+    ? Math.max(5, Math.min(600, configuredChatTimeoutSeconds)) * 1000
+    : DEFAULT_CHAT_REQUEST_TIMEOUT_MS;
 
   // Per-message retrieval leg toggles (do NOT persist; user requested per-message control)
   const [includeVector, setIncludeVector] = useState(true);
@@ -733,9 +777,11 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
 
   // Chat 2.0: composable sources + model picker
   const sourcesInitRef = useRef(false);
+  const activeSourcesRef = useRef<ActiveSources>({ corpus_ids: ['recall_default'] });
   const [activeSources, setActiveSources] = useState<ActiveSources>({ corpus_ids: ['recall_default'] });
   const handleSourcesChange = useCallback(
     (next: ActiveSources) => {
+      activeSourcesRef.current = next;
       setActiveSources(next);
       const ids = next.corpus_ids ?? [];
       if (!ids.includes('recall_default')) {
@@ -754,6 +800,17 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
       console.error('[ChatInterface] Failed to delete unindexed corpora:', e);
     }
   }, [activeSources, deleteUnindexedCorpora, handleSourcesChange]);
+  const retrievalSelected = (activeSources?.corpus_ids ?? []).length > 0;
+  const chatBlockedReason =
+    embeddingStatusError
+      ? `Retrieval compatibility check failed: ${embeddingStatusError}`
+      : !embeddingStatusLoading
+        && retrievalSelected
+        && Boolean(embeddingStatus?.hasIndex)
+        && Boolean(embeddingStatus?.isMismatched)
+        && (includeVector || includeSparse)
+        ? 'Retrieval/index contract mismatch detected. Re-index or restore indexing config before sending.'
+        : null;
 
   // Prune selected sources when corpora are deleted/changed.
   useEffect(() => {
@@ -769,14 +826,17 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
     if (!config) return;
     sourcesInitRef.current = true;
     const defaults = config.chat?.default_corpus_ids ?? ['recall_default'];
-    setActiveSources({ corpus_ids: defaults });
-  }, [config]);
+    handleSourcesChange({ corpus_ids: defaults });
+  }, [config, handleSourcesChange]);
 
   const [chatModels, setChatModels] = useState<ChatModelInfo[]>([]);
   const [modelOverride, setModelOverride] = useState<string>('');
   useEffect(() => {
     if (!config) return;
-    if (!chatModels.length) return;
+    if (!chatModels.length) {
+      if (modelOverride) setModelOverride('');
+      return;
+    }
     // Pick a sensible default model_override based on what's actually available.
     //
     // Important: This should prefer OpenRouter only when it's enabled, and prefer local only
@@ -868,7 +928,10 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingStartedAtRef = useRef<number | null>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamingSupportedRef = useRef<boolean | null>(null);
+  const requestAbortControllerRef = useRef<AbortController | null>(null);
+  const activeRequestTokenRef = useRef(0);
   
   // Tip rotation state for streaming indicator
   const [currentTip, setCurrentTip] = useState<typeof TRIBRID_TIPS[0] | null>(null);
@@ -987,29 +1050,19 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
   // Load chat model options (Chat 2.0)
   useEffect(() => {
     (async () => {
-      const fallbackModels: ChatModelInfo[] = [
-        {
-          id: 'gpt-4o-mini',
-          override: 'openai/gpt-4o-mini',
-          provider: 'OpenAI',
-          provider_key: 'openai',
-          catalog_model: 'gpt-4o-mini',
-          source: 'cloud_direct',
-        },
-      ];
       try {
         const qs = activeRepo ? `?corpus_id=${encodeURIComponent(activeRepo)}` : '';
         const r = await fetch(api(`chat/models${qs}`));
         if (!r.ok) {
-          setChatModels(fallbackModels);
+          setChatModels([]);
           return;
         }
         const d = (await r.json()) as ChatModelsResponse;
         const models = Array.isArray(d?.models) ? (d.models as ChatModelInfo[]) : [];
-        setChatModels(models.length > 0 ? models : fallbackModels);
+        setChatModels(models);
       } catch {
-        // Best-effort; provide a sensible default so the UI can still run offline.
-        setChatModels(fallbackModels);
+        // Best-effort; show explicit degraded state instead of masking provider readiness.
+        setChatModels([]);
       }
     })();
   }, [
@@ -1062,6 +1115,31 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
     onTraceUpdate?.(steps, effectiveOpen, source);
   }, [onTraceUpdate, tracePreference]);
 
+  const isRequestTokenActive = useCallback((token: number) => {
+    return activeRequestTokenRef.current === token;
+  }, []);
+
+  const resetTransientChatState = useCallback((reason: string = 'aborted') => {
+    const controller = requestAbortControllerRef.current;
+    if (controller) {
+      try {
+        controller.abort(reason);
+      } catch {
+        // Ignore abort races.
+      }
+    }
+    requestAbortControllerRef.current = null;
+    activeRequestTokenRef.current += 1;
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+    typingStartedAtRef.current = null;
+    setSending(false);
+    setStreaming(false);
+    setTyping(false);
+  }, []);
+
   const persistSessions = useCallback((sessions: ChatSession[], activeId: string) => {
     try {
       // LocalStorage can be tight (~5MB). Image attachments are large, so strip them for persistence.
@@ -1084,11 +1162,14 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
 
   const activateSession = useCallback(
     (session: ChatSession) => {
+      resetTransientChatState('session_change');
       const id = String(session?.conversation_id || '').trim() || createConversationId();
       setConversationId(id);
       setMessages(clampChatHistory(Array.isArray(session?.messages) ? session.messages : []));
       setModelOverride(String(session?.model_override || '').trim());
-      setActiveSources((session?.sources || { corpus_ids: ['recall_default'] }) as ActiveSources);
+      const sessionSources = (session?.sources || { corpus_ids: ['recall_default'] }) as ActiveSources;
+      activeSourcesRef.current = sessionSources;
+      setActiveSources(sessionSources);
       setLastMatches([]);
       setLastLatencyMs(null);
       setLastRecallPlan(null);
@@ -1096,7 +1177,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
       // Prevent config defaults from clobbering per-session selection.
       sourcesInitRef.current = true;
     },
-    [notifyTrace]
+    [notifyTrace, resetTransientChatState]
   );
 
   const chatHistoryInitRef = useRef(false);
@@ -1113,6 +1194,24 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
     if (chatHistoryInitRef.current) return;
     chatHistoryInitRef.current = true;
     loadChatHistory();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      const controller = requestAbortControllerRef.current;
+      if (controller) {
+        try {
+          controller.abort('unmount');
+        } catch {
+          // ignore
+        }
+      }
+      requestAbortControllerRef.current = null;
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = null;
+      }
+    };
   }, []);
 
   // Auto-scroll to bottom when new messages arrive
@@ -1248,15 +1347,48 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
     });
   }, [conversationId, modelOverride, persistSessions]);
 
+  // Persist source/recall selection immediately (prevents drift on tab/session churn).
+  useEffect(() => {
+    if (!sessionsLoadedRef.current) return;
+    const activeId = String(conversationId || '').trim();
+    if (!activeId) return;
+
+    setChatSessions((prev) => {
+      const next = Array.isArray(prev) ? prev.slice() : [];
+      const idx = next.findIndex((s) => String(s.conversation_id || '').trim() === activeId);
+      if (idx === -1) return prev;
+      const cur = next[idx];
+      const curSig = JSON.stringify(cur.sources || { corpus_ids: ['recall_default'] });
+      const nextSig = JSON.stringify(activeSources || { corpus_ids: ['recall_default'] });
+      if (curSig === nextSig) return prev;
+      next[idx] = { ...cur, sources: (activeSources || { corpus_ids: ['recall_default'] }) as ActiveSources, updated_at: Date.now() };
+      persistSessions(next, activeId);
+      return next;
+    });
+  }, [activeSources, conversationId, persistSessions]);
+
   const startThinking = () => {
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
     typingStartedAtRef.current = Date.now();
     setTyping(true);
   };
 
-  const stopThinking = () => {
+  const stopThinking = (requestToken: number) => {
+    if (!isRequestTokenActive(requestToken)) return;
     const elapsed = typingStartedAtRef.current ? Date.now() - typingStartedAtRef.current : 0;
     const remaining = Math.max(0, 750 - elapsed);
-    setTimeout(() => setTyping(false), remaining);
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+    typingTimeoutRef.current = setTimeout(() => {
+      if (!isRequestTokenActive(requestToken)) return;
+      typingTimeoutRef.current = null;
+      setTyping(false);
+    }, remaining);
   };
 
   const formatConfidence = (value?: number | null) => {
@@ -1275,17 +1407,26 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
 
   const handleSend = async (text: string, images: ImageAttachment[]) => {
     if (!text.trim() || sending) return;
+    if (chatBlockedReason) {
+      showToast(chatBlockedReason, 'error');
+      return;
+    }
     const recallIntensityOverride = recallIntensity;
     if (recallIntensityOverride !== null) {
       setRecallIntensity(null);
     }
+
+    resetTransientChatState('superseded');
+    const requestToken = activeRequestTokenRef.current + 1;
+    activeRequestTokenRef.current = requestToken;
+    const requestSources = (activeSourcesRef.current || activeSources || { corpus_ids: ['recall_default'] }) as ActiveSources;
 
     const userMessage: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
       content: text.trim(),
       images: Array.isArray(images) && images.length ? images : undefined,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
 
     const newMessages = clampChatHistory([...messages, userMessage]);
@@ -1295,41 +1436,94 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
     notifyTrace([], false, 'clear');
     startThinking();
 
+    const abortController = new AbortController();
+    requestAbortControllerRef.current = abortController;
+    const timeoutId = setTimeout(() => {
+      try {
+        abortController.abort(CHAT_REQUEST_ABORT_TIMEOUT);
+      } catch {
+        // Ignore abort races.
+      }
+    }, chatRequestTimeoutMs);
+
     try {
       const streamingEnabled = streamPref && streamingSupportedRef.current !== false;
       if (streamingEnabled) {
         try {
-          await handleStreamingResponse(userMessage, recallIntensityOverride);
-          streamingSupportedRef.current = true;
+          await handleStreamingResponse(
+            userMessage,
+            recallIntensityOverride,
+            requestToken,
+            abortController.signal,
+            requestSources
+          );
+          if (isRequestTokenActive(requestToken)) {
+            streamingSupportedRef.current = true;
+          }
         } catch (err) {
+          const abortReason = toAbortReason(err, abortController.signal);
+          if (abortReason) {
+            throw new ChatRequestAbortedError(abortReason);
+          }
           streamingSupportedRef.current = false;
-          await handleRegularResponse(userMessage, recallIntensityOverride);
+          await handleRegularResponse(
+            userMessage,
+            recallIntensityOverride,
+            requestToken,
+            abortController.signal,
+            requestSources
+          );
         }
       } else {
-        await handleRegularResponse(userMessage, recallIntensityOverride);
+        await handleRegularResponse(
+          userMessage,
+          recallIntensityOverride,
+          requestToken,
+          abortController.signal,
+          requestSources
+        );
       }
     } catch (error) {
+      const abortReason = toAbortReason(error, abortController.signal);
+      if (abortReason) {
+        if (abortReason === CHAT_REQUEST_ABORT_TIMEOUT && isRequestTokenActive(requestToken)) {
+          showToast('Chat timed out before completion.', 'error');
+        }
+        return;
+      }
+      if (!isRequestTokenActive(requestToken)) return;
       console.error('[ChatInterface] Failed to send message:', error);
       const errorMessage: Message = {
         id: `error-${Date.now()}`,
         role: 'assistant',
         content: `Error: ${error instanceof Error ? error.message : 'Failed to get response'}`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       };
       const updatedMessages = clampChatHistory([...newMessages, errorMessage]);
       setMessages(updatedMessages);
       saveChatHistory(updatedMessages);
     } finally {
+      clearTimeout(timeoutId);
+      if (requestAbortControllerRef.current === abortController) {
+        requestAbortControllerRef.current = null;
+      }
+      if (!isRequestTokenActive(requestToken)) return;
       setSending(false);
       setStreaming(false);
-      stopThinking();
+      stopThinking(requestToken);
     }
   };
 
   const handleStreamingResponse = async (
     userMessage: Message,
-    recallIntensityOverride: RecallIntensity | null
+    recallIntensityOverride: RecallIntensity | null,
+    requestToken: number,
+    signal: AbortSignal,
+    requestSources: ActiveSources
   ) => {
+    if (!isRequestTokenActive(requestToken)) {
+      throw new ChatRequestAbortedError('stale');
+    }
     setStreaming(true);
 
     const readErrorDetail = async (resp: Response): Promise<string> => {
@@ -1348,23 +1542,30 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
       }
     };
 
-    // Stream from /api/chat/stream (SSE)
-    const response = await fetch(api('chat/stream'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: userMessage.content,
-        sources: activeSources,
-        conversation_id: conversationId,
-        stream: true,
-        images: Array.isArray(userMessage.images) ? userMessage.images : [],
-        model_override: modelOverride,
-        include_vector: includeVector,
-        include_sparse: includeSparse,
-        include_graph: includeGraph,
-        recall_intensity: recallIntensityOverride,
-      })
-    });
+    let response: Response;
+    try {
+      response = await fetch(api('chat/stream'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal,
+        body: JSON.stringify({
+          message: userMessage.content,
+          sources: requestSources,
+          conversation_id: conversationId,
+          stream: true,
+          images: Array.isArray(userMessage.images) ? userMessage.images : [],
+          model_override: modelOverride,
+          include_vector: includeVector,
+          include_sparse: includeSparse,
+          include_graph: includeGraph,
+          recall_intensity: recallIntensityOverride,
+        }),
+      });
+    } catch (error) {
+      const abortReason = toAbortReason(error, signal);
+      if (abortReason) throw new ChatRequestAbortedError(abortReason);
+      throw error;
+    }
 
     if (!response.ok) {
       const detail = await readErrorDetail(response);
@@ -1376,6 +1577,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
     let streamBuffer = '';
     let accumulatedContent = '';
     let sawTerminalChunk = false;
+    let sawChunk = false;
     const assistantMessageId = `assistant-${Date.now()}`;
     const assistantTimestamp = Date.now();
     let citations: string[] = [];
@@ -1392,6 +1594,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
     }
 
     const scheduleAssistantRender = (persist: boolean = false) => {
+      if (!isRequestTokenActive(requestToken)) return;
       if (persist) persistAfterNextRender = true;
       if (rafPending) return;
       const container = messagesContainerRef.current;
@@ -1401,6 +1604,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
 
       requestAnimationFrame(() => {
         rafPending = false;
+        if (!isRequestTokenActive(requestToken)) return;
         const providerMeta = (() => {
           const p = (debug as any)?.provider;
           if (!p || typeof p !== 'object') return undefined;
@@ -1431,10 +1635,9 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
         };
 
         setMessages((prev) => {
+          if (!isRequestTokenActive(requestToken)) return prev;
           const last = prev[prev.length - 1];
           let next: Message[];
-
-          // Common path: streaming assistant message is the last item.
           if (last && last.id === assistantMessageId) {
             next = prev.slice();
             next[next.length - 1] = assistantMessage;
@@ -1454,6 +1657,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
 
         if (shouldAutoscroll) {
           requestAnimationFrame(() => {
+            if (!isRequestTokenActive(requestToken)) return;
             messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
           });
         }
@@ -1461,6 +1665,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
     };
 
     const processDataLine = (line: string) => {
+      if (!isRequestTokenActive(requestToken)) return;
       const trimmed = line.trim();
       if (!trimmed.startsWith('data:')) return;
       const data = trimmed.slice(5).trim();
@@ -1469,6 +1674,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
       try {
         const parsed = JSON.parse(data);
         const chunkType = parsed.type;
+        sawChunk = true;
 
         switch (chunkType) {
           case 'text':
@@ -1479,11 +1685,10 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
 
           case 'done':
             sawTerminalChunk = true;
-            // Server may include conversation_id in the final event (best-effort).
-            if (typeof parsed.conversation_id === 'string') {
+            if (typeof parsed.conversation_id === 'string' && isRequestTokenActive(requestToken)) {
               setConversationId(parsed.conversation_id);
             }
-            if (Array.isArray(parsed.sources)) {
+            if (Array.isArray(parsed.sources) && isRequestTokenActive(requestToken)) {
               setLastMatches(parsed.sources as ChunkMatch[]);
               citations = parsed.sources
                 .map((s: any) => {
@@ -1504,17 +1709,21 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
             if (typeof parsed.ended_at_ms === 'number') {
               const ended = parsed.ended_at_ms;
               endedAtMs = ended;
-              if (typeof startedAtMs === 'number') {
+              if (typeof startedAtMs === 'number' && isRequestTokenActive(requestToken)) {
                 setLastLatencyMs(Math.max(0, ended - startedAtMs));
               }
             }
             debug = parsed && typeof parsed.debug === 'object' ? (parsed.debug as ChatDebugInfo) : null;
             confidence = typeof parsed?.debug?.confidence === 'number' ? parsed.debug.confidence : undefined;
-            setLastRecallPlan((debug as any)?.recall_plan ?? null);
-            maybeToastRerankOutcome(debug?.rerank);
+            if (isRequestTokenActive(requestToken)) {
+              setLastRecallPlan((debug as any)?.recall_plan ?? null);
+              maybeToastRerankOutcome(debug?.rerank);
+            }
             if (!accumulatedContent.trim()) {
               accumulatedContent = 'Error: Empty response from model (stream finished without content)';
-              showToast('Chat failed: empty model response.', 'error');
+              if (isRequestTokenActive(requestToken)) {
+                showToast('Chat failed: empty model response.', 'error');
+              }
             }
 
             try {
@@ -1534,7 +1743,9 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
             sawTerminalChunk = true;
             console.error('[ChatInterface] Stream error:', parsed.message);
             accumulatedContent = `Error: ${parsed.message || 'Unknown error'}`;
-            showToast(`Chat error: ${parsed.message || 'Unknown error'}`, 'error');
+            if (isRequestTokenActive(requestToken)) {
+              showToast(`Chat error: ${parsed.message || 'Unknown error'}`, 'error');
+            }
             break;
 
           default:
@@ -1548,8 +1759,51 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
       }
     };
 
+    const readNextChunk = async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+      let onAbort: (() => void) | null = null;
+      try {
+        return await Promise.race([
+          reader.read(),
+          new Promise<never>((_, reject) => {
+            onAbort = () => {
+              const reason =
+                typeof signal.reason === 'string' && signal.reason.trim() ? signal.reason.trim() : 'aborted';
+              reject(new ChatRequestAbortedError(reason));
+            };
+            signal.addEventListener('abort', onAbort, { once: true });
+          }),
+        ]);
+      } finally {
+        if (onAbort) {
+          signal.removeEventListener('abort', onAbort);
+        }
+      }
+    };
+
     while (true) {
-      const { done, value } = await reader.read();
+      if (!isRequestTokenActive(requestToken)) {
+        throw new ChatRequestAbortedError('stale');
+      }
+      let read;
+      try {
+        read = await readNextChunk();
+      } catch (error) {
+        const abortReason = toAbortReason(error, signal);
+        if (abortReason) throw new ChatRequestAbortedError(abortReason);
+        if (sawChunk || accumulatedContent.trim()) {
+          sawTerminalChunk = true;
+          if (!accumulatedContent.trim()) {
+            accumulatedContent = 'Error: Chat stream interrupted before completion';
+          }
+          if (isRequestTokenActive(requestToken)) {
+            showToast('Chat stream interrupted before completion.', 'error');
+            scheduleAssistantRender(true);
+          }
+          return;
+        }
+        throw error;
+      }
+      const { done, value } = read;
       if (done) break;
 
       streamBuffer += decoder.decode(value, { stream: true });
@@ -1569,21 +1823,27 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
       processDataLine(streamBuffer);
     }
 
-    // Guard: some proxies/providers can terminate the stream without emitting
-    // a final done/error event. Never persist an empty assistant bubble.
+    if (!isRequestTokenActive(requestToken)) {
+      throw new ChatRequestAbortedError('stale');
+    }
     if (!sawTerminalChunk && !accumulatedContent.trim()) {
       accumulatedContent = 'Error: Chat stream ended without a response (no SSE events received)';
       showToast('Chat failed: stream ended without response.', 'error');
     }
 
-    // Ensure the final assistant message is rendered + persisted exactly once.
     scheduleAssistantRender(true);
   };
 
   const handleRegularResponse = async (
     userMessage: Message,
-    recallIntensityOverride: RecallIntensity | null
+    recallIntensityOverride: RecallIntensity | null,
+    requestToken: number,
+    signal: AbortSignal,
+    requestSources: ActiveSources
   ) => {
+    if (!isRequestTokenActive(requestToken)) {
+      throw new ChatRequestAbortedError('stale');
+    }
     const params = new URLSearchParams(window.location.search || '');
     const fast = fastMode || params.get('fast') === '1' || params.get('smoke') === '1';
 
@@ -1606,22 +1866,30 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
       }
     };
 
-    const response = await fetch(api('chat'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: userMessage.content,
-        sources: activeSources,
-        conversation_id: conversationId,
-        stream: false,
-        images: Array.isArray(userMessage.images) ? userMessage.images : [],
-        model_override: modelOverride,
-        include_vector: includeVector,
-        include_sparse: includeSparse,
-        include_graph: includeGraph,
-        recall_intensity: recallIntensityOverride,
-      })
-    });
+    let response: Response;
+    try {
+      response = await fetch(api('chat'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal,
+        body: JSON.stringify({
+          message: userMessage.content,
+          sources: requestSources,
+          conversation_id: conversationId,
+          stream: false,
+          images: Array.isArray(userMessage.images) ? userMessage.images : [],
+          model_override: modelOverride,
+          include_vector: includeVector,
+          include_sparse: includeSparse,
+          include_graph: includeGraph,
+          recall_intensity: recallIntensityOverride,
+        }),
+      });
+    } catch (error) {
+      const abortReason = toAbortReason(error, signal);
+      if (abortReason) throw new ChatRequestAbortedError(abortReason);
+      throw error;
+    }
 
     if (!response.ok) {
       const detail = await readErrorDetail(response);
@@ -1629,11 +1897,14 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
     }
 
     const data = await response.json();
+    if (!isRequestTokenActive(requestToken)) {
+      throw new ChatRequestAbortedError('stale');
+    }
 
     // New Pydantic ChatResponse: { run_id, started_at_ms, ended_at_ms, debug, conversation_id, message, sources, tokens_used }
     const nextConversationId: string | null =
       data && typeof data.conversation_id === 'string' ? data.conversation_id : null;
-    if (nextConversationId) setConversationId(nextConversationId);
+    if (nextConversationId && isRequestTokenActive(requestToken)) setConversationId(nextConversationId);
 
     const sources: ChunkMatch[] = Array.isArray(data?.sources) ? (data.sources as ChunkMatch[]) : [];
     setLastMatches(sources);
@@ -1661,8 +1932,10 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
       setLastLatencyMs(Math.max(0, endedAtMs - startedAtMs));
     }
     const debug: ChatDebugInfo | null = data && typeof data?.debug === 'object' ? (data.debug as ChatDebugInfo) : null;
-    setLastRecallPlan((debug as any)?.recall_plan ?? null);
-    maybeToastRerankOutcome(debug?.rerank);
+    if (isRequestTokenActive(requestToken)) {
+      setLastRecallPlan((debug as any)?.recall_plan ?? null);
+      maybeToastRerankOutcome(debug?.rerank);
+    }
     const confidence: number | undefined = typeof data?.debug?.confidence === 'number' ? data.debug.confidence : undefined;
     const providerMeta = (() => {
       const p = (debug as any)?.provider;
@@ -1706,6 +1979,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
     } catch {}
 
     setMessages((prev) => {
+      if (!isRequestTokenActive(requestToken)) return prev;
       const updated = clampChatHistory([...prev, assistantMessage]);
       saveChatHistory(updated);
       return updated;
@@ -2685,7 +2959,7 @@ export function ChatInterface({ traceOpen, onTraceUpdate }: ChatInterfaceProps) 
             borderTop: '1px solid var(--line)',
             background: 'var(--bg-elev1)'
           }}>
-            <ChatComposer sending={sending} multimodal={multimodalCfg} onSend={handleSend} />
+            <ChatComposer sending={sending} multimodal={multimodalCfg} blockedReason={chatBlockedReason} onSend={handleSend} />
 
             <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '8px' }}>
               Press Ctrl+Enter to send • Citations appear as clickable file links when enabled in settings
