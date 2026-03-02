@@ -18,8 +18,32 @@ interface CostComparisonProps {
 }
 
 const integerNumberFormatter = new Intl.NumberFormat('en-US', {
+  useGrouping: false,
   maximumFractionDigits: 0,
 })
+
+const decimalNumberFormatter = new Intl.NumberFormat('en-US', {
+  useGrouping: false,
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+
+interface TooltipEntryPayload {
+  name?: string
+  hours?: number
+  cost?: number
+  vram?: number
+}
+
+interface RechartsTooltipPayloadItem {
+  payload?: TooltipEntryPayload
+}
+
+interface RechartsTooltipProps {
+  active?: boolean
+  label?: string | number
+  payload?: RechartsTooltipPayloadItem[]
+}
 
 function toFiniteNumber(value: number | string): number {
   const numericValue = typeof value === 'number' ? value : Number(value)
@@ -31,7 +55,7 @@ function formatCurrency(value: number | null): string {
     return 'n/a'
   }
 
-  return `$${value.toFixed(2)}`
+  return `$${decimalNumberFormatter.format(value)}`
 }
 
 function formatCurrencyTick(value: number | string): string {
@@ -45,7 +69,7 @@ function formatHoursTick(value: number | string): string {
 }
 
 function formatHourly(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}/hr`
+  return `$${decimalNumberFormatter.format(cents / 100)}/hr`
 }
 
 function rowClass(entry: CostComparisonEntry): string {
@@ -58,6 +82,56 @@ function rowClass(entry: CostComparisonEntry): string {
   }
 
   return 'row-ok'
+}
+
+function BarTooltip({ active, payload }: RechartsTooltipProps) {
+  if (!active || !payload || payload.length === 0) {
+    return null
+  }
+
+  const first = payload[0]?.payload
+  if (!first) {
+    return null
+  }
+
+  return (
+    <div className="chart-tooltip">
+      <p className="chart-tooltip-title">{first.name}</p>
+      <div className="chart-tooltip-row">
+        <span className="chart-tooltip-key">Total cost</span>
+        <span>{formatCurrency(toFiniteNumber(first.cost ?? 0))}</span>
+      </div>
+    </div>
+  )
+}
+
+function ScatterTooltip({ active, payload }: RechartsTooltipProps) {
+  if (!active || !payload || payload.length === 0) {
+    return null
+  }
+
+  const first = payload[0]?.payload
+  if (!first) {
+    return null
+  }
+
+  return (
+    <div className="chart-tooltip">
+      <p className="chart-tooltip-title">{first.name}</p>
+      <div className="chart-tooltip-row">
+        <span className="chart-tooltip-key">Total cost</span>
+        <span>{formatCurrency(toFiniteNumber(first.cost ?? 0))}</span>
+      </div>
+      <div className="chart-tooltip-row">
+        <span className="chart-tooltip-key">Training hours</span>
+        <span>{decimalNumberFormatter.format(toFiniteNumber(first.hours ?? 0))}h</span>
+      </div>
+      <div className="chart-tooltip-row">
+        <span className="chart-tooltip-key">VRAM</span>
+        <span>{integerNumberFormatter.format(toFiniteNumber(first.vram ?? 0))}</span>
+      </div>
+    </div>
+  )
 }
 
 export function CostComparison({ entries }: CostComparisonProps) {
@@ -77,7 +151,9 @@ export function CostComparison({ entries }: CostComparisonProps) {
   const barChartData = sortedEntries.map((entry) => ({
     id: `${entry.provider}:${entry.gpu}`,
     label: `${entry.provider} ${entry.gpu}`,
+    name: `${entry.provider} ${entry.gpu}`,
     totalCost: entry.total_cost_dollars,
+    cost: entry.total_cost_dollars,
     fill: entry.fits_in_vram && entry.available ? '#22c55e' : '#ef4444',
   }))
 
@@ -87,7 +163,10 @@ export function CostComparison({ entries }: CostComparisonProps) {
     cost: entry.total_cost_dollars,
     vram: entry.vram_total_gb,
     fill: entry.fits_in_vram && entry.available ? '#38bdf8' : '#f97316',
-  }))
+    }))
+
+  const maxHours = scatterData.reduce((max, entry) => Math.max(max, entry.hours), 0)
+  const maxCost = scatterData.reduce((max, entry) => Math.max(max, entry.cost), 0)
 
   return (
     <section className="card chart-card">
@@ -104,22 +183,7 @@ export function CostComparison({ entries }: CostComparisonProps) {
               <CartesianGrid strokeDasharray="4 4" stroke="#202a2f" />
               <XAxis type="number" stroke="#7d8993" tickFormatter={formatCurrencyTick} />
               <YAxis dataKey="label" type="category" width={140} stroke="#7d8993" />
-              <Tooltip
-                formatter={(value) => {
-                  const numericValue =
-                    typeof value === 'number' ? value : Number(value ?? 0)
-
-                  return [`$${numericValue.toFixed(2)}`, 'Total cost']
-                }}
-                itemStyle={{ color: '#d7e0e6' }}
-                labelStyle={{ color: '#d7e0e6' }}
-                contentStyle={{
-                  backgroundColor: '#0d1418',
-                  border: '1px solid #23313a',
-                  borderRadius: '6px',
-                  color: '#d7e0e6',
-                }}
-              />
+              <Tooltip content={<BarTooltip />} />
               <Bar dataKey="totalCost" radius={[2, 2, 2, 2]}>
                 {barChartData.map((entry) => (
                   <Cell key={entry.id} fill={entry.fill} />
@@ -132,7 +196,7 @@ export function CostComparison({ entries }: CostComparisonProps) {
         <div className="chart-wrap scatter-chart">
           <h4>Time vs Cost</h4>
           <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 8, right: 16, left: 24, bottom: 8 }}>
+            <ScatterChart margin={{ top: 8, right: 28, left: 50, bottom: 18 }}>
               <CartesianGrid strokeDasharray="4 4" stroke="#202a2f" />
               <XAxis
                 type="number"
@@ -140,40 +204,19 @@ export function CostComparison({ entries }: CostComparisonProps) {
                 name="Training hours"
                 stroke="#7d8993"
                 tickFormatter={formatHoursTick}
+                domain={[0, Math.max(1, maxHours * 1.05)]}
               />
               <YAxis
                 type="number"
                 dataKey="cost"
                 name="Total cost"
                 stroke="#7d8993"
-                width={84}
+                width={102}
                 tickFormatter={formatCurrencyTick}
+                domain={[0, Math.max(1, maxCost * 1.05)]}
               />
               <ZAxis type="number" dataKey="vram" range={[80, 320]} name="VRAM" />
-              <Tooltip
-                cursor={{ strokeDasharray: '3 3' }}
-                itemStyle={{ color: '#d7e0e6' }}
-                labelStyle={{ color: '#d7e0e6' }}
-                contentStyle={{
-                  backgroundColor: '#0d1418',
-                  border: '1px solid #23313a',
-                  borderRadius: '6px',
-                  color: '#d7e0e6',
-                }}
-                formatter={(value, label) => {
-                  const numericValue =
-                    typeof value === 'number' ? value : Number(value ?? 0)
-                  if (label === 'Total cost') {
-                    return [`$${numericValue.toFixed(2)}`, label]
-                  }
-
-                  if (label === 'Training hours') {
-                    return [`${numericValue.toFixed(2)} h`, label]
-                  }
-
-                  return [numericValue.toFixed(0), label]
-                }}
-              />
+              <Tooltip cursor={{ strokeDasharray: '3 3' }} content={<ScatterTooltip />} />
               <Scatter data={scatterData} name="Options">
                 {scatterData.map((entry) => (
                   <Cell key={entry.name} fill={entry.fill} />
@@ -208,7 +251,7 @@ export function CostComparison({ entries }: CostComparisonProps) {
                 <td>{`${entry.gpu} x${entry.num_gpus}`}</td>
                 <td>{entry.cloud_instance_type}</td>
                 <td>{formatHourly(entry.hourly_price_cents)}</td>
-                <td>{entry.estimated_hours.toFixed(2)}h</td>
+                <td>{decimalNumberFormatter.format(entry.estimated_hours)}h</td>
                 <td>{formatCurrency(entry.total_cost_dollars)}</td>
                 <td>{formatCurrency(entry.spot_cost_dollars)}</td>
                 <td>{formatCurrency(entry.reserved_1mo_cost_dollars)}</td>

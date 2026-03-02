@@ -1,6 +1,5 @@
 import { useCallback, useState } from 'react'
 import { InputPanel } from './components/InputPanel'
-import { PresetButtons } from './components/PresetButtons'
 import { ResultsPanel } from './components/ResultsPanel'
 import { useGPUPricing } from './hooks/useGPUPricing'
 import { useTrainingEstimate } from './hooks/useTrainingEstimate'
@@ -8,8 +7,8 @@ import { useURLState } from './hooks/useURLState'
 import type { EstimateRequest, ResolvedModelPayload } from './types'
 
 const DEFAULT_REQUEST: EstimateRequest = {
-  model_name: 'llama-3.3-70b',
-  model_params_billions: 70.6,
+  model_name: 'qwen3-32b',
+  model_params_billions: 29.72,
   architecture: 'Dense',
   moe_total_experts: 1,
   moe_active_experts: 1,
@@ -43,12 +42,12 @@ const DEFAULT_REQUEST: EstimateRequest = {
   use_rope_kernels: true,
   use_packing: true,
 
-  target_gpu: ['H100', 'A100_80G', 'L40S'],
+  target_gpu: ['B200', 'H200', 'H100', 'A100_80G', 'L40S'],
   target_providers: [],
   target_regions: [],
   target_interconnects: [],
   target_instance_types: [],
-  num_gpus: 8,
+  num_gpus: 4,
   num_nodes: 1,
   pricing_tier: ['on_demand', 'spot'],
   min_vram_gb: null,
@@ -58,6 +57,20 @@ const DEFAULT_REQUEST: EstimateRequest = {
   reward_model_size: null,
   vllm_batch_size: 8,
   num_runs: 1,
+}
+
+function formatTime(value: string | null): string {
+  if (!value) {
+    return 'n/a'
+  }
+
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return value
+  }
+
+  const pad = (part: number) => String(part).padStart(2, '0')
+  return `${pad(parsed.getHours())}:${pad(parsed.getMinutes())}:${pad(parsed.getSeconds())}`
 }
 
 function App() {
@@ -154,7 +167,7 @@ function App() {
         <div className="header-meta mono">
           <span>Target GPUs: {state.target_gpu.length}</span>
           <span>Pricing rows: {pricing.length}</span>
-          <span>Pricing refreshed: {pricingFetchedAt ? new Date(pricingFetchedAt).toLocaleTimeString() : 'n/a'}</span>
+          <span>Pricing refreshed: {formatTime(pricingFetchedAt)}</span>
         </div>
 
         <div className="header-actions">
@@ -166,8 +179,6 @@ function App() {
           </button>
         </div>
       </header>
-
-      <PresetButtons value={state} onApply={handleInputChange} />
 
       <main className="layout-grid">
         <InputPanel

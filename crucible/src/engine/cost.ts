@@ -93,9 +93,16 @@ function deriveEntryHours(
   const trainingHoursFromTargetMap =
     (normalizedGPU && training.estimated_hours_by_gpu[normalizedGPU]) ||
     training.estimated_hours_by_gpu[String(pricingEntry.gpu)]
+  const interconnectMultiplier = deriveInterconnectMultiplier(pricingEntry.interconnect)
+  const hostFeedMultiplier = deriveHostFeedMultiplier(pricingEntry)
 
   if (trainingHoursFromTargetMap !== undefined) {
-    return trainingHoursFromTargetMap * (requestedGPUCount / providerGPUCount)
+    return (
+      trainingHoursFromTargetMap *
+      (requestedGPUCount / providerGPUCount) *
+      interconnectMultiplier *
+      hostFeedMultiplier
+    )
   }
 
   const derivedHours = estimateTrainingHoursForGPU(
@@ -107,11 +114,49 @@ function deriveEntryHours(
   if (derivedHours === null) {
     return Number.POSITIVE_INFINITY
   }
-  return derivedHours
+  return derivedHours * interconnectMultiplier * hostFeedMultiplier
 }
 
 function normalizeLower(value: string): string {
   return value.trim().toLowerCase()
+}
+
+function deriveInterconnectMultiplier(interconnect: string | undefined): number {
+  const normalized = normalizeLower(interconnect ?? 'unknown')
+  if (normalized.includes('infiniband')) {
+    return 0.96
+  }
+  if (normalized.includes('nvlink') || normalized.includes('sxm') || normalized.includes('xgmi')) {
+    return 1
+  }
+  if (normalized.includes('pcie')) {
+    return 1.08
+  }
+  return 1.03
+}
+
+function deriveHostFeedMultiplier(entry: ProviderPricing): number {
+  const vcpus = entry.vcpus
+  if (vcpus === undefined || vcpus === null || !Number.isFinite(vcpus) || vcpus <= 0) {
+    return 1
+  }
+
+  const gpus = Math.max(1, asNonNegative(entry.num_gpus, 1))
+  const vcpusPerGPU = vcpus / gpus
+
+  if (vcpusPerGPU < 8) {
+    return 1.1
+  }
+  if (vcpusPerGPU < 12) {
+    return 1.05
+  }
+  if (vcpusPerGPU > 24) {
+    return 0.95
+  }
+  if (vcpusPerGPU > 16) {
+    return 0.98
+  }
+  return 1
 }
 
 function normalizeGPUName(value: string): string {

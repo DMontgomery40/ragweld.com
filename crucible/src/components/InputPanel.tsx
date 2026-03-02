@@ -55,41 +55,6 @@ interface MultiSelectMatrixProps {
   dropdownThreshold?: number
 }
 
-const MODEL_PROFILES: ModelProfile[] = [
-  {
-    id: 'llama-3.3-70b',
-    label: 'Llama 3.3 70B',
-    params: 70.6,
-    architecture: 'Dense',
-    moeTotal: 1,
-    moeActive: 1,
-  },
-  {
-    id: 'llama-3.1-8b',
-    label: 'Llama 3.1 8B',
-    params: 8,
-    architecture: 'Dense',
-    moeTotal: 1,
-    moeActive: 1,
-  },
-  {
-    id: 'qwen-2.5-14b',
-    label: 'Qwen 2.5 14B',
-    params: 14,
-    architecture: 'Dense',
-    moeTotal: 1,
-    moeActive: 1,
-  },
-  {
-    id: 'deepseek-v3',
-    label: 'DeepSeek V3 (MoE)',
-    params: 671,
-    architecture: 'MoE',
-    moeTotal: 256,
-    moeActive: 8,
-  },
-]
-
 const METHOD_OPTIONS: FineTuneMethod[] = ['Full Fine-Tune', 'LoRA', 'QLoRA']
 const ARCHITECTURE_OPTIONS: Architecture[] = ['Dense', 'MoE']
 const TRAINING_TYPE_OPTIONS: TrainingType[] = ['SFT', 'GRPO', 'DPO', 'PPO', 'ORPO']
@@ -147,6 +112,48 @@ const LORA_TARGET_MODULE_OPTIONS: LoRATargetModule[] = [
   'down',
 ]
 const DROPDOWN_THRESHOLD = 5
+const MODEL_PROFILES: ModelProfile[] = [
+  {
+    id: 'qwen3-32b',
+    label: 'Qwen3 32B',
+    params: 29.72,
+    architecture: 'Dense',
+    moeTotal: 1,
+    moeActive: 1,
+  },
+  {
+    id: 'deepseek-r1-distill-qwen-32b',
+    label: 'DeepSeek R1 Distill Qwen 32B',
+    params: 32.76,
+    architecture: 'Dense',
+    moeTotal: 1,
+    moeActive: 1,
+  },
+  {
+    id: 'qwen3.5-35b-a3b',
+    label: 'Qwen3.5 35B A3B',
+    params: 35.95,
+    architecture: 'MoE',
+    moeTotal: 256,
+    moeActive: 8,
+  },
+  {
+    id: 'deepseek-v3-0324',
+    label: 'DeepSeek V3 0324',
+    params: 37.64,
+    architecture: 'MoE',
+    moeTotal: 256,
+    moeActive: 8,
+  },
+  {
+    id: 'llama-4-scout-17b-16e-instruct',
+    label: 'Llama 4 Scout 17B 16E',
+    params: 108.64,
+    architecture: 'MoE',
+    moeTotal: 16,
+    moeActive: 1,
+  },
+]
 
 function parseNumber(value: string, fallback: number): number {
   const parsed = Number(value)
@@ -295,8 +302,8 @@ function MultiSelectMatrix({
     selectedCount === 0
       ? noneLabel
       : selectedCount <= 2
-        ? selectedLabels.join(', ')
-        : `${selectedLabels.slice(0, 2).join(', ')} +${selectedCount - 2} more`
+        ? selectedLabels.join(' / ')
+        : `${selectedLabels.slice(0, 2).join(' / ')} +${selectedCount - 2} more`
 
   return (
     <div className="checkbox-matrix">
@@ -570,6 +577,11 @@ export function InputPanel({
     }))
   }, [])
 
+  const selectedModelPreset = useMemo(() => {
+    const selected = MODEL_PROFILES.find((profile) => profile.id === value.model_name)
+    return selected?.id ?? 'custom'
+  }, [value.model_name])
+
   useEffect(() => {
     const providerSet = new Set(availableProviders.map((provider) => normalizeLower(provider)))
     const gpuSet = new Set(availableGpuFamilies.map((gpu) => normalizeGpuOption(gpu)))
@@ -660,7 +672,7 @@ export function InputPanel({
             <input
               type="text"
               value={modelReference}
-              placeholder="https://huggingface.co/unsloth/Llama-3.1-8B or unsloth/Llama-3.1-8B"
+              placeholder="https://huggingface.co/Qwen/qwen3-32b or Qwen/qwen3-32b"
               onChange={(event) => setModelReference(event.target.value)}
             />
             <button
@@ -685,11 +697,15 @@ export function InputPanel({
           <label className="field">
             <span>Model preset</span>
             <select
-              value={value.model_name}
+              value={selectedModelPreset}
               onChange={(event) => {
-                const selected = MODEL_PROFILES.find((profile) => profile.id === event.target.value)
+                const next = event.target.value
+                if (next === 'custom') {
+                  return
+                }
+
+                const selected = MODEL_PROFILES.find((profile) => profile.id === next)
                 if (!selected) {
-                  patchField('model_name', event.target.value)
                   return
                 }
 
@@ -715,7 +731,21 @@ export function InputPanel({
                   {profile.label}
                 </option>
               ))}
+              <option value="custom">Custom</option>
             </select>
+          </label>
+
+          <label className="field">
+            <span>Model id</span>
+            <input
+              type="text"
+              value={value.model_name}
+              onChange={(event) => {
+                patchField('model_name', event.target.value)
+              }}
+              placeholder="qwen3-32b or custom"
+            />
+            <span className="field-hint">Use Resolve above to auto-fill parameters from Hugging Face.</span>
           </label>
 
           <label className="field">
@@ -966,128 +996,83 @@ export function InputPanel({
           </label>
         </div>
 
-        <div className="checkbox-matrix">
-          <p className="matrix-label">Target GPU families</p>
-          <div className="pill-grid">
-            {availableGpuFamilies.map((gpu) => (
-              <label key={gpu} className="pill-option">
-                <input
-                  type="checkbox"
-                  checked={value.target_gpu.includes(gpu as GPUType)}
-                  onChange={() => toggleArrayValue('target_gpu', gpu)}
-                />
-                <span>{gpu.replaceAll('_', ' ')}</span>
-              </label>
-            ))}
-          </div>
-        </div>
+        <MultiSelectMatrix
+          label="Target GPU families"
+          options={gpuFamilyOptions}
+          selectedValues={value.target_gpu}
+          onChange={(nextValues) => {
+            patchArrayField('target_gpu', nextValues)
+          }}
+          helperText="Leave blank to include all GPU families."
+          searchPlaceholder="Filter GPU families"
+        />
 
-        <div className="checkbox-matrix">
-          <p className="matrix-label">Pricing tiers</p>
-          <div className="pill-grid">
-            {PRICING_TIER_OPTIONS.map((tier) => (
-              <label key={tier} className="pill-option">
-                <input
-                  type="checkbox"
-                  checked={value.pricing_tier.includes(tier)}
-                  disabled={!availablePricingTiers.includes(tier)}
-                  onChange={() => toggleArrayValue('pricing_tier', tier)}
-                />
-                <span>{formatPricingTierLabel(tier)}</span>
-              </label>
-            ))}
-          </div>
-        </div>
+        <MultiSelectMatrix
+          label="Pricing tiers"
+          options={pricingTierOptions}
+          selectedValues={value.pricing_tier}
+          onChange={(nextValues) => {
+            patchArrayField('pricing_tier', nextValues)
+          }}
+          allowEmpty={false}
+          helperText="At least one tier must stay selected."
+          searchPlaceholder="Filter pricing tiers"
+        />
 
-        <div className="checkbox-matrix">
-          <p className="matrix-label">Cloud providers (blank = all)</p>
-          <div className="pill-grid">
-            {availableProviders.map((provider) => (
-              <label key={provider} className="pill-option">
-                <input
-                  type="checkbox"
-                  checked={value.target_providers.includes(provider)}
-                  onChange={() => toggleArrayValue('target_providers', provider)}
-                />
-                <span>{provider}</span>
-              </label>
-            ))}
-          </div>
-        </div>
+        <MultiSelectMatrix
+          label="Cloud providers (blank = all)"
+          options={providerOptions}
+          selectedValues={value.target_providers}
+          onChange={(nextValues) => {
+            patchArrayField('target_providers', nextValues)
+          }}
+          helperText="Leave blank to compare all providers in the current price feed."
+          searchPlaceholder="Filter providers"
+        />
 
-        <div className="checkbox-matrix">
-          <p className="matrix-label">Regions (optional)</p>
-          {availableRegions.length === 0 ? (
-            <span className="field-hint">
-              {pricingLoading
-                ? 'Loading region capability map from providers...'
-                : 'No region metadata available for current provider filter.'}
-            </span>
-          ) : (
-            <div className="pill-grid">
-              {availableRegions.map((region) => (
-                <label key={region} className="pill-option">
-                  <input
-                    type="checkbox"
-                    checked={value.target_regions.includes(region)}
-                    onChange={() => toggleArrayValue('target_regions', region)}
-                  />
-                  <span>{toTitleCase(region)}</span>
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
+        <MultiSelectMatrix
+          label="Regions (optional)"
+          options={regionOptions}
+          selectedValues={value.target_regions}
+          onChange={(nextValues) => {
+            patchArrayField('target_regions', nextValues)
+          }}
+          emptyHint={
+            pricingLoading
+              ? 'Loading region capability map from providers...'
+              : 'No region metadata available for current provider filter.'
+          }
+          helperText="Leave blank to allow all regions."
+          searchPlaceholder="Filter regions"
+        />
 
-        <div className="checkbox-matrix">
-          <p className="matrix-label">Interconnect (optional)</p>
-          {availableInterconnects.length === 0 ? (
-            <span className="field-hint">
-              {pricingLoading
-                ? 'Loading interconnect capability map...'
-                : 'No interconnect metadata available for current filter.'}
-            </span>
-          ) : (
-            <div className="pill-grid">
-              {availableInterconnects.map((interconnect) => (
-                <label key={interconnect} className="pill-option">
-                  <input
-                    type="checkbox"
-                    checked={value.target_interconnects.includes(interconnect)}
-                    onChange={() => toggleArrayValue('target_interconnects', interconnect)}
-                  />
-                  <span>
-                    {interconnect === INTERCONNECT_UNKNOWN
-                      ? 'Unknown'
-                      : interconnect.toUpperCase()}
-                  </span>
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
+        <MultiSelectMatrix
+          label="Interconnect (optional)"
+          options={interconnectOptions}
+          selectedValues={value.target_interconnects}
+          onChange={(nextValues) => {
+            patchArrayField('target_interconnects', nextValues)
+          }}
+          emptyHint={
+            pricingLoading
+              ? 'Loading interconnect capability map...'
+              : 'No interconnect metadata available for current filter.'
+          }
+          helperText="Leave blank to include any interconnect."
+          searchPlaceholder="Filter interconnect"
+        />
 
-        <label className="field">
-          <span>Instance types (optional)</span>
-          <select
-            multiple
-            size={Math.min(8, Math.max(3, availableInstanceTypes.length))}
-            value={value.target_instance_types}
-            onChange={(event) => {
-              const selected = Array.from(event.target.selectedOptions).map((option) => option.value)
-              patchField('target_instance_types', selected)
-            }}
-          >
-            {availableInstanceTypes.map((instanceType) => (
-              <option key={instanceType} value={instanceType}>
-                {instanceType}
-              </option>
-            ))}
-          </select>
-          <span className="field-hint">
-            Hold Cmd/Ctrl for multi-select. Options are constrained to selected providers/GPUs/GPU count.
-          </span>
-        </label>
+        <MultiSelectMatrix
+          label="Instance types (optional)"
+          options={instanceTypeOptions}
+          selectedValues={value.target_instance_types}
+          onChange={(nextValues) => {
+            patchArrayField('target_instance_types', nextValues)
+          }}
+          emptyHint="No instance types found for current provider and GPU filters."
+          helperText="Leave blank to include all instance types."
+          searchPlaceholder="Filter instance types"
+        />
       </fieldset>
 
       <button
@@ -1338,21 +1323,17 @@ export function InputPanel({
             </label>
           </div>
 
-          <div className="checkbox-matrix">
-            <p className="matrix-label">LoRA target modules</p>
-            <div className="pill-grid">
-              {LORA_TARGET_MODULE_OPTIONS.map((module) => (
-                <label key={module} className="pill-option">
-                  <input
-                    type="checkbox"
-                    checked={value.lora_target_modules.includes(module)}
-                    onChange={() => toggleArrayValue('lora_target_modules', module)}
-                  />
-                  <span>{module}</span>
-                </label>
-              ))}
-            </div>
-          </div>
+          <MultiSelectMatrix
+            label="LoRA target modules"
+            options={loraTargetOptions}
+            selectedValues={value.lora_target_modules}
+            onChange={(nextValues) => {
+              patchArrayField('lora_target_modules', nextValues)
+            }}
+            allowEmpty={false}
+            helperText="Select the modules to adapt."
+            searchPlaceholder="Filter modules"
+          />
 
           <div className="toggle-grid">
             <label className="switch-field">

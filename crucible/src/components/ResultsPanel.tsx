@@ -25,14 +25,19 @@ function formatDate(value: string | null): string {
 
   const parsed = new Date(value)
   if (Number.isNaN(parsed.getTime())) {
-    return value
+    return value.replaceAll(',', '')
   }
 
-  return parsed.toLocaleString()
+  const pad = (part: number) => String(part).padStart(2, '0')
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())} ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}:${pad(parsed.getSeconds())}`
 }
 
 function formatHours(value: number): string {
   return `${value.toFixed(2)}h`
+}
+
+function formatInteger(value: number): string {
+  return String(Math.round(value))
 }
 
 export function ResultsPanel({
@@ -91,9 +96,9 @@ export function ResultsPanel({
 
             <article className="card summary-card">
               <h3>Training Scale</h3>
-              <p className="summary-main mono">{estimate.training_estimate.total_steps.toLocaleString()} steps</p>
+              <p className="summary-main mono">{formatInteger(estimate.training_estimate.total_steps)} steps</p>
               <p className="summary-sub mono">
-                {estimate.training_estimate.total_tokens.toLocaleString()} tokens
+                {formatInteger(estimate.training_estimate.total_tokens)} tokens
               </p>
             </article>
 
