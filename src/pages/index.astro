@@ -9,8 +9,8 @@ import Footer from '../components/Footer.astro';
 ---
 
 <BaseLayout
-  title="ragweld — See inside your RAG pipeline. Then fix it."
-  description="ragweld is an open-source RAG workbench: vector+sparse+graph retrieval, benchmarks + eval drilldowns, run diffs across hundreds of parameters, deep configuration + glossary, observability + alerting hooks, and MCP server support."
+  title="ragweld — Open-source MLOps Engineering Platform"
+  description="ragweld is an open-source MLOps Engineering Platform for RAG: vector+sparse+graph retrieval, synthetic data lab, dual training studios (reranker + agent LLM), run diffs across hundreds of parameters, tracing + Grafana observability, and production routing controls."
   canonical="https://ragweld.com/"
   ogImage="/og-image.png"
 >
@@ -19,7 +19,7 @@ import Footer from '../components/Footer.astro';
       "@context": "https://schema.org",
       "@type": "SoftwareApplication",
       "name": "ragweld",
-      "description": "Open-source RAG workbench combining vector search, sparse retrieval (BM25), and GraphRAG into one unified system with trainable LoRA reranking, embedded Grafana observability, and 396 configurable parameters.",
+      "description": "Open-source MLOps Engineering Platform for retrieval systems with vector+sparse+graph search, synthetic data generation, dual training studios (reranker + agent LLM), tracing, and embedded Grafana observability.",
       "url": "https://ragweld.com",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Linux, macOS, Windows (Docker)",
@@ -46,12 +46,10 @@ import Footer from '../components/Footer.astro';
         <div class="mx-auto max-w-3xl text-center">
           <h2 class="text-3xl font-bold text-white">What ragweld actually is</h2>
           <p class="mt-3 text-gray-400">
-            The retrieval stack matters — but ragweld’s differentiator is the engineering surface area around it:
-            benchmarking, evaluation, diagnosis, and operations.
+            A full-blown MLOps Engineering Platform for retrieval systems. You get generation + retrieval + training + eval + tracing + operations in one surface.
           </p>
           <p class="mt-3 text-gray-500">
-            It’s built for senior engineers who need answers like: what changed, why did it change, and what should we
-            try next — without guessing.
+            It’s built for senior engineers who need to answer: what changed, why quality moved, and whether to promote or roll back.
           </p>
           <div class="mt-6 flex justify-center">
             <a
@@ -76,44 +74,38 @@ import Footer from '../components/Footer.astro';
 
           <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
             <div class="text-sm font-semibold text-[#64748b]">Configuration</div>
-            <h3 class="mt-2 text-lg font-bold text-white">500+ knobs. Every single one tunable.</h3>
+            <h3 class="mt-2 text-lg font-bold text-white">Big surface area, hard guardrails for indexing</h3>
             <p class="mt-2 text-sm text-gray-400">
-              Chunking strategy, embedding dimensions, BM25 stemmer language, graph hop depth, reranker batch size,
-              fusion weights, eval thresholds — everything is a parameter, and every parameter is exposed.
-              The <a href="/demo/start" class="text-[#94a3b8] hover:underline">Get Started wizard</a> abstracts
-              them into sliders (Faster↔Thorough, Cheapest↔Smartest, Local↔Cloud) so new users
-              aren't overwhelmed. Power users get the full surface.
+              Embedding mismatch detection, index contract locking, guided reindex actions, and force-reindex controls keep teams from silently corrupting retrieval.
+              You can still tune chunking, tokenization, graph behavior, and fusion deeply, but the platform blocks the common foot-guns.
             </p>
           </div>
 
           <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-[#94a3b8]">Eval pipeline</div>
-            <h3 class="mt-2 text-lg font-bold text-white">CI for retrieval, not "have you tried evals"</h3>
+            <div class="text-sm font-semibold text-[#94a3b8]">Synthetic Data Lab</div>
+            <h3 class="mt-2 text-lg font-bold text-white">Recipe-driven data generation with quality gates</h3>
             <p class="mt-2 text-sm text-gray-400">
-              Schedule nightly eval runs that auto-generate triplets from real user feedback (thumbs up/down).
-              Compare runs across every parameter change with evidence, not guesswork. This isn't a suggestion
-              to "add CI" — it <em class="text-gray-300">is</em> your CI for retrieval quality.
+              Generate eval datasets, semantic cards, keywords, triplets, autotune patches, and full-stack outputs from one lab.
+              Run with Synthetic Data Kit or ragweld’s internal flow, then enforce LLM-as-a-judge quality gates that hard-block bad artifact publishing.
             </p>
           </div>
 
           <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
             <div class="text-sm font-semibold text-[#94a3b8]">Eval drilldown</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Diff the "why" across 500+ parameters</h3>
+            <h3 class="mt-2 text-lg font-bold text-white">Diff the "why" across the full system</h3>
             <p class="mt-2 text-sm text-gray-400">
               Per-query, per-source drilldown. Diff two runs down to embeddings, tokenization, chunking strategy,
-              reranker config — all 500+ parameters — and get a one-click analysis of what likely caused the delta.
-              Visual gradient descent for the reranker. Not "here's your MRR number, good luck."
+              reranker config, and routing settings. Pair that with traces and dashboards so regression triage is operational, not speculative.
             </p>
           </div>
 
           <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-gray-300">Reranker</div>
-            <h3 class="mt-2 text-lg font-bold text-white">A LoRA training studio, not a reranker checkbox</h3>
+            <div class="text-sm font-semibold text-gray-300">Training Studios</div>
+            <h3 class="mt-2 text-lg font-bold text-white">Two trainable systems, first-class in product</h3>
             <p class="mt-2 text-sm text-gray-400">
-              ragweld's learning reranker scores with Qwen3-style
-              <span class="text-gray-300">yes/no logits</span> and trains LoRA adapters on
-              <em class="text-gray-300">your</em> data — automatically, from user feedback. MLX-native on Apple
-              Silicon. Visual gradient descent. Compare/promote gating so you only ship improvements that actually improve.
+              Learning Reranker trains Qwen3-based LoRA adapters on your feedback data.
+              Learning Agent Studio trains the in-product LLM agent with the same operational loop:
+              live gradient descent visualization, checkpoints, compare, promote, and rollback.
             </p>
             <p class="mt-3 text-sm text-gray-500">
               <a href="/blog/posts/learning-reranker-qwen3-mlx/" class="text-[#94a3b8] hover:underline">
@@ -123,12 +115,11 @@ import Footer from '../components/Footer.astro';
           </div>
 
           <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-[#94a3b8]">Grafana</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Live dashboards built into the UI</h3>
+            <div class="text-sm font-semibold text-[#94a3b8]">Tracing + Observability</div>
+            <h3 class="mt-2 text-lg font-bold text-white">Native local traces, LangSmith-compatible mode, embedded dashboards</h3>
             <p class="mt-2 text-sm text-gray-400">
-              Not "we integrate with Grafana." Grafana is <em class="text-gray-300">embedded in the workbench</em> in
-              split-screen. Chat in the left panel, watch retrieval metrics in real time on the right. Run an eval
-              and watch precision/recall update live. Run a benchmark and watch latency percentiles as they happen.
+              Use local tracing out of the box, switch tracing mode for external backends, and keep Grafana embedded in split-view.
+              Dashboard JSONs can be dropped into infra paths and surfaced quickly without rebuilding the app.
             </p>
           </div>
 
@@ -143,22 +134,20 @@ import Footer from '../components/Footer.astro';
           </div>
 
           <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-gray-300">Chat</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Every model. Local, cloud, OpenRouter. All of them.</h3>
+            <div class="text-sm font-semibold text-gray-300">Routing + Catalog</div>
+            <h3 class="mt-2 text-lg font-bold text-white">Provider routing with daily-refresh catalogs and custom models</h3>
             <p class="mt-2 text-sm text-gray-400">
-              Not "we support GPT-4 and Claude." Literally every model on OpenRouter, every major cloud provider
-              (OpenAI, Anthropic, Google, Cohere, Voyage), every local model via Ollama — including vision.
-              Multi-corpus querying with per-corpus embedding and tokenization configs when your data demands it.
+              Route across local, cloud, and OpenRouter providers from one control plane.
+              Model catalog data refreshes daily, and teams can upsert custom local or cloud models immediately for routing and cost workflows.
             </p>
           </div>
 
           <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
-            <div class="text-sm font-semibold text-gray-300">Recall</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Chat memory that actually works with RAG</h3>
+            <div class="text-sm font-semibold text-gray-300">Semantic Cache + Recall</div>
+            <h3 class="mt-2 text-lg font-bold text-white">Cost control and memory gating in the chat path</h3>
             <p class="mt-2 text-sm text-gray-400">
-              Persistent conversation memory (sparse + dense indexed) that combines with corpus retrieval.
-              Smart routing decides when to hit memory, when to hit the corpus, and when to hit both — with
-              configurable weights and intensity levels. Not "we save chat history."
+              Semantic cache policy is built in for retrieval and answer paths, and Recall supports smart gating with intensity controls.
+              Teams can choose whether conversation history is indexed, when it is queried, and how it blends with corpus retrieval.
             </p>
             <p class="mt-3 text-sm text-gray-500">
               <a href="/blog/posts/when-to-query-chat-memory-vs-your-corpus/" class="text-[#94a3b8] hover:underline">
@@ -180,11 +169,11 @@ import Footer from '../components/Footer.astro';
 
           <div class="rounded-xl border border-[#27272a] bg-[#0f0f12] p-6">
             <div class="text-sm font-semibold text-[#64748b]">Onboarding</div>
-            <h3 class="mt-2 text-lg font-bold text-white">Five steps to a working RAG pipeline</h3>
+            <h3 class="mt-2 text-lg font-bold text-white">Fast start for teams, full control for specialists</h3>
             <p class="mt-2 text-sm text-gray-400">
               The <a href="/demo/start" class="text-[#94a3b8] hover:underline">Get Started wizard</a>: pick a folder
-              or GitHub repo, index it, ask golden questions, tune with sliders, save. You go from "I just cloned this"
-              to a running, benchmarked pipeline in minutes — not hours of YAML editing.
+              or GitHub repo, index it, ask golden questions, tune with sliders, save. You go from first run to a governed pipeline quickly,
+              then progressively open the full platform surface as needed.
             </p>
           </div>
 
