@@ -28,22 +28,65 @@ interface EmbeddingMismatchWarningProps {
   onNavigateToIndex?: () => void;
 }
 
+const APP_ROUTE_SEGMENTS = new Set<string>([
+  '/start',
+  '/dashboard',
+  '/chat',
+  '/grafana',
+  '/benchmark',
+  '/rag',
+  '/eval',
+  '/infrastructure',
+  '/admin',
+  '/docker',
+  '/d',
+]);
+
+function resolveRouterBasePath(): string {
+  const pathname = String(window.location.pathname || '/');
+  const normalized = pathname.replace(/\/+$/, '') || '/';
+  const segments = normalized.split('/').filter(Boolean);
+  if (segments.length === 0) return '';
+
+  // BrowserRouter basename can be multi-segment (e.g. /tools/ragweld/web).
+  // Find the first known app route segment and keep everything before it.
+  const routeIndex = segments.findIndex((segment) => APP_ROUTE_SEGMENTS.has(`/${segment}`));
+  if (routeIndex === 0) return '';
+  if (routeIndex > 0) return `/${segments.slice(0, routeIndex).join('/')}`;
+
+  // If we're on the basename root itself (no known route segment yet), use the full path.
+  return normalized === '/' ? '' : normalized;
+}
+
+function navigateToRag(params: URLSearchParams): void {
+  const base = resolveRouterBasePath();
+  const query = params.toString();
+  const href = `${base}/rag${query ? `?${query}` : ''}`;
+  window.location.assign(href);
+}
+
 /**
  * Navigate to indexing page with current embedding config pre-filled
  */
 const navigateToReindex = () => {
-  window.location.href = '/#/rag?subtab=indexing&action=reindex';
+  const params = new URLSearchParams(window.location.search || '');
+  params.set('subtab', 'indexing');
+  params.set('action', 'reindex');
+  navigateToRag(params);
 };
 
 /**
  * Navigate to retrieval config to change embedding type
  */
 const navigateToConfig = (indexType: string | null) => {
+  const params = new URLSearchParams(window.location.search || '');
+  params.set('subtab', 'retrieval');
   if (indexType) {
-    window.location.href = `/#/rag?subtab=retrieval&restore_embedding=${indexType}`;
+    params.set('restore_embedding', indexType);
   } else {
-    window.location.href = '/#/rag?subtab=retrieval';
+    params.delete('restore_embedding');
   }
+  navigateToRag(params);
 };
 
 // Compact version for sidepanel/headers
@@ -427,17 +470,52 @@ export function EmbeddingMismatchWarning({
   showActions = true,
   onNavigateToIndex: _onNavigateToIndex,
 }: EmbeddingMismatchWarningProps) {
-  const { status, loading, error } = useEmbeddingStatus();
+  const { status, loading, error, refresh } = useEmbeddingStatus();
 
   // Don't show anything while loading
   if (loading) {
     return null;
   }
 
-  // Don't show anything on error (fail silently - don't block UI)
+  // Do not fail silently; unknown compatibility state is blocking.
   if (error) {
-    console.warn('[EmbeddingMismatchWarning] Error:', error);
-    return null;
+    return (
+      <div
+        role="alert"
+        aria-live="assertive"
+        style={{
+          background: 'rgba(255, 170, 0, 0.1)',
+          border: '1px solid var(--warn)',
+          borderRadius: '8px',
+          padding: '12px 16px',
+          marginBottom: '16px',
+          color: 'var(--fg)',
+          fontSize: '12px',
+        }}
+      >
+        <div style={{ fontWeight: 700, color: 'var(--warn)', marginBottom: '6px' }}>
+          Compatibility check failed
+        </div>
+        <div style={{ color: 'var(--fg-muted)', marginBottom: '10px' }}>
+          Retrieval/index compatibility could not be verified: {error}
+        </div>
+        <button
+          type="button"
+          onClick={() => { void refresh(); }}
+          style={{
+            padding: '6px 12px',
+            background: 'var(--bg-elev2)',
+            border: '1px solid var(--line)',
+            borderRadius: '4px',
+            color: 'var(--fg)',
+            fontSize: '11px',
+            cursor: 'pointer',
+          }}
+        >
+          Retry check
+        </button>
+      </div>
+    );
   }
 
   // CRITICAL: Only show if there's a real mismatch

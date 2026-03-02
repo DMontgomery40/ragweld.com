@@ -94,7 +94,7 @@ export const routes: RouteConfig[] = [
     icon: '🏁',
     order: 5,
     subtabs: [],
-    nav: { visible: true }
+    nav: { visible: false }
   },
   {
     path: '/rag',
@@ -109,7 +109,8 @@ export const routes: RouteConfig[] = [
       { id: 'reranker-config', title: 'Reranker' },
       { id: 'learning-ranker', title: 'Learning Ranker' },
       { id: 'learning-agent', title: 'Learning Agent Studio' },
-      { id: 'indexing', title: 'Indexing' }
+      { id: 'indexing', title: 'Indexing' },
+      { id: 'synthetic', title: 'Synthetic Lab' }
     ],
     nav: { visible: true }
   },

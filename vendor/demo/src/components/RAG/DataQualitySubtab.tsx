@@ -10,6 +10,7 @@ import type {
 } from '@/types/generated';
 import { useActiveRepo } from '@/stores';
 import { RepoSelectorCompact } from '@/components/RAG/RepoSelector';
+import { SyntheticCallout } from '@/components/RAG/SyntheticCallout';
 import { TooltipIcon } from '@/components/ui/TooltipIcon';
 import { chunkSummariesApi, keywordsApi } from '@/api';
 
@@ -190,6 +191,8 @@ export function DataQualitySubtab() {
         </div>
       </div>
 
+      <SyntheticCallout context="data-quality" />
+
       {error && (
         <div
           style={{
@@ -327,6 +330,9 @@ export function DataQualitySubtab() {
           >
             {buildingSummaries ? 'Building…' : 'Build chunk summaries'}
           </button>
+        </div>
+        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--fg-muted)' }}>
+          Cost estimate placeholder: current chunk summary build is deterministic (no LLM billing). When LLM-based enrichment is added, an estimate will be shown before build.
         </div>
       </div>
 

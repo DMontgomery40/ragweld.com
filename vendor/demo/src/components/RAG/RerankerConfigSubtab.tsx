@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useConfigField, useModels } from '@/hooks';
 import { useReranker } from '@/hooks/useReranker';
+import { SyntheticCallout } from '@/components/RAG/SyntheticCallout';
 import { TooltipIcon } from '@/components/ui/TooltipIcon';
 import { ApiKeyStatus } from '@/components/ui/ApiKeyStatus';
 import { ModelPicker } from '@/components/RAG/ModelPicker';
@@ -134,6 +135,8 @@ export function RerankerConfigSubtab() {
           Configure reranking for TriBrid retrieval (learning or cloud).
         </div>
       </div>
+
+      <SyntheticCallout context="reranker-config" />
 
       <div
         style={{
@@ -280,13 +283,13 @@ export function RerankerConfigSubtab() {
               </select>
             </div>
             <div className="input-group">
-              <label>
-                Base model <TooltipIcon name="LEARNING_RERANKER_BASE_MODEL" />
-              </label>
-              <input
-                type="text"
+              <ModelPicker
+                componentType="RERANK"
                 value={learningBaseModel}
-                onChange={(e) => setLearningBaseModel(e.target.value)}
+                onChange={setLearningBaseModel}
+                label="Base model"
+                tooltipKey="LEARNING_RERANKER_BASE_MODEL"
+                allowCustom
               />
             </div>
           </div>
