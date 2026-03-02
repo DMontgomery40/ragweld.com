@@ -26,7 +26,6 @@ This repo powers the public ragweld site and live hosted demo. It is the product
 - Alerting hooks: threshold-based webhook alerts for quality and latency regressions.
 - MCP-native: use ragweld capabilities from IDEs, agents, and automation clients.
 - Parameter glossary: searchable reference for the full config surface.
-- Docs-autopilot keeps GitHub Pages docs aligned from code diffs: [workflow docs](https://dmontgomery40.github.io/ragweld/latest/dev/docs-autopilot/).
 
 ## Current Screenshot Set
 
@@ -42,30 +41,41 @@ This repo powers the public ragweld site and live hosted demo. It is the product
 
 - Docs: [Indexing manual](https://dmontgomery40.github.io/ragweld/latest/manual/indexing/) · [Indexing config](https://dmontgomery40.github.io/ragweld/latest/reference/config/indexing/)
 
-### 3) Learning Agent Studio (train + inspect + promote)
+### 3) Learning Agent Studio run HUD + promotion controls
 
-![Learning Agent Studio](public/screenshots/learning-agent-studio.png)
-
-- Docs: [Training config](https://dmontgomery40.github.io/ragweld/latest/reference/config/training/) · [Reranker workflow](https://dmontgomery40.github.io/ragweld/latest/howto/reranker/)
-
-### 4) Live gradient-descent visualizer for training runs
-
-![Learning visualizer](public/screenshots/learning-agent-visualizer.png)
+![Learning Agent run HUD](public/screenshots/learning-agent-run-hud.png)
 
 - Docs: [Training config](https://dmontgomery40.github.io/ragweld/latest/reference/config/training/) · [Reranker workflow](https://dmontgomery40.github.io/ragweld/latest/howto/reranker/)
 
-### 5) Graph explorer for entity/relationship retrieval
+### 4) Graph explorer for entity/relationship retrieval
 
 ![Graph explorer](public/screenshots/graph-explorer.png)
 
 - Docs: [Retrieval overview](https://dmontgomery40.github.io/ragweld/latest/retrieval/overview/) · [Graph search config](https://dmontgomery40.github.io/ragweld/latest/reference/config/graph_search/)
 
-### 6) Recall gating and memory controls
+### 5) Recall gating and memory controls
 
 ![Recall gating](public/screenshots/recall-gating.png)
 
 - Docs: [Chat config](https://dmontgomery40.github.io/ragweld/latest/reference/config/chat/) · [Semantic cache config](https://dmontgomery40.github.io/ragweld/latest/reference/config/semantic_cache/)
 
+### 6) Infrastructure services + runtime controls
+
+![Infrastructure services](public/screenshots/infrastructure-services.png)
+
+- Docs: [Operations](https://dmontgomery40.github.io/ragweld/latest/operations/) · [Observability](https://dmontgomery40.github.io/ragweld/latest/observability/)
+
+### 7) Knowledge graph canvas drilldown
+
+![Knowledge graph canvas](public/screenshots/knowledge-graph-canvas.png)
+
+- Docs: [Graph retrieval](https://dmontgomery40.github.io/ragweld/latest/retrieval/graph/) · [Graph search config](https://dmontgomery40.github.io/ragweld/latest/reference/config/graph_search/)
+
+### 8) Dockable workspace chooser
+
+![Dock chooser](public/screenshots/dock-chooser.png)
+
+- Docs: [UI manual](https://dmontgomery40.github.io/ragweld/latest/manual/ui/) · [Configuration](https://dmontgomery40.github.io/ragweld/latest/configuration/)
 ## Quickstart
 
 ```bash
