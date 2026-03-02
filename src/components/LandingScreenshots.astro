@@ -3,13 +3,13 @@ const docsBase = 'https://dmontgomery40.github.io/ragweld/latest';
 
 const screenshots = [
   {
-    title: 'API routing and channel overrides',
+    title: 'API routing control plane',
     description:
-      'Generation and enrichment routing in one surface, with HTTP and MCP channel overrides visible in the same control plane.',
+      'Route model traffic per channel with API-first defaults, MCP overrides, and provider readiness visible in one place.',
     src: '/screenshots/routing-api-mcp.png',
     href: `${docsBase}/api/`,
-    hrefLabel: 'Open API docs',
-    alt: 'RAG retrieval generation panel with API and MCP model override controls.',
+    hrefLabel: 'API docs',
+    alt: 'RAG routing panel with API-first model routing and MCP override controls.',
   },
   {
     title: 'Indexing guardrails in production mode',
@@ -17,35 +17,17 @@ const screenshots = [
       'Embedding mismatch detection, index contract lock controls, and guided reindex actions reduce high-cost indexing errors.',
     src: '/screenshots/indexing-guardrails.png',
     href: `${docsBase}/manual/indexing/`,
-    hrefLabel: 'Open indexing guide',
+    hrefLabel: 'Indexing manual',
     alt: 'Code indexing panel with embedding mismatch alerts and model controls.',
   },
   {
-    title: 'Learning Agent Studio',
+    title: 'Learning Agent Studio run HUD',
     description:
-      'Train and promote adapters with visual telemetry, synthetic dataset hooks, and run inspection in one workspace.',
-    src: '/screenshots/learning-agent-studio.png',
+      'Track completed and failed runs side-by-side with run status, duration, active model path, and promotion controls.',
+    src: '/screenshots/learning-agent-run-hud.png',
     href: `${docsBase}/reference/config/training/`,
-    hrefLabel: 'Open training config docs',
-    alt: 'Learning Agent Studio with neural visualizer and inspector panel.',
-  },
-  {
-    title: 'Live training visualizer',
-    description:
-      'Follow gradient-descent motion and run-state telemetry in real time while training is in progress.',
-    src: '/screenshots/learning-agent-visualizer.png',
-    href: `${docsBase}/howto/reranker/`,
-    hrefLabel: 'Open reranker training guide',
-    alt: 'Live learning visualizer with gradient telemetry and run controls.',
-  },
-  {
-    title: 'Graph explorer and entity inspection',
-    description:
-      'Graph retrieval is inspectable directly in-product, with entity lists and neighborhood visualization for corpus debugging.',
-    src: '/screenshots/graph-explorer.png',
-    href: `${docsBase}/retrieval/overview/`,
-    hrefLabel: 'Open retrieval docs',
-    alt: 'Graph explorer view with entity table and relationship graph.',
+    hrefLabel: 'Training reference',
+    alt: 'Learning Agent Studio showing run HUD status panel, run timeline, and training controls.',
   },
   {
     title: 'Recall gating controls',
@@ -53,17 +35,26 @@ const screenshots = [
       'Control how conversational memory is indexed and injected with intensity, recency, and skip-behavior gates.',
     src: '/screenshots/recall-gating.png',
     href: `${docsBase}/reference/config/chat/`,
-    hrefLabel: 'Open chat config docs',
-    alt: 'Chat recall settings panel with retrieval gate controls and tooltip.',
+    hrefLabel: 'Chat config docs',
+    alt: 'Chat recall settings panel with retrieval gate controls and intensity options.',
   },
   {
-    title: 'Chat + dataset iteration loop',
+    title: 'Knowledge graph canvas',
     description:
-      'Ask grounded questions, inspect sources, and keep dataset/eval context close while iterating in the same flow.',
-    src: '/screenshots/chat-and-dataset.png',
-    href: `${docsBase}/manual/search/`,
-    hrefLabel: 'Open search manual',
-    alt: 'Chat view shown alongside dataset context and source references.',
+      'Inspect neighborhood structure directly to validate entity relationships and graph-retrieval behavior.',
+    src: '/screenshots/knowledge-graph-canvas.png',
+    href: `${docsBase}/retrieval/graph/`,
+    hrefLabel: 'Graph retrieval docs',
+    alt: 'Knowledge graph canvas showing entities and connections for retrieval debugging.',
+  },
+  {
+    title: 'Dock chooser for custom layouts',
+    description:
+      'Recompose the workspace quickly by docking the exact tabs and diagnostics needed for the current investigation.',
+    src: '/screenshots/dock-chooser.png',
+    href: `${docsBase}/manual/ui/`,
+    hrefLabel: 'UI manual',
+    alt: 'Dock chooser modal listing workspace tabs for custom layout composition.',
   },
 ];
 ---
