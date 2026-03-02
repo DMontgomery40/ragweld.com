@@ -1,0 +1,181 @@
+{
+  "schema_version": "1.0.0",
+  "last_updated": "2026-03-01",
+  "unit_notes": {
+    "memory_bandwidth": "GB/s",
+    "throughput": "TFLOPS",
+    "throughput_definition": "Dense tensor throughput where applicable; fp32 is CUDA/core throughput"
+  },
+  "gpus": [
+    {
+      "id": "H100",
+      "display_name": "NVIDIA H100 80GB (SXM reference)",
+      "vendor": "NVIDIA",
+      "architecture": "Hopper",
+      "vram_gb": 80,
+      "memory_bandwidth_gbps": 3350,
+      "tflops": {
+        "fp32": 67,
+        "fp16": 989,
+        "bf16": 989,
+        "fp8": 1979
+      },
+      "source_confidence": "high"
+    },
+    {
+      "id": "H200",
+      "display_name": "NVIDIA H200 141GB",
+      "vendor": "NVIDIA",
+      "architecture": "Hopper",
+      "vram_gb": 141,
+      "memory_bandwidth_gbps": 4800,
+      "tflops": {
+        "fp32": 67,
+        "fp16": 989,
+        "bf16": 989,
+        "fp8": 1979
+      },
+      "source_confidence": "high"
+    },
+    {
+      "id": "A100_80G",
+      "display_name": "NVIDIA A100 80GB",
+      "vendor": "NVIDIA",
+      "architecture": "Ampere",
+      "vram_gb": 80,
+      "memory_bandwidth_gbps": 2039,
+      "tflops": {
+        "fp32": 19.5,
+        "fp16": 312,
+        "bf16": 312,
+        "fp8": null
+      },
+      "source_confidence": "high"
+    },
+    {
+      "id": "A100",
+      "display_name": "NVIDIA A100 40GB",
+      "vendor": "NVIDIA",
+      "architecture": "Ampere",
+      "vram_gb": 40,
+      "memory_bandwidth_gbps": 1555,
+      "tflops": {
+        "fp32": 19.5,
+        "fp16": 312,
+        "bf16": 312,
+        "fp8": null
+      },
+      "source_confidence": "high"
+    },
+    {
+      "id": "L40S",
+      "display_name": "NVIDIA L40S 48GB",
+      "vendor": "NVIDIA",
+      "architecture": "Ada Lovelace",
+      "vram_gb": 48,
+      "memory_bandwidth_gbps": 864,
+      "tflops": {
+        "fp32": 91.6,
+        "fp16": 362,
+        "bf16": 362,
+        "fp8": 733
+      },
+      "source_confidence": "medium"
+    },
+    {
+      "id": "L40",
+      "display_name": "NVIDIA L40 48GB",
+      "vendor": "NVIDIA",
+      "architecture": "Ada Lovelace",
+      "vram_gb": 48,
+      "memory_bandwidth_gbps": 864,
+      "tflops": {
+        "fp32": 90.5,
+        "fp16": 181,
+        "bf16": 181,
+        "fp8": 362
+      },
+      "source_confidence": "medium"
+    },
+    {
+      "id": "A6000",
+      "display_name": "NVIDIA RTX A6000 48GB",
+      "vendor": "NVIDIA",
+      "architecture": "Ampere",
+      "vram_gb": 48,
+      "memory_bandwidth_gbps": 768,
+      "tflops": {
+        "fp32": 38.7,
+        "fp16": 155,
+        "bf16": 155,
+        "fp8": null
+      },
+      "source_confidence": "medium"
+    },
+    {
+      "id": "RTX_4090",
+      "display_name": "NVIDIA GeForce RTX 4090 24GB",
+      "vendor": "NVIDIA",
+      "architecture": "Ada Lovelace",
+      "vram_gb": 24,
+      "memory_bandwidth_gbps": 1008,
+      "tflops": {
+        "fp32": 82.6,
+        "fp16": 330,
+        "bf16": 330,
+        "fp8": null
+      },
+      "source_confidence": "medium"
+    },
+    {
+      "id": "RTX_3090",
+      "display_name": "NVIDIA GeForce RTX 3090 24GB",
+      "vendor": "NVIDIA",
+      "architecture": "Ampere",
+      "vram_gb": 24,
+      "memory_bandwidth_gbps": 936,
+      "tflops": {
+        "fp32": 35.6,
+        "fp16": 142,
+        "bf16": 142,
+        "fp8": null
+      },
+      "source_confidence": "medium"
+    },
+    {
+      "id": "RTX_5090",
+      "display_name": "NVIDIA GeForce RTX 5090 32GB",
+      "vendor": "NVIDIA",
+      "architecture": "Blackwell (consumer)",
+      "vram_gb": 32,
+      "memory_bandwidth_gbps": 1792,
+      "tflops": {
+        "fp32": 105,
+        "fp16": 419,
+        "bf16": 419,
+        "fp8": 838
+      },
+      "source_confidence": "estimated"
+    },
+    {
+      "id": "B200",
+      "display_name": "NVIDIA B200 192GB",
+      "vendor": "NVIDIA",
+      "architecture": "Blackwell",
+      "vram_gb": 192,
+      "memory_bandwidth_gbps": 8000,
+      "tflops": {
+        "fp32": 90,
+        "fp16": 2250,
+        "bf16": 2250,
+        "fp8": 4500
+      },
+      "source_confidence": "estimated"
+    }
+  ],
+  "sources": [
+    "https://resources.nvidia.com/",
+    "https://www.nvidia.com/en-us/data-center/",
+    "https://www.techpowerup.com/gpu-specs/"
+  ]
+}
