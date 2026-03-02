@@ -1,99 +1,90 @@
 ---
 const docsBase = 'https://dmontgomery40.github.io/ragweld/latest';
 
-const screenshots = [
+const gallery = [
   {
-    title: 'API routing and channel overrides',
+    title: 'Learning visualizer with run HUD',
     description:
-      'Generation and enrichment routing in one surface, with HTTP and MCP channel overrides visible in the same control plane.',
-    src: '/screenshots/routing-api-mcp.png',
-    href: `${docsBase}/api/`,
-    hrefLabel: 'Open API docs',
-    alt: 'RAG retrieval generation panel with API and MCP model override controls.',
-  },
-  {
-    title: 'Indexing guardrails in production mode',
-    description:
-      'Embedding mismatch detection, index contract lock controls, and guided reindex actions reduce high-cost indexing errors.',
-    src: '/screenshots/indexing-guardrails.png',
-    href: `${docsBase}/manual/indexing/`,
-    hrefLabel: 'Open indexing guide',
-    alt: 'Code indexing panel with embedding mismatch alerts and model controls.',
-  },
-  {
-    title: 'Learning Agent Studio',
-    description:
-      'Train and promote adapters with visual telemetry, synthetic dataset hooks, and run inspection in one workspace.',
-    src: '/screenshots/learning-agent-studio.png',
-    href: `${docsBase}/reference/config/training/`,
-    hrefLabel: 'Open training config docs',
-    alt: 'Learning Agent Studio with neural visualizer and inspector panel.',
-  },
-  {
-    title: 'Live training visualizer',
-    description:
-      'Follow gradient-descent motion and run-state telemetry in real time while training is in progress.',
+      'Live gradient-descent trajectory and run telemetry stay visible while you tune training settings and promotion thresholds.',
     src: '/screenshots/learning-agent-visualizer.png',
-    href: `${docsBase}/howto/reranker/`,
-    hrefLabel: 'Open reranker training guide',
-    alt: 'Live learning visualizer with gradient telemetry and run controls.',
+    href: `${docsBase}/reference/config/training/`,
+    hrefLabel: 'Training reference',
+    alt: 'Live training visualizer with run metrics and inspector controls.',
   },
   {
-    title: 'Graph explorer and entity inspection',
+    title: 'Recall gates and memory intensity control',
     description:
-      'Graph retrieval is inspectable directly in-product, with entity lists and neighborhood visualization for corpus debugging.',
-    src: '/screenshots/graph-explorer.png',
-    href: `${docsBase}/retrieval/overview/`,
-    hrefLabel: 'Open retrieval docs',
-    alt: 'Graph explorer view with entity table and relationship graph.',
-  },
-  {
-    title: 'Recall gating controls',
-    description:
-      'Control how conversational memory is indexed and injected with intensity, recency, and skip-behavior gates.',
+      'Decide when recall memory should inject context, with skip rules and intensity defaults that prevent over-injection.',
     src: '/screenshots/recall-gating.png',
     href: `${docsBase}/reference/config/chat/`,
-    hrefLabel: 'Open chat config docs',
-    alt: 'Chat recall settings panel with retrieval gate controls and tooltip.',
+    hrefLabel: 'Chat config',
+    alt: 'Recall settings with smart gating, intensity, and recency controls.',
   },
   {
-    title: 'Chat + dataset iteration loop',
+    title: 'Infrastructure services panel',
     description:
-      'Ask grounded questions, inspect sources, and keep dataset/eval context close while iterating in the same flow.',
+      'Postgres, Neo4j, Prometheus, and runtime controls are accessible directly in the operator surface.',
+    src: '/screenshots/infrastructure-services.png',
+    href: `${docsBase}/operations/`,
+    hrefLabel: 'Operations docs',
+    alt: 'Infrastructure services dashboard with runtime and container controls.',
+  },
+  {
+    title: 'Knowledge graph canvas',
+    description:
+      'Entity neighborhoods and relationship structure can be inspected directly during retrieval debugging.',
+    src: '/screenshots/knowledge-graph-canvas.png',
+    href: `${docsBase}/retrieval/graph/`,
+    hrefLabel: 'Graph retrieval docs',
+    alt: 'Knowledge graph canvas with linked entities and relationship legend.',
+  },
+  {
+    title: 'Dock chooser for custom operator layouts',
+    description:
+      'Recompose the workspace quickly by docking the exact tabs and diagnostics you need for the current investigation.',
+    src: '/screenshots/dock-chooser.png',
+    href: `${docsBase}/manual/ui/`,
+    hrefLabel: 'UI manual',
+    alt: 'Dock chooser modal listing workspace tabs for custom layout composition.',
+  },
+  {
+    title: 'Chat plus dataset/eval iteration loop',
+    description:
+      'Run grounded chat while keeping dataset and evidence context close for rapid eval iteration.',
     src: '/screenshots/chat-and-dataset.png',
     href: `${docsBase}/manual/search/`,
-    hrefLabel: 'Open search manual',
-    alt: 'Chat view shown alongside dataset context and source references.',
+    hrefLabel: 'Search manual',
+    alt: 'Chat panel shown with dataset and evidence context nearby.',
   },
 ];
 ---
 
-<section id="screenshots" class="bg-[#09090b] pb-20">
+<section id="screenshots" class="bg-[#09090b] pb-24">
   <div class="mx-auto max-w-7xl px-4">
     <div class="mx-auto max-w-3xl text-center">
-      <h2 class="text-3xl font-bold text-white">Workbench snapshots</h2>
+      <h2 class="text-3xl font-bold text-white">Operational snapshots</h2>
       <p class="mt-3 text-gray-400">
-        Current production surfaces across API routing, indexing, training, graph inspection, and recall policy.
+        Current workbench surfaces across training, retrieval, memory policy, and infra operations.
       </p>
     </div>
 
-    <div class="mt-10 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+    <div class="mt-10 flex snap-x snap-mandatory gap-6 overflow-x-auto pb-4 [scrollbar-width:thin]">
       {
-        screenshots.map(({ title, description, src, alt, href, hrefLabel }) => (
-          <figure class="overflow-hidden rounded-xl border border-[#27272a] bg-[#0f0f12]">
+        gallery.map(({ title, description, src, alt, href, hrefLabel }) => (
+          <figure class="group min-w-[88vw] snap-start overflow-hidden rounded-2xl border border-[#242833] bg-[#0f1118] md:min-w-[720px] lg:min-w-[820px]">
             <a href={src} target="_blank" rel="noopener" class="block">
               <img
                 src={src}
                 alt={alt}
                 loading="lazy"
                 decoding="async"
-                class="h-56 w-full border-b border-[#27272a] object-cover object-left-top"
+                class="h-[320px] w-full border-b border-[#242833] object-cover object-left-top transition duration-500 group-hover:scale-[1.015] md:h-[430px]"
               />
             </a>
-            <figcaption class="p-6">
-              <div class="text-sm font-semibold text-[#64748b]">{title}</div>
-              <p class="mt-2 text-sm text-gray-400">{description}</p>
-              <div class="mt-4 flex items-center justify-between gap-2">
+            <figcaption class="space-y-3 p-6">
+              <div class="text-lg font-semibold text-white">{title}</div>
+              <p class="text-sm leading-relaxed text-gray-400">{description}</p>
+              <div class="flex items-center justify-between gap-2">
                 <a
                   href={href}
                   target="_blank"
@@ -102,7 +93,7 @@ const screenshots = [
                 >
                   {hrefLabel}
                 </a>
-                <span class="text-xs text-gray-500">Click image to enlarge</span>
+                <span class="text-xs text-gray-500">Scroll for more screenshots</span>
               </div>
             </figcaption>
           </figure>

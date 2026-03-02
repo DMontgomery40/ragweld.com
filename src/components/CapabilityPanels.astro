@@ -1,147 +1,153 @@
 ---
 const docsBase = 'https://dmontgomery40.github.io/ragweld/latest';
 
-const panels = [
+const stories = [
   {
-    eyebrow: 'API-first core',
-    badge: 'API > MCP',
-    title: 'Use the HTTP API as the contract. MCP rides on top of it.',
+    eyebrow: 'API-first control plane',
+    badge: 'API / MCP',
+    title: 'Run production through API contracts, then layer MCP clients on top',
     description:
-      'ragweld is API-first in production: routing, retrieval, evals, and observability all anchor to /api. MCP is built in for agent tooling, but the API surface is the primary integration layer.',
+      'Provider routing, per-channel model overrides, health checks, and enrichment behavior are managed in one place. API is the operational default; MCP is a first-class client surface over the same core capabilities.',
+    points: [
+      'HTTP API as the canonical integration surface',
+      'MCP channel routing supported without duplicating config',
+      'Provider readiness and model assignment visibility in one panel',
+    ],
     src: '/screenshots/routing-api-mcp.png',
-    alt: 'RAG retrieval generation panel showing HTTP and MCP model routing overrides.',
+    alt: 'RAG routing panel showing API and MCP model routing controls.',
     href: `${docsBase}/api/`,
     hrefLabel: 'API docs',
     secondaryHref: `${docsBase}/integrations/mcp/`,
     secondaryLabel: 'MCP integration',
-    sizeClass: 'lg:col-span-2',
   },
   {
-    eyebrow: 'Indexing guardrails',
-    title: 'Deep tuning surface, but guarded against easy failures',
+    eyebrow: 'Synthetic data + training studios',
+    title: 'Generate datasets, train adapters, inspect gradients, and promote safely',
     description:
-      'Embedding mismatch detection, index contract locking, and guided reindex actions keep high-option indexing from drifting silently in production.',
+      'Synthetic Dataset Builder and training configuration live in the same studio surface. You can run experiments, inspect live telemetry, and promote or rollback based on measurable behavior.',
+    points: [
+      'Synthetic dataset entry points wired into training flow',
+      'Live visualizer and run inspector for in-flight monitoring',
+      'Checkpoint, promote, rollback, and rerun controls in-product',
+    ],
+    src: '/screenshots/learning-agent-studio.png',
+    alt: 'Learning Agent Studio with neural visualizer and training inspector.',
+    href: `${docsBase}/howto/reranker/`,
+    hrefLabel: 'Training workflow',
+    secondaryHref: `${docsBase}/reference/config/training/`,
+    secondaryLabel: 'Training config reference',
+    reverse: true,
+  },
+  {
+    eyebrow: 'Guardrailed indexing',
+    title: 'High-option indexing without high-risk misconfiguration',
+    description:
+      'Embedding mismatch alerts, index contract locks, and guided reindex actions prevent silent drift. Advanced controls stay available, but the UI pushes operators into safe recovery paths.',
+    points: [
+      'Mismatch detection with one-click reindex actions',
+      'Contract lock protection for corpus-level consistency',
+      'Config surface stays deep while defaulting toward safety',
+    ],
     src: '/screenshots/indexing-guardrails.png',
-    alt: 'Indexing screen with embedding mismatch warnings, index contract lock notices, and model assignment controls.',
+    alt: 'Indexing panel with mismatch warning, corpus controls, and guided reindex actions.',
     href: `${docsBase}/manual/indexing/`,
     hrefLabel: 'Indexing manual',
     secondaryHref: `${docsBase}/reference/config/indexing/`,
     secondaryLabel: 'Indexing config reference',
-    sizeClass: '',
   },
   {
-    eyebrow: 'Training studios',
-    title: 'Train reranker and agent adapters in-product',
+    eyebrow: 'Graph retrieval + recall policy',
+    title: 'Combine structural retrieval with memory gates and semantic cache controls',
     description:
-      'Dual training studios support live telemetry, promotion gates, rollback paths, and run inspection so quality moves are operational, not guesswork.',
-    src: '/screenshots/learning-agent-studio.png',
-    alt: 'Learning Agent Studio with neural visualizer and training controls in split layout.',
-    href: `${docsBase}/howto/reranker/`,
-    hrefLabel: 'Training workflow',
-    secondaryHref: `${docsBase}/reference/config/training/`,
-    secondaryLabel: 'Training config',
-    sizeClass: 'lg:col-span-2',
-  },
-  {
-    eyebrow: 'Live gradient descent',
-    title: 'Watch training dynamics while runs are still active',
-    description:
-      'Neural visualizer panels show loss movement and stability in real time, so you can decide when to checkpoint, promote, or rollback without waiting for post-hoc reports.',
-    src: '/screenshots/learning-agent-visualizer.png',
-    alt: 'Learning visualizer panel showing live gradient descent telemetry and inspector controls.',
-    href: `${docsBase}/reference/config/training/`,
-    hrefLabel: 'Visualizer and training settings',
-    secondaryHref: `${docsBase}/howto/reranker/`,
-    secondaryLabel: 'Reranker training guide',
-    sizeClass: '',
-  },
-  {
-    eyebrow: 'Graph + retrieval',
-    title: 'Inspect entities, relationships, and retrieval context directly',
-    description:
-      'Graph explorer and retrieval controls are in the same workbench, so structural signals are measurable, debuggable, and part of normal iteration.',
+      'Entity graph navigation, retrieval tuning, and recall gating are all visible in the same workbench. This makes chat memory injection and graph-powered retrieval measurable and debuggable, not hidden.',
+    points: [
+      'Interactive graph explorer with entity/relationship context',
+      'Recall intensity and skip-policy controls per message pattern',
+      'Semantic cache hooks for repeated-query token savings',
+    ],
     src: '/screenshots/graph-explorer.png',
-    alt: 'Graph explorer with entity table and interactive relationship visualization.',
+    alt: 'Graph Explorer tab with entities list and interactive graph visualization.',
     href: `${docsBase}/retrieval/overview/`,
     hrefLabel: 'Retrieval overview',
-    secondaryHref: `${docsBase}/reference/config/graph_search/`,
-    secondaryLabel: 'Graph search config',
-    sizeClass: '',
+    secondaryHref: `${docsBase}/reference/config/chat/`,
+    secondaryLabel: 'Chat + recall config',
+    reverse: true,
   },
   {
-    eyebrow: 'Recall + semantic cache',
-    title: 'Control memory retrieval, not just chat history storage',
+    eyebrow: 'Infra + observability',
+    title: 'Operate services, tracing, and dashboards from one runtime surface',
     description:
-      'Smart gating and intensity controls decide when conversational memory is injected, while semantic cache controls token spend in repeated query patterns.',
-    src: '/screenshots/recall-gating.png',
-    alt: 'Chat recall settings with retrieval gate toggles, intensity controls, and recency weighting.',
-    href: `${docsBase}/reference/config/chat/`,
-    hrefLabel: 'Chat settings reference',
-    secondaryHref: `${docsBase}/reference/config/semantic_cache/`,
-    secondaryLabel: 'Semantic cache config',
-    sizeClass: '',
-  },
-  {
-    eyebrow: 'Docs Autopilot',
-    title: 'Docs are generated and published from code changes',
-    description:
-      'MkDocs + mike publishing is wired to docs-autopilot. Update source-of-truth models and prompts; generated docs catch up automatically on push.',
-    src: '/screenshots/indexing-settings-with-grafana-on-side.png',
-    alt: 'Indexing controls shown alongside embedded Grafana for operational documentation context.',
-    href: `${docsBase}/dev/docs-autopilot/`,
-    hrefLabel: 'Docs-autopilot workflow',
-    secondaryHref: `${docsBase}/configuration/`,
-    secondaryLabel: 'Configuration docs',
-    sizeClass: '',
+      'Infrastructure controls, service states, and observability integration are part of the same operator UI. That shortens debug loops when routing, indexing, or model behavior changes.',
+    points: [
+      'Service health and runtime controls in-app',
+      'Tracing and metrics integration connected to the same config',
+      'UI docking lets operators keep diagnostics visible while changing settings',
+    ],
+    src: '/screenshots/infrastructure-services.png',
+    alt: 'Infrastructure services panel with postgres, neo4j, prometheus, and docker status controls.',
+    href: `${docsBase}/observability/`,
+    hrefLabel: 'Observability docs',
+    secondaryHref: `${docsBase}/manual/ui/`,
+    secondaryLabel: 'UI operations guide',
   },
 ];
 ---
 
-<section id="capabilities" class="mt-12">
-  <div class="grid gap-6 lg:grid-cols-3">
-    {
-      panels.map((panel) => (
-        <article class={`group overflow-hidden rounded-2xl border border-[#27272a] bg-[#0f0f12] ${panel.sizeClass}`}>
-          <a href={panel.href} target="_blank" rel="noopener noreferrer" class="block">
-            <div class="relative h-52 overflow-hidden border-b border-[#27272a] md:h-60">
-              <img
-                src={panel.src}
-                alt={panel.alt}
-                loading="lazy"
-                decoding="async"
-                class="h-full w-full object-cover object-left-top transition duration-500 group-hover:scale-[1.02]"
-              />
-              <div class="absolute inset-0 bg-gradient-to-t from-[#0f0f12] via-transparent to-transparent"></div>
-              <div class="absolute left-4 top-4 inline-flex items-center gap-2 rounded-full border border-[#374151] bg-[#09090bcc] px-3 py-1 text-xs font-semibold text-[#cbd5e1]">
-                {panel.eyebrow}
-                {panel.badge ? <span class="text-[#fbbf24]">• {panel.badge}</span> : null}
-              </div>
+<section id="capabilities" class="mt-14 space-y-8">
+  {
+    stories.map((story) => (
+      <article class="overflow-hidden rounded-3xl border border-[#20222a] bg-gradient-to-br from-[#0c0e14] via-[#0a0b10] to-[#06070b] shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
+        <div class:list={["grid gap-0 lg:grid-cols-2", story.reverse ? "lg:[&>*:first-child]:order-2" : ""]}>
+          <a href={story.href} target="_blank" rel="noopener noreferrer" class="group relative block border-b border-[#1f2330] lg:border-b-0 lg:border-r">
+            <img
+              src={story.src}
+              alt={story.alt}
+              loading="lazy"
+              decoding="async"
+              class="h-[300px] w-full object-cover object-left-top transition duration-500 group-hover:scale-[1.02] md:h-[380px]"
+            />
+            <div class="absolute inset-0 bg-gradient-to-t from-[#090b12f2] via-[#090b1240] to-transparent"></div>
+            <div class="absolute left-5 top-5 inline-flex items-center gap-2 rounded-full border border-[#334155] bg-[#0b1220cc] px-3 py-1 text-xs font-semibold text-[#cbd5e1]">
+              {story.eyebrow}
+              {story.badge ? <span class="text-[#fbbf24]">{story.badge}</span> : null}
             </div>
           </a>
-          <div class="space-y-3 p-6">
-            <h3 class="text-xl font-bold leading-tight text-white">{panel.title}</h3>
-            <p class="text-sm leading-relaxed text-gray-400">{panel.description}</p>
-            <div class="flex flex-wrap gap-2 pt-1">
+
+          <div class="flex flex-col justify-between gap-5 p-6 md:p-8">
+            <div class="space-y-4">
+              <h3 class="text-2xl font-semibold leading-tight text-white">{story.title}</h3>
+              <p class="text-sm leading-relaxed text-gray-300">{story.description}</p>
+              <ul class="space-y-2 text-sm text-gray-400">
+                {story.points.map((point) => (
+                  <li class="flex items-start gap-2">
+                    <span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#64748b]" aria-hidden="true"></span>
+                    <span>{point}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div class="flex flex-wrap gap-2">
               <a
-                href={panel.href}
+                href={story.href}
                 target="_blank"
                 rel="noopener noreferrer"
-                class="inline-flex items-center rounded-md border border-[#334155] bg-[#111827] px-3 py-1.5 text-xs font-semibold text-[#cbd5e1] hover:border-[#64748b] hover:text-white transition-colors"
+                class="inline-flex items-center rounded-md border border-[#334155] bg-[#111827] px-3 py-2 text-xs font-semibold text-[#cbd5e1] hover:border-[#64748b] hover:text-white transition-colors"
               >
-                {panel.hrefLabel}
+                {story.hrefLabel}
               </a>
               <a
-                href={panel.secondaryHref}
+                href={story.secondaryHref}
                 target="_blank"
                 rel="noopener noreferrer"
-                class="inline-flex items-center rounded-md border border-[#27272a] px-3 py-1.5 text-xs font-semibold text-gray-400 hover:text-gray-200 hover:border-[#3f3f46] transition-colors"
+                class="inline-flex items-center rounded-md border border-[#2a2d35] px-3 py-2 text-xs font-semibold text-gray-300 hover:border-[#4b5563] hover:text-white transition-colors"
               >
-                {panel.secondaryLabel}
+                {story.secondaryLabel}
               </a>
             </div>
           </div>
-        </article>
-      ))
-    }
-  </div>
+        </div>
+      </article>
+    ))
+  }
 </section>
