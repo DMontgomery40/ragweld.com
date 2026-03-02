@@ -4,6 +4,7 @@
 
 [functions]
   directory = "netlify/functions"
+  included_files = ["crucible/data/static-pricing.json", "crucible/data/models.json"]
 
 [functions."deepseek-mcp"]
   node_bundler = "esbuild"

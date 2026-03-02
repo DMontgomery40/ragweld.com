@@ -1,0 +1,25 @@
+You are a dedicated research worker updating glossary tooltips.
+
+Inputs:
+- Source glossary JSON: __SRC__
+- Batch keys JSONL: __BATCH_FILE__
+- Output path: __OUT_FILE__
+
+Required output:
+- Write ONLY a JSON array to __OUT_FILE__.
+- Array item schema: {"key": string, "definition": string, "links": [{"text": string, "href": string}], "badges": []}
+
+Requirements for each key in batch:
+1) Find the matching term in source glossary by key.
+2) Rewrite definition to be verbose, educational, and implementation-specific.
+3) Do web research (no fabricated sources).
+4) Provide EXACTLY 4 links.
+5) At least 1 link must be arXiv and should be the most recent relevant paper possible (prefer 2026; otherwise >= 2025-06).
+6) Other links should be high-authority sources and also >= 2025-06 when possible.
+7) Validate all links with curl (follow redirects) and exclude dead/unreachable URLs.
+8) Preserve key exactly; preserve badges where practical.
+
+Quality constraints:
+- Educational tone only, no marketing language.
+- Do not modify any file except output path.
+- If a key is hard to map directly, infer nearest relevant technical topic and still provide rigorous sources.

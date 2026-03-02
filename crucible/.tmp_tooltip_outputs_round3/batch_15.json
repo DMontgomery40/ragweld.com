@@ -1,0 +1,264 @@
+[
+  {
+    "key": "TOPK_DENSE",
+    "definition": "TOPK_DENSE sets how many semantic candidates are pulled from the dense index before fusion. In practice, this controls the recall ceiling for meaning-based matches: if it is too low, relevant chunks can be dropped before reranking ever sees them; if it is too high, latency and downstream rerank cost grow quickly. Tune it against your corpus distribution and query mix by tracking recall@k, answer grounding rate, and p95 latency together, not in isolation. A common pattern is to increase TOPK_DENSE when user questions are abstract or paraphrased, then counterbalance compute by tightening reranker depth or pruning thresholds later in the pipeline.",
+    "links": [
+      {
+        "text": "Topo-RAG: Retrieval-Augmented Generation with Topology-Aware Retrieval (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.10215"
+      },
+      {
+        "text": "Qdrant Hybrid Queries",
+        "href": "https://qdrant.tech/documentation/concepts/hybrid-queries/"
+      },
+      {
+        "text": "Qdrant Query Points API (limit and retrieval controls)",
+        "href": "https://api.qdrant.tech/master/api-reference/search/query-points"
+      },
+      {
+        "text": "Elasticsearch Reciprocal Rank Fusion (RRF)",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Affects latency",
+        "class": "info"
+      },
+      {
+        "text": "Semantic matches",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "TOPK_SPARSE",
+    "definition": "TOPK_SPARSE sets how many lexical candidates are retrieved from sparse scoring (BM25-style) before hybrid fusion. This value is critical for exact-match behavior such as identifiers, SKU-like tokens, config names, and error strings that dense embeddings can blur. If TOPK_SPARSE is too low, precision may look good while recall silently collapses on keyword-heavy workloads; if too high, you can over-admit noisy boilerplate and increase rerank pressure. Evaluate it jointly with tokenizer configuration and fusion weights so sparse evidence remains a strong but not dominant signal.",
+    "links": [
+      {
+        "text": "Hybrid Retrieval for Multilingual RAG Systems (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2512.12694"
+      },
+      {
+        "text": "Elasticsearch BM25 Similarity",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/index-modules-similarity.html"
+      },
+      {
+        "text": "OpenSearch Hybrid Query DSL",
+        "href": "https://docs.opensearch.org/latest/query-dsl/compound/hybrid/"
+      },
+      {
+        "text": "Elasticsearch Reciprocal Rank Fusion (RRF)",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Affects latency",
+        "class": "info"
+      },
+      {
+        "text": "Keyword matches",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "TRACE_AUTO_LS",
+    "definition": "TRACE_AUTO_LS controls whether the UI should automatically open a LangSmith run view after request completion. It does not change retrieval quality directly, but it changes debugging speed by reducing the friction between an anomalous response and its trace evidence. Keep it enabled in active tuning sessions where fast trace inspection matters, and disable it in high-throughput workflows where constant context switching is distracting. If this flag is enabled while external tracing is disabled, the expected behavior should degrade gracefully to local trace views rather than broken deep-links.",
+    "links": [
+      {
+        "text": "AgentTrace: Comprehensive Tracing for AI Agents (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.10133"
+      },
+      {
+        "text": "LangSmith Observability Quickstart",
+        "href": "https://docs.langchain.com/langsmith/observability-quickstart"
+      },
+      {
+        "text": "LangSmith Environment Variables",
+        "href": "https://docs.langchain.com/langsmith/env-var"
+      },
+      {
+        "text": "LangSmith Trace with OpenTelemetry",
+        "href": "https://docs.langchain.com/langsmith/trace-with-opentelemetry"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TRACE_RETENTION",
+    "definition": "TRACE_RETENTION defines how long trace records are kept before pruning. Retention is a tradeoff between forensic depth and operational cost: longer windows improve post-incident analysis and regression investigations, while shorter windows limit storage growth and reduce compliance surface area. Set this value based on your incident review cadence and model rollout cycle, then validate that pruning does not remove traces needed for reproducibility. In production, align retention with data-governance policy and downstream index lifecycle settings so trace deletion is predictable and auditable.",
+    "links": [
+      {
+        "text": "GraphTracer: Tracing Dynamic Dataflow in Agentic AI Systems (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2510.10581"
+      },
+      {
+        "text": "Elasticsearch Index Lifecycle Management (ILM)",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/index-lifecycle-management.html"
+      },
+      {
+        "text": "OpenSearch Index State Management (ISM)",
+        "href": "https://docs.opensearch.org/latest/im-plugin/ism/index/"
+      },
+      {
+        "text": "LangSmith Data Purging and Compliance",
+        "href": "https://docs.langchain.com/langsmith/data-purging-compliance"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TRACE_SAMPLING_RATE",
+    "definition": "TRACE_SAMPLING_RATE sets the fraction of requests that emit full traces. Higher sampling improves visibility into rare routing failures and latency spikes, but increases telemetry volume, cost, and operator noise. Lower sampling is cheaper but can miss edge cases unless paired with rule-based overrides for errors, timeouts, or high-value tenants. A robust strategy is adaptive sampling: keep a low baseline for normal traffic and automatically raise sampling around deployments, incidents, or anomalous metrics.",
+    "links": [
+      {
+        "text": "AgentTrace: Comprehensive Tracing for AI Agents (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.10133"
+      },
+      {
+        "text": "OpenTelemetry Trace SDK (samplers and processors)",
+        "href": "https://opentelemetry.io/docs/specs/otel/trace/sdk/"
+      },
+      {
+        "text": "OpenTelemetry Trace API",
+        "href": "https://opentelemetry.io/docs/specs/otel/trace/api/"
+      },
+      {
+        "text": "LangSmith Trace with OpenTelemetry",
+        "href": "https://docs.langchain.com/langsmith/trace-with-opentelemetry"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Cost control",
+        "class": "info"
+      },
+      {
+        "text": "Observability",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "TRACING_ENABLED",
+    "definition": "TRACING_ENABLED is the master switch for request-level trace capture in the retrieval and generation pipeline. When enabled, each request can emit structured events that explain routing decisions, retrieval candidates, rerank outcomes, and timing breakdowns. This setting is foundational for debugging because it turns opaque failures into inspectable execution paths. In production, keep it enabled with controlled sampling so you retain diagnostic coverage without overwhelming observability storage.",
+    "links": [
+      {
+        "text": "AgentTrace: Comprehensive Tracing for AI Agents (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.10133"
+      },
+      {
+        "text": "OpenTelemetry Trace API",
+        "href": "https://opentelemetry.io/docs/specs/otel/trace/api/"
+      },
+      {
+        "text": "OpenTelemetry Trace SDK",
+        "href": "https://opentelemetry.io/docs/specs/otel/trace/sdk/"
+      },
+      {
+        "text": "LangSmith Observability Concepts",
+        "href": "https://docs.langchain.com/langsmith/observability-concepts"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TRACING_MODE",
+    "definition": "TRACING_MODE selects the trace backend behavior (for example local-only, external export, or disabled pathways in mixed environments). This mode determines where spans are emitted, which metadata is attached, and how operators inspect runs during incident triage. Choose a mode that matches deployment stage: local views for rapid iteration, full OpenTelemetry export for shared production observability, and controlled fallback modes for constrained environments. Ensure mode changes are tested with synthetic requests so trace continuity does not break across upgrades.",
+    "links": [
+      {
+        "text": "AgentTrace: Comprehensive Tracing for AI Agents (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.10133"
+      },
+      {
+        "text": "LangSmith Trace with OpenTelemetry",
+        "href": "https://docs.langchain.com/langsmith/trace-with-opentelemetry"
+      },
+      {
+        "text": "OpenTelemetry Trace SDK",
+        "href": "https://opentelemetry.io/docs/specs/otel/trace/sdk/"
+      },
+      {
+        "text": "LangSmith Observability Concepts",
+        "href": "https://docs.langchain.com/langsmith/observability-concepts"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TRIBRID_EDITION",
+    "definition": "TRIBRID_EDITION identifies which capability tier is active and therefore which features, limits, and integrations should be exposed. In practice, edition gating should be implemented as explicit, testable policy checks rather than implicit UI-only toggles, so behavior remains consistent across API and frontend. This field also drives operational assumptions such as default observability depth, throughput ceilings, and support for advanced retrieval controls. Treat edition transitions as deployment events and validate compatibility paths to avoid silent behavior drift for existing tenants.",
+    "links": [
+      {
+        "text": "Flying: Inference as a Sustainable and Scalable Serverless Function (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.22593"
+      },
+      {
+        "text": "OpenFeature Flag Evaluation Specification",
+        "href": "https://openfeature.dev/specification/sections/flag-evaluation/"
+      },
+      {
+        "text": "LaunchDarkly Getting Started (feature flag operations)",
+        "href": "https://launchdarkly.com/docs/getting-started"
+      },
+      {
+        "text": "LangSmith Environment Variables (deployment-level configuration)",
+        "href": "https://docs.langchain.com/langsmith/env-var"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Feature gating",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "TRIBRID_FUSION",
+    "definition": "TRIBRID_FUSION configures how dense, sparse, and graph-derived candidates are combined before final reranking. The fusion method (for example weighted sum vs. rank fusion) controls whether the system favors consensus across signals or aggressively promotes a single strong channel. Strong fusion design is workload-dependent: code and identifier-heavy corpora often need lexical strength, while conceptual QA benefits from semantic breadth and graph context expansion. Tune fusion with held-out query sets and monitor per-signal contribution so failures can be traced to the responsible retrieval path.",
+    "links": [
+      {
+        "text": "Topo-RAG: Retrieval-Augmented Generation with Topology-Aware Retrieval (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.10215"
+      },
+      {
+        "text": "Qdrant Hybrid Queries",
+        "href": "https://qdrant.tech/documentation/concepts/hybrid-queries/"
+      },
+      {
+        "text": "Elasticsearch Reciprocal Rank Fusion (RRF)",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html"
+      },
+      {
+        "text": "OpenSearch Hybrid Query DSL",
+        "href": "https://docs.opensearch.org/latest/query-dsl/compound/hybrid/"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TRIBRID_LOG_PATH",
+    "definition": "TRIBRID_LOG_PATH specifies where local runtime logs and trace artifacts are written on disk. A stable, writable path is required for reproducibility workflows such as replaying failure cases, auditing retrieval decisions, and comparing behavior across model/version changes. In multi-process deployments, this path should be paired with rotation and retention policy to prevent unbounded growth and partial-write corruption. Treat log-path configuration as part of operational hardening: explicit permissions, predictable lifecycle, and compatibility with your observability export strategy.",
+    "links": [
+      {
+        "text": "GraphTracer: Tracing Dynamic Dataflow in Agentic AI Systems (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2510.10581"
+      },
+      {
+        "text": "OpenTelemetry Trace SDK",
+        "href": "https://opentelemetry.io/docs/specs/otel/trace/sdk/"
+      },
+      {
+        "text": "Elasticsearch Index Lifecycle Management (ILM)",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/index-lifecycle-management.html"
+      },
+      {
+        "text": "LangSmith Data Purging and Compliance",
+        "href": "https://docs.langchain.com/langsmith/data-purging-compliance"
+      }
+    ],
+    "badges": []
+  }
+]

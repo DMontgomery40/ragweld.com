@@ -1,0 +1,255 @@
+[
+  {
+    "key": "LEARNING_RERANKER_VISUALIZER_SCRUB_HISTORY",
+    "definition": "Controls timeline scrubbing in the learning-reranker visualizer so you can freeze playback at a specific training step and inspect how states evolved up to that point. In practice, this is the forensic control for diagnosing instability: you can pause on the first divergence, then compare score movement, gradient behavior, and rank ordering changes before and after that moment. When scrubbing is active, you are prioritizing deterministic inspection over live monitoring, which is usually the right mode for post-run root-cause analysis. Use this when best-checkpoint and last-checkpoint behavior disagree, or when live playback hides short transient failures.",
+    "links": [
+      {
+        "text": "Animated-LLM: Evaluating Interactive Animation Pipelines with LLM Components (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.04213"
+      },
+      {
+        "text": "TensorBoard Scalars: Time-Series Inspection Patterns",
+        "href": "https://www.tensorflow.org/tensorboard/scalars_and_keras"
+      },
+      {
+        "text": "Matplotlib Interactive Figures and Event-Loop Behavior",
+        "href": "https://matplotlib.org/stable/users/explain/figure/interactive_guide.html"
+      },
+      {
+        "text": "MDN requestAnimationFrame: Frame-Synchronized Timeline Rendering",
+        "href": "https://developer.mozilla.org/en-US/docs/Web/API/Window/requestAnimationFrame"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Timeline forensics",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "LEARNING_RERANKER_VISUALIZER_SHOW_VECTOR_FIELD",
+    "definition": "Toggles the vector-field overlay used to visualize local direction and intensity of motion in the reranker trajectory view. With this enabled, you can quickly see whether updates are converging smoothly, rotating around a basin, or oscillating in conflicting directions, which is useful when tuning learning rate and regularization. Disable it when you need maximum rendering throughput or a cleaner presentation for non-technical review. Treat this as a diagnostic rendering layer: it does not change model training, only how training dynamics are interpreted.",
+    "links": [
+      {
+        "text": "Time-Variant Vector Field Visualization on Sparse Trajectories (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2501.05084"
+      },
+      {
+        "text": "Three.js ArrowHelper for Directional Vector Rendering",
+        "href": "https://threejs.org/docs/#api/en/helpers/ArrowHelper"
+      },
+      {
+        "text": "Matplotlib Quiver API for Vector-Field Plotting",
+        "href": "https://matplotlib.org/stable/api/_as_gen/matplotlib.pyplot.quiver.html"
+      },
+      {
+        "text": "PyVista Streamlines Example for Field-Flow Interpretation",
+        "href": "https://docs.pyvista.org/examples/01-filter/streamlines.html"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "LEARNING_RERANKER_VISUALIZER_TAIL_SECONDS",
+    "definition": "Defines how much recent history is retained in live trajectory playback, expressed as seconds of visual tail. A shorter tail emphasizes immediate motion and makes rapid shifts easier to see, while a longer tail preserves context and makes drift patterns easier to diagnose over time. If this is too small, users may misinterpret stable long-term movement as abrupt noise; if too large, the display can become visually dense and harder to parse at speed. Tune this together with target FPS so temporal context and animation smoothness stay balanced on your hardware.",
+    "links": [
+      {
+        "text": "Animated-LLM: Temporal Coherence and Motion Readability (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.04213"
+      },
+      {
+        "text": "Matplotlib Blitting: High-Performance Animation Tradeoffs",
+        "href": "https://matplotlib.org/stable/users/explain/animations/blitting.html"
+      },
+      {
+        "text": "MDN requestAnimationFrame Timing Model",
+        "href": "https://developer.mozilla.org/en-US/docs/Web/API/Window/requestAnimationFrame"
+      },
+      {
+        "text": "TensorBoard Scalars for Long-Run Signal Monitoring",
+        "href": "https://www.tensorflow.org/tensorboard/scalars_and_keras"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Live playback only",
+        "class": "warn"
+      },
+      {
+        "text": "Visualization policy",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "LEARNING_RERANKER_VISUALIZER_TARGET_FPS",
+    "definition": "Sets the visualizer's target frame rate for animation updates. Higher FPS improves motion smoothness and makes subtle directional changes easier to perceive, but increases GPU/CPU pressure and can reduce responsiveness on constrained machines. Lower FPS is often preferable for remote sessions, multi-monitor setups, or long diagnostics where thermal and fan limits matter. This parameter only affects rendering cadence, not training quality or optimization math, so tune it for operator comfort and stable observability.",
+    "links": [
+      {
+        "text": "Animated-LLM: Real-Time Render Cadence in LLM Visual Systems (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.04213"
+      },
+      {
+        "text": "MDN requestAnimationFrame Best Practices",
+        "href": "https://developer.mozilla.org/en-US/docs/Web/API/Window/requestAnimationFrame"
+      },
+      {
+        "text": "Three.js setAnimationLoop for Frame Scheduling",
+        "href": "https://threejs.org/docs/#api/en/renderers/WebGLRenderer.setAnimationLoop"
+      },
+      {
+        "text": "Chrome DevTools Performance Panel",
+        "href": "https://developer.chrome.com/docs/devtools/performance/"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "LOG_LEVEL",
+    "definition": "Controls runtime verbosity for diagnostics, operational visibility, and incident response. `DEBUG` is best for short-lived debugging sessions where per-step details matter; `INFO` is the stable default for normal operation; `WARNING` and `ERROR` reduce noise when you only need actionable signals. Excessive debug logging can materially impact latency and storage cost, and can also increase risk of sensitive payload exposure if message templates are not scrubbed. Production-safe practice is to run at INFO/WARNING and temporarily raise verbosity during scoped investigations.",
+    "links": [
+      {
+        "text": "LLM-SrcLog: Source-Aware Log Analysis with LLMs (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2512.04474"
+      },
+      {
+        "text": "Python Logging Levels Reference",
+        "href": "https://docs.python.org/3/library/logging.html#logging-levels"
+      },
+      {
+        "text": "OpenTelemetry Logs Data Model",
+        "href": "https://opentelemetry.io/docs/specs/otel/logs/data-model/"
+      },
+      {
+        "text": "RFC 5424 Syslog Severity and Structured Logging",
+        "href": "https://www.rfc-editor.org/rfc/rfc5424"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "MARKDOWN_INCLUDE_CODE_FENCES",
+    "definition": "Determines whether fenced code blocks are retained inside markdown chunks during indexing and retrieval. Enabling this is usually correct for technical corpora because code fences carry high-value implementation detail, API usage patterns, and exact syntax that dense-only prose chunks may lose. Disabling can help in prose-focused corpora where large fenced blocks dominate token budget and drown section-level semantics. Treat this as a retrieval-precision decision: include fences for code reasoning and troubleshooting, exclude when summarization quality on narrative text is the priority.",
+    "links": [
+      {
+        "text": "cAST: Leveraging Structural Parsing for Code-Mixed Retrieval (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2510.03452"
+      },
+      {
+        "text": "CommonMark Spec: Fenced Code Blocks",
+        "href": "https://spec.commonmark.org/0.31.2/#fenced-code-blocks"
+      },
+      {
+        "text": "GitHub Markdown: Creating and Highlighting Code Blocks",
+        "href": "https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/creating-and-highlighting-code-blocks"
+      },
+      {
+        "text": "LangChain Markdown Header Metadata Splitter",
+        "href": "https://docs.langchain.com/oss/python/integrations/splitters/markdown_header_metadata_splitter"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "MARKDOWN_MAX_HEADING_LEVEL",
+    "definition": "Sets the deepest heading level that creates chunk boundaries when parsing markdown (`#` through `######`). Lower values create larger, more context-rich chunks that preserve section continuity, while higher values create finer-grained chunks that can improve pinpoint retrieval but may fragment evidence across many small nodes. In documentation-heavy repositories, a middle range typically balances recall and precision by respecting meaningful section hierarchy without over-splitting subheadings. Tune with query logs: if answers miss detail, increase granularity; if answers lose narrative context, reduce granularity.",
+    "links": [
+      {
+        "text": "HiChunk: Hierarchical Chunking for Retrieval-Augmented Generation (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2509.11552"
+      },
+      {
+        "text": "CommonMark Spec: ATX Headings",
+        "href": "https://spec.commonmark.org/0.31.2/#atx-headings"
+      },
+      {
+        "text": "CommonMark Spec: Setext Headings",
+        "href": "https://spec.commonmark.org/0.31.2/#setext-headings"
+      },
+      {
+        "text": "LangChain Markdown Header-Based Splitting",
+        "href": "https://docs.langchain.com/oss/python/integrations/splitters/markdown_header_metadata_splitter"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "MAX_CHUNKS_PER_FILE",
+    "definition": "Caps how many chunks from a single file can appear in the final retrieved set. This prevents oversized or repetitive files from monopolizing top-k results and improves cross-file evidence coverage, which is critical when answers require synthesis across modules, services, or docs. If set too low, deep single-file debugging may lose needed local context; if set too high, retrieval diversity collapses and answers may overfit one source. Tune this jointly with reranking and MMR-style diversification so relevance and breadth remain balanced.",
+    "links": [
+      {
+        "text": "BookRAG: Better Retrieval Through Document-Aware Chunk Selection (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2512.03413"
+      },
+      {
+        "text": "Elasticsearch Reciprocal Rank Fusion (RRF)",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html"
+      },
+      {
+        "text": "Google Bigtable MMR Vector Search",
+        "href": "https://docs.cloud.google.com/bigtable/docs/mmr-vector-search"
+      },
+      {
+        "text": "Weaviate Hybrid Search Concepts",
+        "href": "https://docs.weaviate.io/weaviate/concepts/search#hybrid-search"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "MAX_HOPS",
+    "definition": "Limits traversal depth in graph-based retrieval so queries do not expand indefinitely across weakly related nodes. Hop 1 generally captures direct dependencies; hop 2 adds near-neighbor context; larger values can surface long-range relationships but typically increase latency, memory pressure, and semantic drift. In dense graphs, even one extra hop can multiply candidate volume, so higher values should be paired with aggressive reranking or path filtering. Choose the smallest hop depth that still captures the relationship patterns your questions require.",
+    "links": [
+      {
+        "text": "Hierarchical Lexical Graphs for Retrieval-Augmented Generation (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2506.08074"
+      },
+      {
+        "text": "Agentic Retrieval-Augmented Generation for Graph Workflows (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.18027"
+      },
+      {
+        "text": "Neo4j Cypher Variable-Length Patterns",
+        "href": "https://neo4j.com/docs/cypher-manual/current/patterns/variable-length-patterns/"
+      },
+      {
+        "text": "Microsoft GraphRAG Documentation",
+        "href": "https://microsoft.github.io/graphrag/"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "MAX_INDEXABLE_FILE_SIZE",
+    "definition": "Defines the byte-size cutoff above which files are excluded from indexing. This protects index jobs from pathological memory and token consumption on massive generated assets, archives, or dumps, and keeps indexing latency predictable. If this value is too low, important large source artifacts (for example long SQL, generated API clients, or monolithic configs) may never become retrievable. If too high, indexing throughput can collapse and storage cost can spike. Set this using observed file-size distribution, then reindex so the new threshold is applied consistently.",
+    "links": [
+      {
+        "text": "A New Chunking Strategy for Long-Document Retrieval (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2505.21700"
+      },
+      {
+        "text": "Sourcegraph Indexed Search Administration",
+        "href": "https://sourcegraph.com/docs/admin/search#indexed-search"
+      },
+      {
+        "text": "GitLab Instance Limits (Indexed File Size Settings)",
+        "href": "https://docs.gitlab.com/ee/administration/instance_limits.html"
+      },
+      {
+        "text": "Azure AI Search Limits, Quotas, and Capacity",
+        "href": "https://learn.microsoft.com/en-us/azure/search/search-limits-quotas-capacity"
+      }
+    ],
+    "badges": [
+      {
+        "text": "File filtering",
+        "class": "info"
+      },
+      {
+        "text": "Requires reindex",
+        "class": "reindex"
+      }
+    ]
+  }
+]

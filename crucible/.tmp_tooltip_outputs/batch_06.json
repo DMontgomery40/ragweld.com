@@ -1,0 +1,262 @@
+[
+  {
+    "key": "ENRICH_MODEL_OLLAMA",
+    "definition": "Selects the local Ollama model used for enrichment steps such as code-card expansion, metadata extraction, and structure-aware summaries before retrieval. This choice is a quality versus latency tradeoff: larger coder models usually produce richer symbols and relationships, while smaller models reduce indexing time and hardware pressure. Keep the selected model pinned to an explicit tag so enrichment output stays reproducible across rebuilds. In production, validate the model on a fixed enrichment sample set and monitor drift in extracted fields after model upgrades.",
+    "links": [
+      {"text": "rStar-Coder (arXiv)", "href": "https://arxiv.org/abs/2505.21297"},
+      {"text": "Ollama Documentation", "href": "https://docs.ollama.com/"},
+      {"text": "Ollama Model Library", "href": "https://ollama.com/library"},
+      {"text": "Ollama Quickstart", "href": "https://github.com/ollama/ollama#quickstart"}
+    ],
+    "badges": [
+      {"text": "Local model tuning", "class": "info"}
+    ]
+  },
+  {
+    "key": "ENTITY_TYPES",
+    "definition": "Defines which code objects become graph nodes during enrichment and indexing, for example functions, classes, modules, imports, and key variables. This setting is effectively your graph schema: too few types weakens traversal quality, while too many low-signal types increase noise and index cost. Choose entity types that map directly to user questions, then keep relation extraction aligned so edges remain interpretable. Any change should be treated as a schema migration and followed by reindexing to keep graph search and downstream fusion behavior consistent.",
+    "links": [
+      {"text": "RANGER Repository Agent (arXiv)", "href": "https://arxiv.org/abs/2509.25257"},
+      {"text": "Neo4j Data Modeling", "href": "https://neo4j.com/docs/getting-started/data-modeling/"},
+      {"text": "Neo4j GraphRAG KG Builder", "href": "https://neo4j.com/docs/neo4j-graphrag-python/current/user_guide_kg_builder.html"},
+      {"text": "Tree-sitter", "href": "https://tree-sitter.github.io/tree-sitter/"}
+    ],
+    "badges": [
+      {"text": "Graph schema control", "class": "info"}
+    ]
+  },
+  {
+    "key": "ERROR_RATE_THRESHOLD",
+    "definition": "Sets the error percentage that triggers retrieval or API reliability alerts over your configured observation window. Use this as an SLO guardrail, not just a raw alarm, by pairing it with minimum request volume so low-traffic spikes do not page unnecessarily. Lower thresholds catch regressions earlier but can increase alert fatigue during transient failures; higher thresholds reduce noise but delay incident response. A practical pattern is warning and critical tiers with different windows, then tuning against historical error bursts and on-call outcomes.",
+    "links": [
+      {"text": "ML Monitoring and Observability (arXiv)", "href": "https://arxiv.org/abs/2510.24142"},
+      {"text": "Grafana Alerting", "href": "https://grafana.com/docs/grafana/latest/alerting/"},
+      {"text": "Prometheus Alerting Rules", "href": "https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/"},
+      {"text": "SRE Workbook Alerting on SLOs", "href": "https://sre.google/workbook/alerting-on-slos/"}
+    ],
+    "badges": [
+      {"text": "Reliability guardrail", "class": "info"}
+    ]
+  },
+  {
+    "key": "EVAL_ANALYSIS_SUBTAB",
+    "definition": "This view is where run-level metrics become actionable diagnosis. It should connect aggregate scores such as Hit@K and MRR to per-question traces, retrieved contexts, and model outputs so regressions can be explained instead of merely detected. The most useful workflow is to segment failures by retrieval miss, ranking miss, or generation miss, then map each bucket to a config change. Treat this tab as the decision surface for promotion or rollback of RAG configuration updates.",
+    "links": [
+      {"text": "RAG Evaluation Survey (arXiv)", "href": "https://arxiv.org/abs/2504.14891"},
+      {"text": "Ragas Docs", "href": "https://docs.ragas.io/"},
+      {"text": "TruLens", "href": "https://www.trulens.org/"},
+      {"text": "LangSmith Evaluation", "href": "https://docs.langchain.com/langsmith/evaluation"}
+    ],
+    "badges": [
+      {"text": "Evaluation diagnostics", "class": "info"}
+    ]
+  },
+  {
+    "key": "EVAL_COMPARE_RUN",
+    "definition": "Selects the baseline run used for before versus after comparison so changes are interpreted causally instead of anecdotally. Good comparisons require the same dataset, similar traffic assumptions, and a captured config snapshot for both runs; otherwise score deltas are hard to trust. Use this diff to isolate which parameter changes correlate with quality movement and latency shifts. In practice, this is the fastest way to confirm whether a tuning experiment actually improved retrieval quality or just moved metrics around.",
+    "links": [
+      {"text": "Automated RAG Evaluation (arXiv)", "href": "https://arxiv.org/abs/2405.13622"},
+      {"text": "MLflow Tracking", "href": "https://mlflow.org/docs/latest/ml/tracking/"},
+      {"text": "Weights and Biases Tracking", "href": "https://docs.wandb.ai/guides/track/"},
+      {"text": "LangSmith Evaluation", "href": "https://docs.langchain.com/langsmith/evaluation"}
+    ],
+    "badges": [
+      {"text": "Before after diff", "class": "info"}
+    ]
+  },
+  {
+    "key": "EVAL_FINAL_K",
+    "definition": "Defines how many top retrieved items count toward success during evaluation metrics like Hit@K. Lower values enforce strict precision and expose ranking weaknesses, while higher values emphasize recall and can hide poor ordering if the answer appears late. Keep this aligned with your production retrieval depth so offline metrics predict real behavior. When tuning, inspect both aggregate Hit@K and position-sensitive metrics so you do not optimize for lenient success criteria alone.",
+    "links": [
+      {"text": "What to Retrieve for RAG Code Gen (arXiv)", "href": "https://arxiv.org/abs/2503.20589"},
+      {"text": "ir-measures Metrics", "href": "https://ir-measur.es/en/latest/measures.html"},
+      {"text": "pytrec_eval", "href": "https://github.com/cvangysel/pytrec_eval"},
+      {"text": "TREC", "href": "https://trec.nist.gov/"}
+    ],
+    "badges": [
+      {"text": "Metric sensitivity", "class": "info"}
+    ]
+  },
+  {
+    "key": "EVAL_LOGS_TERMINAL",
+    "definition": "Streams execution details for each evaluation item so run outcomes can be audited and reproduced. Useful logs include rewritten queries, retrieved document identifiers, ranking scores, latency breakdowns, and any fallback path chosen by the system. This visibility is critical when a summary metric drops but the failure mode is unclear. Persisting these logs with run IDs and config hashes turns the terminal from a debugging aid into durable evaluation evidence.",
+    "links": [
+      {"text": "ML Monitoring and Observability (arXiv)", "href": "https://arxiv.org/abs/2510.24142"},
+      {"text": "OpenTelemetry Docs", "href": "https://opentelemetry.io/docs/"},
+      {"text": "LangSmith Observability", "href": "https://docs.langchain.com/langsmith/observability-quickstart"},
+      {"text": "Python Logging", "href": "https://docs.python.org/3/library/logging.html"}
+    ],
+    "badges": [
+      {"text": "Traceability", "class": "info"}
+    ]
+  },
+  {
+    "key": "EVAL_MULTI",
+    "definition": "Controls whether evaluation uses multi-query expansion, where one prompt is rewritten into several retrieval queries to improve recall under wording variation. Enable this when production also uses multi-query, otherwise eval results can be overly optimistic or pessimistic compared with real traffic. The gain usually comes from broader evidence discovery, but cost and latency scale with rewrite count and dedup work. Measure marginal benefit per extra rewrite and stop when added queries no longer improve quality.",
+    "links": [
+      {"text": "MA-RAG Multi-Agent Retrieval (arXiv)", "href": "https://arxiv.org/abs/2505.20096"},
+      {"text": "LangChain MultiQueryRetriever", "href": "https://python.langchain.com/docs/how_to/MultiQueryRetriever/"},
+      {"text": "LangChain Retrieval Concepts", "href": "https://python.langchain.com/docs/concepts/retrieval/"},
+      {"text": "LlamaIndex Retriever Guide", "href": "https://docs.llamaindex.ai/en/stable/module_guides/querying/retriever/"}
+    ],
+    "badges": [
+      {"text": "Recall expansion", "class": "info"}
+    ]
+  },
+  {
+    "key": "EVAL_PRIMARY_RUN",
+    "definition": "Identifies the run treated as the current or after system state in analysis. All charts and comparisons should resolve from this immutable run record, including config snapshot, dataset version, and code revision. Without a clearly defined primary run, metric interpretation drifts and rollback decisions become ambiguous. Operationally, this key anchors evaluation governance by making one run the explicit source of truth for release decisions.",
+    "links": [
+      {"text": "RAG Evaluation Survey (arXiv)", "href": "https://arxiv.org/abs/2504.14891"},
+      {"text": "MLflow Tracking", "href": "https://mlflow.org/docs/latest/ml/tracking/"},
+      {"text": "Weights and Biases Tracking", "href": "https://docs.wandb.ai/guides/track/"},
+      {"text": "LangSmith Evaluation", "href": "https://docs.langchain.com/langsmith/evaluation"}
+    ],
+    "badges": [
+      {"text": "Run source of truth", "class": "info"}
+    ]
+  },
+  {
+    "key": "EVAL_SAMPLE_SIZE",
+    "definition": "Determines how many evaluation questions are executed in a run, trading speed for statistical confidence. Small samples are useful for rapid iteration but have higher variance and can mask edge-case regressions; larger samples stabilize ranking and generation signals before release. Use fixed seeds and stable sampling policy so repeated quick runs remain comparable. A strong workflow is quick sampled checks during tuning, followed by full-suite confirmation before shipping configuration changes.",
+    "links": [
+      {"text": "Automated RAG Evaluation (arXiv)", "href": "https://arxiv.org/abs/2405.13622"},
+      {"text": "Ragas Docs", "href": "https://docs.ragas.io/"},
+      {"text": "ir-measures Metrics", "href": "https://ir-measur.es/en/latest/measures.html"},
+      {"text": "TREC", "href": "https://trec.nist.gov/"}
+    ],
+    "badges": [
+      {"text": "Coverage versus speed", "class": "info"}
+    ]
+  },
+  {
+    "key": "EXCLUDE_PATHS",
+    "definition": "Defines directories omitted from semantic indexing and code-card generation so low-value or generated artifacts do not pollute retrieval. Excluding paths such as dependency caches, build outputs, and vendored code usually improves precision while reducing index size and reindex time. Keep exclusions explicit and versioned because they materially change what the retriever can ever return. When troubleshooting missing answers, this list is one of the first places to inspect.",
+    "links": [
+      {"text": "cAST Structural Chunking (arXiv)", "href": "https://arxiv.org/abs/2506.15655"},
+      {"text": "gitignore Specification", "href": "https://git-scm.com/docs/gitignore"},
+      {"text": "ripgrep Guide", "href": "https://github.com/BurntSushi/ripgrep/blob/master/GUIDE.md"},
+      {"text": "Docker .dockerignore", "href": "https://docs.docker.com/build/building/context/#dockerignore-files"}
+    ],
+    "badges": [
+      {"text": "Index scope control", "class": "info"}
+    ]
+  },
+  {
+    "key": "FALLBACK_CONFIDENCE",
+    "definition": "Sets the confidence cutoff that decides when first-pass retrieval is accepted versus when fallback strategies are triggered. Typical fallbacks include query rewrites, broader candidate pools, alternate retrievers, or graph traversal expansion. Higher thresholds increase recovery attempts and usually quality, but also increase cost and latency; lower thresholds preserve speed but tolerate weaker evidence. Calibrate this value on held-out failures and monitor how often fallbacks improve answers versus creating unnecessary retries.",
+    "links": [
+      {"text": "Agentic RAG Survey (arXiv)", "href": "https://arxiv.org/abs/2507.09477"},
+      {"text": "TruLens Evaluation", "href": "https://www.trulens.org/component_guides/evaluation/"},
+      {"text": "Ragas Metrics", "href": "https://docs.ragas.io/en/latest/concepts/metrics/available_metrics/"},
+      {"text": "LangChain Retrieval Concepts", "href": "https://python.langchain.com/docs/concepts/retrieval/"}
+    ],
+    "badges": [
+      {"text": "Fallback policy", "class": "info"}
+    ]
+  },
+  {
+    "key": "FILENAME_BOOST_EXACT",
+    "definition": "Applies a multiplier when query tokens exactly match a filename or full path component, which is especially effective for identifier-driven code search. Exact filename intent often indicates the user already knows the artifact, so this feature can sharply improve rank quality for navigational queries. Set the multiplier high enough to surface true exact hits, but not so high that semantic relevance is overridden for exploratory questions. Validate with a mixed benchmark containing both known-file and concept-search tasks.",
+    "links": [
+      {"text": "Exp4Fuse Rank Fusion (arXiv)", "href": "https://arxiv.org/abs/2506.04760"},
+      {"text": "Elasticsearch Term Query", "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-term-query.html"},
+      {"text": "Elasticsearch Multi Match Query", "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-multi-match-query.html"},
+      {"text": "Lucene BM25Similarity", "href": "https://lucene.apache.org/core/9_12_0/core/org/apache/lucene/search/similarities/BM25Similarity.html"}
+    ],
+    "badges": [
+      {"text": "Lexical precision boost", "class": "info"}
+    ]
+  },
+  {
+    "key": "FILENAME_BOOST_PARTIAL",
+    "definition": "Applies a weaker multiplier for partial path or filename matches, helping fragment queries like auth or billing surface relevant areas of the codebase. Because substring matches are noisier than exact matches, this value should stay below exact filename boost and be tested against false-positive-heavy queries. Token boundary handling and minimum match length are important to avoid boosting accidental overlaps. This parameter is most effective when combined with semantic and sparse retrieval rather than used alone.",
+    "links": [
+      {"text": "Exp4Fuse Rank Fusion (arXiv)", "href": "https://arxiv.org/abs/2506.04760"},
+      {"text": "Elasticsearch Bool Query", "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-bool-query.html"},
+      {"text": "Elasticsearch Dis Max Query", "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-dis-max-query.html"},
+      {"text": "PostgreSQL Text Search Controls", "href": "https://www.postgresql.org/docs/current/textsearch-controls.html"}
+    ],
+    "badges": [
+      {"text": "Lexical recall boost", "class": "info"}
+    ]
+  },
+  {
+    "key": "FILES_ROOT",
+    "definition": "Overrides the base directory served by the files endpoint and effectively defines what the application is allowed to expose as retrievable file content. This is useful for containerized deployments, mounted corpora, and split storage layouts where app code and indexed files are not colocated. Keep the root narrow and explicit to reduce accidental data exposure, and align it with indexing paths so retrieval references resolve correctly. Any environment change to this path should be validated with path canonicalization and permission checks.",
+    "links": [
+      {"text": "GRACE Repository-Aware Fusion (arXiv)", "href": "https://arxiv.org/abs/2509.05980"},
+      {"text": "FastAPI Static Files", "href": "https://fastapi.tiangolo.com/tutorial/static-files/"},
+      {"text": "Starlette StaticFiles", "href": "https://www.starlette.io/staticfiles/"},
+      {"text": "Docker Volumes", "href": "https://docs.docker.com/engine/storage/volumes/"}
+    ],
+    "badges": [
+      {"text": "Storage boundary", "class": "info"}
+    ]
+  },
+  {
+    "key": "FINAL_K",
+    "definition": "Sets how many results survive final fusion and reranking before response generation or UI display. Larger values increase recall and diversity but can dilute evidence quality and consume more context budget; smaller values improve focus and latency but risk dropping key context. Tune this together with reranker quality and chunk size so returned sets remain both relevant and compact. In practice, this parameter strongly influences answer stability because it controls the evidence frontier given to the model.",
+    "links": [
+      {"text": "What to Retrieve for RAG Code Gen (arXiv)", "href": "https://arxiv.org/abs/2503.20589"},
+      {"text": "ir-measures Metrics", "href": "https://ir-measur.es/en/latest/measures.html"},
+      {"text": "Elasticsearch Search size", "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/search-search.html#search-api-param-size"},
+      {"text": "Azure Search Result Count", "href": "https://learn.microsoft.com/en-us/azure/search/search-pagination-page-layout#number-of-results-in-the-response"}
+    ],
+    "badges": [
+      {"text": "Returned context depth", "class": "info"}
+    ]
+  },
+  {
+    "key": "FREQUENCY_PENALTY",
+    "definition": "Controls how strongly generation penalizes reuse of tokens that already appeared in the output. In RAG systems this can reduce repetitive explanations and template loops, but overly aggressive settings may hurt code correctness, naming consistency, and syntax continuity. For technical answers, start low and evaluate on exactness and repetition metrics together, not fluency alone. This setting interacts with temperature and top-p, so tune jointly rather than in isolation.",
+    "links": [
+      {"text": "LZ Penalty for Repetition (arXiv)", "href": "https://arxiv.org/abs/2504.20131"},
+      {"text": "Transformers Generation Strategies", "href": "https://huggingface.co/docs/transformers/main/en/generation_strategies"},
+      {"text": "Transformers Text Generation", "href": "https://huggingface.co/docs/transformers/main_classes/text_generation"},
+      {"text": "vLLM Sampling Params", "href": "https://docs.vllm.ai/en/latest/api/vllm/sampling_params.html"}
+    ],
+    "badges": [
+      {"text": "Decoding control", "class": "info"}
+    ]
+  },
+  {
+    "key": "FRESHNESS_BONUS",
+    "definition": "Adds a recency-based score bonus so newer files are favored during reranking. This is valuable in fast-moving repositories where recent commits are more likely to reflect current behavior, APIs, and incident fixes. The bonus should decay with file age to avoid suppressing stable but authoritative modules. Tune both the bonus magnitude and decay window against real query logs so freshness improves relevance without turning into naive newest-first ranking.",
+    "links": [
+      {"text": "TempRetriever Temporal DPR (arXiv)", "href": "https://arxiv.org/abs/2502.21024"},
+      {"text": "Elasticsearch Function Score", "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-function-score-query.html"},
+      {"text": "Azure Scoring Profiles", "href": "https://learn.microsoft.com/en-us/azure/search/index-add-scoring-profiles"},
+      {"text": "OpenSearch Function Score", "href": "https://docs.opensearch.org/latest/query-dsl/compound/function-score/"}
+    ],
+    "badges": [
+      {"text": "Temporal reranking", "class": "info"}
+    ]
+  },
+  {
+    "key": "FUSION_GRAPH_WEIGHT",
+    "definition": "Sets the contribution of graph retrieval in weighted fusion relative to sparse and vector signals. Increase it when structural relationships such as calls, imports, and dependencies are essential to user tasks; decrease it when lexical or semantic similarity should dominate. Because weighted fusion blends heterogeneous score sources, calibration and normalization matter as much as the raw weight values. Track performance by query type to ensure graph-heavy tuning improves structural questions without hurting broad semantic retrieval.",
+    "links": [
+      {"text": "RGL Graph-Centric RAG (arXiv)", "href": "https://arxiv.org/abs/2503.19314"},
+      {"text": "Neo4j GraphRAG User Guide", "href": "https://neo4j.com/docs/neo4j-graphrag-python/current/user_guide_rag.html"},
+      {"text": "Azure Vector Weighting", "href": "https://learn.microsoft.com/en-us/azure/search/vector-search-how-to-query#vector-weighting"},
+      {"text": "Neo4j PageRank", "href": "https://neo4j.com/docs/graph-data-science/current/algorithms/page-rank/"}
+    ],
+    "badges": [
+      {"text": "Fusion weighting", "class": "info"}
+    ]
+  },
+  {
+    "key": "FUSION_METHOD",
+    "definition": "Chooses how result lists from different retrievers are combined. Reciprocal Rank Fusion is usually robust when score scales are incomparable, while weighted score fusion is better when each modality is well normalized and intentionally calibrated. The method you choose affects both stability and interpretability of ranking behavior across query types. Keep evaluation and production on the same fusion method so offline gains translate reliably at runtime.",
+    "links": [
+      {"text": "Exp4Fuse Rank Fusion (arXiv)", "href": "https://arxiv.org/abs/2506.04760"},
+      {"text": "Elasticsearch RRF", "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html"},
+      {"text": "Azure Hybrid Ranking", "href": "https://learn.microsoft.com/en-us/azure/search/hybrid-search-ranking"},
+      {"text": "OpenSearch Normalization Processor", "href": "https://docs.opensearch.org/latest/search-plugins/search-pipelines/normalization-processor/"}
+    ],
+    "badges": [
+      {"text": "Core fusion strategy", "class": "info"}
+    ]
+  }
+]

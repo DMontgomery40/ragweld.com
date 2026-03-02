@@ -1,0 +1,241 @@
+[
+  {
+    "key": "OLLAMA_STREAM_IDLE_TIMEOUT",
+    "definition": "Maximum allowed silent gap (in seconds) between streamed tokens/chunks from the local Ollama endpoint before Crucible treats the response as stalled and aborts the request. This protects the UI from hanging indefinitely when a socket is half-open or a backend worker dies mid-generation. Set it too low and you will cut off valid long-prefill responses on larger context windows; set it too high and users wait too long on dead streams. Tune this together with network proxy timeouts and model size so cancellation behavior is fast but not trigger-happy.",
+    "links": [
+      {
+        "text": "Rethinking Latency DoS in KV Cache Systems (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.07878"
+      },
+      {
+        "text": "Ollama Streaming API",
+        "href": "https://docs.ollama.com/api/streaming"
+      },
+      {
+        "text": "Nginx proxy_read_timeout",
+        "href": "https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_read_timeout"
+      },
+      {
+        "text": "Node.js AbortSignal.timeout()",
+        "href": "https://nodejs.org/api/globals.html#abortsignaltimeoutdelay"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "OLLAMA_URL",
+    "definition": "Base URL Crucible uses to reach Ollama over HTTP for local-model inference (for example, endpoints such as `/api/chat`, `/api/generate`, and `/api/tags`). This value controls where requests are sent from the app backend, so incorrect hostnames, ports, or path prefixes cause immediate model-routing failures. For remote or containerized setups, use a reachable address from the process that runs Crucible, not just from your browser. When multiple OpenAI-compatible backends are in play, keep this endpoint explicit so provider routing and debugging stay deterministic.",
+    "links": [
+      {
+        "text": "FlyingServing: Scalable and Fault-Tolerant LLM Serving (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.22593"
+      },
+      {
+        "text": "Ollama API Reference",
+        "href": "https://docs.ollama.com/api"
+      },
+      {
+        "text": "Ollama Model Tags Endpoint",
+        "href": "https://docs.ollama.com/api/tags"
+      },
+      {
+        "text": "vLLM OpenAI-Compatible Server",
+        "href": "https://docs.vllm.ai/en/latest/serving/openai_compatible_server/"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "OPENAI_API_KEY",
+    "definition": "Secret credential used by Crucible to authenticate OpenAI API requests for generation, embedding, or other provider-backed operations. Treat this as server-side sensitive configuration: never embed it in client bundles, logs, screenshots, or shared notebooks. If requests intermittently fail with auth errors, verify key scope, organization/project binding, and environment injection path before changing models. Rotation, secret scanning, and least-privilege operational controls are mandatory once this runs outside local-only testing.",
+    "links": [
+      {
+        "text": "SESAI-Bench: Secret Leakage in AI Engineering (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2510.18601"
+      },
+      {
+        "text": "OpenAI OpenAPI Specification Repository",
+        "href": "https://github.com/openai/openai-openapi"
+      },
+      {
+        "text": "OpenAI Python SDK",
+        "href": "https://github.com/openai/openai-python"
+      },
+      {
+        "text": "GitHub Secret Scanning Detection Scope",
+        "href": "https://docs.github.com/code-security/reference/secret-security/secret-scanning-detection-scope"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "OPENAI_BASE_URL",
+    "definition": "Advanced endpoint override for OpenAI-compatible APIs. Use this when routing Crucible through alternative backends such as Azure-hosted deployments, vLLM, or internal gateway proxies that implement OpenAI-style request/response contracts. Base URL mismatches are a common root cause of 404/401 errors because SDK path composition, versioning, and auth headers differ across providers. Keep this setting paired with explicit model/provider assignments so you can trace which endpoint handled each request during failures.",
+    "links": [
+      {
+        "text": "LMCache: Optimizing LLM Caching and Routing (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2510.09665"
+      },
+      {
+        "text": "OpenAI Node SDK",
+        "href": "https://github.com/openai/openai-node"
+      },
+      {
+        "text": "vLLM OpenAI-Compatible Server",
+        "href": "https://docs.vllm.ai/en/latest/serving/openai_compatible_server/"
+      },
+      {
+        "text": "Azure OpenAI API Version and Endpoint Guidance",
+        "href": "https://learn.microsoft.com/en-us/azure/ai-services/openai/api-version-deprecation"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Advanced",
+        "class": "warn"
+      },
+      {
+        "text": "For compatible endpoints only",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "OPEN_BROWSER",
+    "definition": "Controls whether Crucible automatically launches a browser tab when the local server starts. It improves developer ergonomics in interactive desktop workflows, but should normally be disabled for CI, SSH sessions, containers, and remote hosts where GUI launch attempts are noisy or impossible. Keep this off in production-like startup scripts to avoid side effects and process-blocking behavior. In short: enable for local convenience, disable for automation and infrastructure.",
+    "links": [
+      {
+        "text": "WebSailor-V2: Browser Agent Scaling (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.07262"
+      },
+      {
+        "text": "Vite server.open Option",
+        "href": "https://vite.dev/config/server-options.html#server-open"
+      },
+      {
+        "text": "Playwright BrowserType API",
+        "href": "https://playwright.dev/docs/api/class-browsertype"
+      },
+      {
+        "text": "open (Node package) Repository",
+        "href": "https://github.com/sindresorhus/open"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "OVERLAP_TOKENS",
+    "definition": "Number of tokens duplicated between adjacent chunks in token-based splitting. Overlap reduces boundary-loss errors by carrying local context forward, which usually improves retrieval for code blocks, parameter lists, and cross-sentence references. The tradeoff is index bloat, slower ingestion, and more near-duplicate candidates at query time. Tune this alongside chunk size and reranker settings: too little overlap hurts recall on boundary-heavy corpora, too much overlap burns storage/latency for marginal gain.",
+    "links": [
+      {
+        "text": "Comprehensive Chunking Evaluation for RAG (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.16974"
+      },
+      {
+        "text": "Chunking methods and retrieval relevance (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.14123"
+      },
+      {
+        "text": "LangChain Text Splitter Integrations",
+        "href": "https://docs.langchain.com/oss/python/integrations/splitters/index"
+      },
+      {
+        "text": "Haystack DocumentSplitter",
+        "href": "https://docs.haystack.deepset.ai/docs/documentsplitter"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "PARQUET_EXTRACT_INCLUDE_COLUMN_NAMES",
+    "definition": "When enabled, column headers are injected into extracted Parquet text so retrieval can align values with field semantics (for example, distinguishing `price` from `discount_price`). This generally improves schema-aware search and downstream answer grounding, especially for wide analytical tables. The downside is extra tokens and potentially noisier chunks if column names are verbose or system-generated. Keep this on by default for mixed tabular + natural-language corpora, then validate index size impact on large datasets.",
+    "links": [
+      {
+        "text": "TGR: Table Graph Reasoner for Dense Tables (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.08444"
+      },
+      {
+        "text": "Apache Parquet Documentation",
+        "href": "https://parquet.apache.org/docs/"
+      },
+      {
+        "text": "DuckDB Parquet Overview",
+        "href": "https://duckdb.org/docs/stable/data/parquet/overview"
+      },
+      {
+        "text": "Polars scan_parquet API",
+        "href": "https://docs.pola.rs/api/python/stable/reference/api/polars.scan_parquet.html"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "PARQUET_EXTRACT_MAX_CELL_CHARS",
+    "definition": "Upper bound for characters extracted from any single Parquet cell before truncation. This prevents rare long values (JSON blobs, stack traces, raw HTML, encoded payloads) from dominating chunk budgets and crowding out other rows. A low cap improves throughput and keeps chunks balanced, but may clip high-value context in long descriptive fields. Choose a cap that protects indexing stability while preserving enough per-cell signal for your query patterns.",
+    "links": [
+      {
+        "text": "Efficient Table Retrieval from Massive Data Lakes (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.07642"
+      },
+      {
+        "text": "Apache Parquet Format Repository",
+        "href": "https://github.com/apache/parquet-format"
+      },
+      {
+        "text": "DuckDB Parquet Performance Tips",
+        "href": "https://duckdb.org/docs/stable/data/parquet/tips"
+      },
+      {
+        "text": "pandas.read_parquet Reference",
+        "href": "https://pandas.pydata.org/docs/reference/api/pandas.read_parquet.html"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "PARQUET_EXTRACT_MAX_CHARS",
+    "definition": "Global character budget for text extracted from one Parquet file during indexing. Once this threshold is reached, extraction stops (best effort), giving predictable upper bounds on memory, ingestion time, and index growth. This setting is critical for very large tables where full-file extraction is unnecessary or too expensive. Pair it with row limits and cell caps so your truncation strategy is intentional rather than accidental.",
+    "links": [
+      {
+        "text": "Scalable Tabular In-Context Learning (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2502.03147"
+      },
+      {
+        "text": "Parquet Implementation Status",
+        "href": "https://parquet.apache.org/docs/file-format/implementationstatus/"
+      },
+      {
+        "text": "DuckDB Querying Parquet Files",
+        "href": "https://duckdb.org/docs/stable/guides/file_formats/query_parquet"
+      },
+      {
+        "text": "pyarrow.parquet.read_table Reference",
+        "href": "https://arrow.apache.org/docs/python/generated/pyarrow.parquet.read_table.html"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "PARQUET_EXTRACT_MAX_ROWS",
+    "definition": "Best-effort cap on the number of rows read from a Parquet file during extraction. It is a coarse but effective control for ingestion cost when a dataset is too large to fully materialize into text. Higher values improve coverage and long-tail recall, while lower values reduce indexing time and memory pressure. If row order is meaningful (for example, temporal logs), this cap also determines which slice of data becomes searchable first.",
+    "links": [
+      {
+        "text": "Scalable Tabular In-Context Learning (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2502.03147"
+      },
+      {
+        "text": "Polars scan_parquet API (row limiting)",
+        "href": "https://docs.pola.rs/api/python/stable/reference/api/polars.scan_parquet.html"
+      },
+      {
+        "text": "DuckDB Parquet Overview",
+        "href": "https://duckdb.org/docs/stable/data/parquet/overview"
+      },
+      {
+        "text": "pyarrow.parquet.read_table Reference",
+        "href": "https://arrow.apache.org/docs/python/generated/pyarrow.parquet.read_table.html"
+      }
+    ],
+    "badges": []
+  }
+]

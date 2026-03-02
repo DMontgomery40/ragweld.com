@@ -1,0 +1,25 @@
+You own batch 02 research+rewrite for glossary tooltips.
+
+Workspace context:
+- Source glossary: /Users/davidmontgomery/ragweld/data/glossary.json
+- Batch keys file: /Users/davidmontgomery/ragweld.com/crucible/.tmp_tooltip_batches_round2/batch_02.jsonl
+- Output file to write: /Users/davidmontgomery/ragweld.com/crucible/.tmp_tooltip_outputs_round2/batch_02.json
+
+Task:
+1) Load keys from the batch file.
+2) For each key, find the term in glossary.json and rewrite definition to be more verbose, educational, concrete, and implementation-specific.
+3) Research on the web for each key. Do not fabricate.
+4) Produce exactly 4 high-quality links per key in format {"text":"...","href":"..."}.
+5) At least 1 link per key must be arXiv and should be the most recent relevant paper you can find (prefer 2026, otherwise >= mid-2025).
+6) Remaining links should be high-authority docs/specs/posts and also >= mid-2025 when possible.
+7) Validate each URL with curl (follow redirects) and exclude dead links.
+8) Keep existing key unchanged. Keep/return badges when possible.
+9) Write JSON array of objects with keys: key, definition, links, badges.
+
+Constraints:
+- This is educational content; avoid marketing language.
+- Keep plain JSON only in output file.
+- You are not alone in this repo; ignore unrelated changes.
+- Do not touch other files.
+
+When done, print a brief completion summary including count completed and output path.

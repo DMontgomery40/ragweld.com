@@ -1,0 +1,10 @@
+{"key":"TRIPLETS_MINE_MODE"}
+{"key":"TriBridRAG_EDITION"}
+{"key":"TriBridRAG_LOG_PATH"}
+{"key":"TriBridRAG_RERANKER_ALPHA"}
+{"key":"TriBridRAG_RERANKER_BATCH"}
+{"key":"TriBridRAG_RERANKER_MAXLEN"}
+{"key":"TriBridRAG_RERANKER_MINE_MODE"}
+{"key":"TriBridRAG_RERANKER_MINE_RESET"}
+{"key":"TriBridRAG_RERANKER_MODEL_PATH"}
+{"key":"TriBridRAG_RERANKER_RELOAD_ON_CHANGE"}

@@ -1,0 +1,270 @@
+[
+  {
+    "key": "TriBridRAG_RERANKER_TOPN",
+    "definition": "Legacy alias for TRIBRID_RERANKER_TOPN. This setting controls how many fused retrieval candidates are forwarded into the reranker stage, where a heavier model re-evaluates relevance using richer query-document interactions. Higher values can improve final ranking quality on ambiguous or multi-intent questions because the reranker sees a wider candidate pool, but latency and inference cost usually scale with this number. In practice, tune this with an evaluation set: if top results are often \"nearly right\" but miss exact intent, increase Top-N; if quality plateaus while response time rises, lower it. Keep Top-N high enough to preserve recall before reranking, but not so high that reranking dominates end-to-end p95 latency.",
+    "links": [
+      {
+        "text": "BAR-RAG: Adaptive Hybrid Retrieval Weighting (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.03689"
+      },
+      {
+        "text": "Elasticsearch Reciprocal Rank Fusion (RRF)",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html"
+      },
+      {
+        "text": "Qdrant Search Concepts",
+        "href": "https://qdrant.tech/documentation/concepts/search/"
+      },
+      {
+        "text": "Weaviate Hybrid Search",
+        "href": "https://weaviate.io/developers/weaviate/search/hybrid"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TriBridRAG_SYNONYMS_PATH",
+    "definition": "File path to the semantic synonym dictionary used during query expansion. The file should be versioned with your project and treated as retrieval configuration, not random text: entries should map domain terms to controlled alternatives (aliases, acronyms, team-specific jargon, and legacy naming). A good synonyms file raises recall by helping sparse and dense retrieval find conceptually equivalent language, but an overly broad file can introduce drift by matching loosely related terms. Keep the file schema consistent, validate JSON on load, and review changes with relevance tests so newly added synonym sets do not silently degrade precision.",
+    "links": [
+      {
+        "text": "TCDE: Textual Conceptual Drift Estimation for Query Expansion (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2512.17164"
+      },
+      {
+        "text": "Elasticsearch Search with Synonyms",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/search-with-synonyms.html"
+      },
+      {
+        "text": "OpenSearch Synonyms",
+        "href": "https://docs.opensearch.org/latest/search-plugins/searching-data/synonyms/"
+      },
+      {
+        "text": "Lucene SynonymGraphFilter",
+        "href": "https://lucene.apache.org/core/9_11_1/analysis/common/org/apache/lucene/analysis/synonym/SynonymGraphFilter.html"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TriBridRAG_TRIPLETS_PATH",
+    "definition": "Legacy alias for TRIBRID_TRIPLETS_PATH. This path points to the dataset that defines graph edges as subject-predicate-object triplets for graph-aware retrieval and relationship expansion. Treat this file as a structured knowledge artifact: normalize identifiers, maintain stable predicates, and enforce schema checks before indexing so graph lookups remain deterministic. If triplets are noisy or inconsistent, graph expansion can amplify errors; if they are clean and domain-specific, they provide high-value context that sparse/dense retrieval can miss. Keep ingestion reproducible and validate that triplet updates improve grounded answer quality on dependency and relationship-heavy queries.",
+    "links": [
+      {
+        "text": "T2RAG: Triplet-Guided Retrieval-Augmented Generation (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2508.02435"
+      },
+      {
+        "text": "W3C N-Triples Specification",
+        "href": "https://www.w3.org/TR/n-triples/"
+      },
+      {
+        "text": "Neo4j LOAD CSV",
+        "href": "https://neo4j.com/docs/cypher-manual/current/clauses/load-csv/"
+      },
+      {
+        "text": "Neo4j Data Import and ETL Guide",
+        "href": "https://neo4j.com/docs/getting-started/appendix/tutorials/guide-import-relational-and-etl/"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "USE_SEMANTIC_SYNONYMS",
+    "definition": "Enables semantic synonym expansion before retrieval so user queries can match equivalent terminology, abbreviations, and team-specific phrasing beyond exact token overlap. This typically improves recall on natural-language prompts and cross-team vocabulary mismatches, especially when users ask with informal wording while documents use canonical terms. The tradeoff is expansion noise: broad or poorly curated synonym sets can pull in marginally related chunks and lower precision. Enable this with a controlled synonym dictionary, monitor zero-hit reduction and false-positive rates, and pair with reranking so expanded candidates are rescored instead of accepted blindly.",
+    "links": [
+      {
+        "text": "TCDE: Textual Conceptual Drift Estimation for Query Expansion (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2512.17164"
+      },
+      {
+        "text": "Elasticsearch Search with Synonyms",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/search-with-synonyms.html"
+      },
+      {
+        "text": "OpenSearch Synonyms",
+        "href": "https://docs.opensearch.org/latest/search-plugins/searching-data/synonyms/"
+      },
+      {
+        "text": "Lucene SynonymGraphFilter",
+        "href": "https://lucene.apache.org/core/9_11_1/analysis/common/org/apache/lucene/analysis/synonym/SynonymGraphFilter.html"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "VECTOR_BACKEND",
+    "definition": "Selects the storage and query engine used for dense-vector retrieval. In practice, this choice determines how embeddings are indexed, how similarity search is executed, and which operational constraints apply (memory profile, filtering behavior, sharding options, and query latency under load). Switching backends is not just a performance toggle: index build strategy, distance metric defaults, and filtering semantics can differ across systems. Benchmark with representative query mixes and metadata filters, then align backend selection with your production constraints: throughput targets, fault tolerance, and operational tooling.",
+    "links": [
+      {
+        "text": "Vextra: Scalable and Flexible Dense Retrieval Infrastructure (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.06727"
+      },
+      {
+        "text": "pgvector for Postgres",
+        "href": "https://github.com/pgvector/pgvector"
+      },
+      {
+        "text": "Qdrant Search Concepts",
+        "href": "https://qdrant.tech/documentation/concepts/search/"
+      },
+      {
+        "text": "Weaviate Hybrid Search",
+        "href": "https://weaviate.io/developers/weaviate/search/hybrid"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Core Setting",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "VECTOR_SEARCH_ENABLED",
+    "definition": "Master toggle for dense semantic retrieval. When enabled, the pipeline performs embedding-based nearest-neighbor search and contributes those candidates to fusion/reranking; when disabled, retrieval relies on non-vector channels (for example sparse lexical and graph signals). Disabling can be useful for controlled debugging, cost isolation, or outage mitigation, but it usually reduces semantic recall on paraphrased questions. Treat this flag as a diagnostic switch: compare answer grounding and recall metrics with and without vector search to quantify how much semantic retrieval contributes for your dataset.",
+    "links": [
+      {
+        "text": "Vextra: Scalable and Flexible Dense Retrieval Infrastructure (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.06727"
+      },
+      {
+        "text": "pgvector for Postgres",
+        "href": "https://github.com/pgvector/pgvector"
+      },
+      {
+        "text": "OpenSearch Hybrid Search",
+        "href": "https://docs.opensearch.org/latest/search-plugins/hybrid-search/"
+      },
+      {
+        "text": "Elasticsearch Reciprocal Rank Fusion (RRF)",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Core Setting",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "VECTOR_SEARCH_TOP_K",
+    "definition": "Number of dense-vector candidates fetched before fusion and reranking. Top-K is a primary recall/latency lever: increasing it broadens candidate coverage and can rescue relevant passages that would otherwise be missed, but raises search and reranker cost. Too small a Top-K can make downstream reranking ineffective because the right candidates never enter the pool; too large a Top-K can flood reranking with low-value items and slow responses. Tune this jointly with reranker Top-N and fusion weights, and evaluate with recall@k, MRR/NDCG, and p95 latency rather than a single metric.",
+    "links": [
+      {
+        "text": "Exqutor: Dynamic Retrieval Plans for RAG (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2512.09695"
+      },
+      {
+        "text": "Qdrant Search Concepts",
+        "href": "https://qdrant.tech/documentation/concepts/search/"
+      },
+      {
+        "text": "pgvector for Postgres",
+        "href": "https://github.com/pgvector/pgvector"
+      },
+      {
+        "text": "Weaviate Hybrid Search",
+        "href": "https://weaviate.io/developers/weaviate/search/hybrid"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Affects latency",
+        "class": "info"
+      },
+      {
+        "text": "Semantic matches",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "VECTOR_SIMILARITY_THRESHOLD",
+    "definition": "Minimum similarity score required for a dense candidate to be kept. This parameter is effectively a quality gate: low thresholds preserve recall by allowing weaker semantic matches into fusion, while high thresholds enforce precision by discarding borderline neighbors early. Threshold behavior is embedding-model dependent, so absolute values are not portable across models or domains. Calibrate by plotting score distributions for relevant vs irrelevant pairs on your own corpus, then pick a threshold that reduces noisy candidates without suppressing valid paraphrases and long-tail terminology.",
+    "links": [
+      {
+        "text": "Improving Document Retrieval Coherence in RAG (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2508.07975"
+      },
+      {
+        "text": "pgvector for Postgres",
+        "href": "https://github.com/pgvector/pgvector"
+      },
+      {
+        "text": "Qdrant Search Concepts",
+        "href": "https://qdrant.tech/documentation/concepts/search/"
+      },
+      {
+        "text": "Weaviate Hybrid Search",
+        "href": "https://weaviate.io/developers/weaviate/search/hybrid"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Precision tuning",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "VECTOR_WEIGHT",
+    "definition": "Relative influence of dense semantic scores during hybrid fusion. Raising vector weight helps when user wording differs from document wording (paraphrases, alias-heavy language, conceptual queries), while lowering it helps when exact identifiers and lexical precision matter more (error codes, symbol names, strict API strings). This is not an isolated knob: optimal weight depends on BM25 configuration, candidate pool sizes, and reranker behavior. Tune weight on a fixed benchmark set and inspect failure cases; if dense-heavy tuning introduces topical but non-specific hits, reduce vector weight or increase lexical/reranker influence.",
+    "links": [
+      {
+        "text": "BAR-RAG: Adaptive Hybrid Retrieval Weighting (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.03689"
+      },
+      {
+        "text": "Weaviate Hybrid Search (alpha weighting)",
+        "href": "https://weaviate.io/developers/weaviate/search/hybrid"
+      },
+      {
+        "text": "OpenSearch Hybrid Search",
+        "href": "https://docs.opensearch.org/latest/search-plugins/hybrid-search/"
+      },
+      {
+        "text": "Elasticsearch Reciprocal Rank Fusion (RRF)",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Advanced RAG tuning",
+        "class": "info"
+      },
+      {
+        "text": "Pairs with BM25_WEIGHT",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "VENDOR_MODE",
+    "definition": "Controls whether ranking heuristics prioritize first-party project code or third-party/vendor dependencies when scores are close. In large repos, vendor and framework code can dominate candidate lists simply because it is abundant; this setting counterbalances that effect for tasks where users primarily want answers about their own application logic. Prefer first-party mode for product debugging, architecture discovery, and onboarding into your codebase. Prefer vendor mode only when your query intent is explicitly about dependency internals. Evaluate with intent-labeled queries to confirm the mode aligns with expected navigation behavior.",
+    "links": [
+      {
+        "text": "SaraCoder: Repository-Aware Code Retrieval at Scale (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2508.10068"
+      },
+      {
+        "text": "Sourcegraph Code Search Documentation",
+        "href": "https://sourcegraph.com/docs/code_search"
+      },
+      {
+        "text": "GitHub Code Search Overview",
+        "href": "https://docs.github.com/en/search-github/github-code-search/about-github-code-search"
+      },
+      {
+        "text": "gitignore Patterns (vendor/exclusion hygiene)",
+        "href": "https://git-scm.com/docs/gitignore"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Code priority",
+        "class": "info"
+      }
+    ]
+  }
+]

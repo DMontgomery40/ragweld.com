@@ -1,0 +1,34 @@
+{
+  "started_at": "2026-02-28T19:37:15.602Z",
+  "ui_base": "http://127.0.0.1:5173/web",
+  "api_base": "http://127.0.0.1:8012/api",
+  "corpus_id": "epstein-files-1",
+  "checkpoints": [
+    {
+      "name": "start_buttons_disabled_before_model_selection",
+      "start_run": true,
+      "start_full_stack": true
+    },
+    {
+      "name": "start_buttons_state_after_model_selection",
+      "start_run": false,
+      "start_full_stack": false
+    }
+  ],
+  "quick_actions": [],
+  "artifacts": {},
+  "synthetic": {
+    "generator_model": "claude-3-haiku",
+    "judge_model": "claude-3-haiku"
+  },
+  "eval_compare": {},
+  "system_prompts": {},
+  "api_checks": {},
+  "screenshots": [
+    "/Users/davidmontgomery/ragweld/web/output/synthetic_ui_acceptance_epstein-files-1_20260228_193715/01_synthetic_start_disabled_before_models.png",
+    "/Users/davidmontgomery/ragweld/web/output/synthetic_ui_acceptance_epstein-files-1_20260228_193715/02_synthetic_after_model_selection.png"
+  ],
+  "status": "failed",
+  "error": "Synthetic start response missing run_id: HTTP 409",
+  "completed_at": "2026-02-28T19:37:22.164Z"
+}

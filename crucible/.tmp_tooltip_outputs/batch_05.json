@@ -1,0 +1,562 @@
+[
+  {
+    "key": "EMBEDDING_MATCH",
+    "definition": "This health signal means the full embedding contract used at query time matches the contract used to build the index, including provider, model identity, vector dimensionality, tokenizer behavior, and any text prefix or suffix transforms. When it is true, vector similarity scores are mathematically comparable and ranking quality is trustworthy. It also keeps offline evaluations meaningful because runs are measured in the same vector space. Treat this as a deployment gate: if you change embedding settings, rebuild before serving production queries. A persistent match state is one of the most important controls for preventing silent retrieval regressions.",
+    "links": [
+      {
+        "text": "jina-embeddings-v5-text (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.15547"
+      },
+      {
+        "text": "SentenceTransformers Pretrained Models",
+        "href": "https://www.sbert.net/docs/sentence_transformer/pretrained_models.html"
+      },
+      {
+        "text": "MTEB Leaderboard",
+        "href": "https://huggingface.co/spaces/mteb/leaderboard"
+      },
+      {
+        "text": "OpenAI Cookbook: Get Embeddings",
+        "href": "https://github.com/openai/openai-cookbook/blob/main/examples/Get_embeddings_from_dataset.ipynb"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Config health",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "EMBEDDING_MAX_TOKENS",
+    "definition": "This sets the maximum token count sent to the embedding model for each chunk. Content beyond the limit is truncated, so the value directly controls how much semantic evidence is preserved in each vector. Higher limits can improve recall for long code blocks and docs, but they increase indexing cost, latency, and the chance of mixing multiple topics into one embedding. Lower limits are cheaper and often cleaner semantically, but can drop critical tail context. Tune this against your chunk size distribution and monitor truncation rate so most chunks fit without clipping.",
+    "links": [
+      {
+        "text": "HiChunk (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2509.11552"
+      },
+      {
+        "text": "OpenAI Cookbook: Embedding Long Inputs",
+        "href": "https://github.com/openai/openai-cookbook/blob/main/examples/Embedding_long_inputs.ipynb"
+      },
+      {
+        "text": "tiktoken README",
+        "href": "https://github.com/openai/tiktoken/blob/main/README.md"
+      },
+      {
+        "text": "Voyage Embeddings Docs",
+        "href": "https://docs.voyageai.com/docs/embeddings"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Affects cost",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "EMBEDDING_MISMATCH",
+    "definition": "A mismatch means the active embedding configuration no longer matches the vectors already stored in your index. Different models or preprocessing pipelines produce different coordinate systems, so nearest-neighbor comparison becomes unreliable even when the text looks similar. Typical symptoms are irrelevant top hits, unstable rankings, and sudden metric collapse after config changes. In production, treat this as a critical error state. The safe recovery path is either restoring the original embedding settings or fully re-embedding and reindexing the corpus with the new settings.",
+    "links": [
+      {
+        "text": "Instruction/Persona Embedding Alignment (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.10205"
+      },
+      {
+        "text": "MTEB Leaderboard",
+        "href": "https://huggingface.co/spaces/mteb/leaderboard"
+      },
+      {
+        "text": "Gemini Embeddings Docs",
+        "href": "https://ai.google.dev/gemini-api/docs/embeddings"
+      },
+      {
+        "text": "Voyage Embeddings Docs",
+        "href": "https://docs.voyageai.com/docs/embeddings"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Critical",
+        "class": "err"
+      }
+    ]
+  },
+  {
+    "key": "EMBEDDING_MODEL",
+    "definition": "This names the OpenAI embedding model used for indexing and query encoding when the OpenAI provider is selected. Model choice sets the quality, speed, vector shape options, and cost profile that downstream retrieval depends on. Because embedding spaces are model-specific, changing this value after indexing requires a full rebuild to keep similarity search valid. Treat model upgrades as versioned infrastructure changes: pin model ids, benchmark on your query set, and roll forward only with measured quality and latency impact. Avoid ad hoc switching between runs.",
+    "links": [
+      {
+        "text": "jina-embeddings-v5-text (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.15547"
+      },
+      {
+        "text": "OpenAI Cookbook: Get Embeddings",
+        "href": "https://github.com/openai/openai-cookbook/blob/main/examples/Get_embeddings_from_dataset.ipynb"
+      },
+      {
+        "text": "openai-python API Reference",
+        "href": "https://github.com/openai/openai-python/blob/main/api.md"
+      },
+      {
+        "text": "MTEB Leaderboard",
+        "href": "https://huggingface.co/spaces/mteb/leaderboard"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Requires reindex",
+        "class": "reindex"
+      }
+    ]
+  },
+  {
+    "key": "EMBEDDING_MODEL_LOCAL",
+    "definition": "This specifies the local embedding model (usually SentenceTransformers or Hugging Face) used when running without hosted embedding APIs. It is a core quality and performance lever: larger models often improve semantic recall but consume more memory and index slower. Different local models also use different dimensions and training objectives, so changing models requires reindexing. Pin exact model revisions to avoid drift across machines and CI jobs. Use your own benchmark queries to choose a model, since leaderboard rank alone may not match your codebase or domain vocabulary.",
+    "links": [
+      {
+        "text": "jina-embeddings-v5-text (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.15547"
+      },
+      {
+        "text": "mxbai-embed-large-v1 Model Card",
+        "href": "https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1"
+      },
+      {
+        "text": "BGE Small v1.5 Model Card",
+        "href": "https://huggingface.co/BAAI/bge-small-en-v1.5"
+      },
+      {
+        "text": "SentenceTransformers Pretrained Models",
+        "href": "https://www.sbert.net/docs/sentence_transformer/pretrained_models.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Local inference",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "EMBEDDING_MODEL_MLX",
+    "definition": "This sets the MLX-compatible embedding model used on Apple Silicon. MLX uses Metal-optimized kernels, so it can provide strong local throughput for private or offline indexing pipelines. As with every embedding backend, the model id and dimension define the vector space; changing either requires full reindexing to keep search comparable. Quantized variants can reduce memory and speed up inference, but you should validate recall on representative queries before adopting them broadly. Record model id and quantization in index metadata for reproducible builds.",
+    "links": [
+      {
+        "text": "jina-embeddings-v5-text (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.15547"
+      },
+      {
+        "text": "MLX Repository",
+        "href": "https://github.com/ml-explore/mlx"
+      },
+      {
+        "text": "MLX Examples Repository",
+        "href": "https://github.com/ml-explore/mlx-examples"
+      },
+      {
+        "text": "mlx-community all-MiniLM-L6-v2-4bit",
+        "href": "https://huggingface.co/mlx-community/all-MiniLM-L6-v2-4bit"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Apple Silicon",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "EMBEDDING_RETRY_MAX",
+    "definition": "This controls how many times the system retries a failed embedding call before marking the operation failed. It protects indexing from transient failures such as short network interruptions, temporary overload, and bursty rate-limit responses. Too few retries makes jobs brittle; too many retries can mask persistent faults and dramatically increase end-to-end indexing time. Pair this setting with exponential backoff and jitter so workers do not retry in synchronized waves. Track retry exhaustion in telemetry and fix root causes rather than continually raising the retry ceiling.",
+    "links": [
+      {
+        "text": "MINES: Web API Invariant Anomaly Detection (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2512.06906"
+      },
+      {
+        "text": "AWS Builders Library: Timeouts, Retries, Backoff with Jitter",
+        "href": "https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/"
+      },
+      {
+        "text": "Google Cloud Retry Strategy",
+        "href": "https://cloud.google.com/storage/docs/retry-strategy"
+      },
+      {
+        "text": "openai-python API Reference",
+        "href": "https://github.com/openai/openai-python/blob/main/api.md"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Reliability",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "EMBEDDING_TEXT_PREFIX",
+    "definition": "This optional string is prepended to every text before embedding, commonly used to label role intent such as query or document. Stable prefixes can improve alignment by providing consistent task context to the embedding model. Because the prefix becomes part of the token sequence, changing it shifts vector geometry and requires reindexing for valid comparison. Keep prefixes short, explicit, and versioned; long or frequently edited prompt templates introduce drift and make experiments hard to reproduce. Evaluate prefix changes with offline relevance metrics before rollout.",
+    "links": [
+      {
+        "text": "Efficient Instruction-Following Text Embeddings (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2505.24754"
+      },
+      {
+        "text": "OpenAI Cookbook: Get Embeddings",
+        "href": "https://github.com/openai/openai-cookbook/blob/main/examples/Get_embeddings_from_dataset.ipynb"
+      },
+      {
+        "text": "SentenceTransformers Pretrained Models",
+        "href": "https://www.sbert.net/docs/sentence_transformer/pretrained_models.html"
+      },
+      {
+        "text": "Voyage Embeddings Docs",
+        "href": "https://docs.voyageai.com/docs/embeddings"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Requires reindex",
+        "class": "reindex"
+      }
+    ]
+  },
+  {
+    "key": "EMBEDDING_TEXT_SUFFIX",
+    "definition": "This optional string is appended to each text before embedding, useful for consistent delimiters or lightweight schema hints across heterogeneous content. Suffixes influence tokenization and final vector placement, so changing them invalidates direct comparability with previously indexed vectors and requires reindexing. Use compact, stable suffixes and avoid large boilerplate tails that can drown out meaningful content in short chunks. Document suffix policy in index metadata so retrieval regressions can be traced to preprocessing changes quickly. Treat suffix design as part of your embedding contract, not cosmetic formatting.",
+    "links": [
+      {
+        "text": "Instruction/Persona Embedding Alignment (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.10205"
+      },
+      {
+        "text": "OpenAI Cookbook: Get Embeddings",
+        "href": "https://github.com/openai/openai-cookbook/blob/main/examples/Get_embeddings_from_dataset.ipynb"
+      },
+      {
+        "text": "SentenceTransformers Pretrained Models",
+        "href": "https://www.sbert.net/docs/sentence_transformer/pretrained_models.html"
+      },
+      {
+        "text": "Gemini Embeddings Docs",
+        "href": "https://ai.google.dev/gemini-api/docs/embeddings"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Requires reindex",
+        "class": "reindex"
+      }
+    ]
+  },
+  {
+    "key": "EMBEDDING_TIMEOUT",
+    "definition": "This is the maximum wait time for an embedding request before the call is treated as failed. It defines how long indexing workers can block on slow upstream responses and strongly affects throughput under load. If timeout is too low, valid requests fail and trigger unnecessary retries; if too high, stuck calls reduce parallelism and delay incident detection. Tune this with retry count, concurrency, and observed p95 and p99 latency, not mean latency alone. Separate timeout profiles for interactive queries versus bulk indexing jobs when possible.",
+    "links": [
+      {
+        "text": "LO2: Microservice API Anomaly Dataset (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2504.12067"
+      },
+      {
+        "text": "AWS Builders Library: Timeouts, Retries, Backoff with Jitter",
+        "href": "https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/"
+      },
+      {
+        "text": "Google Cloud Retry Strategy",
+        "href": "https://cloud.google.com/storage/docs/retry-strategy"
+      },
+      {
+        "text": "openai-python API Reference",
+        "href": "https://github.com/openai/openai-python/blob/main/api.md"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Latency control",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "EMBEDDING_TYPE",
+    "definition": "This selects the embedding backend family and therefore the core operating mode of retrieval: hosted API providers versus local inference runtimes. The choice drives quality, cost, privacy boundaries, tokenizer behavior, dimensionality, and operational dependencies such as network availability or local model files. Switching type usually changes vector space and requires reindexing to preserve ranking validity. Decide type at architecture level by balancing security and compliance constraints against latency and budget. Record provider and model together in index metadata so deployments remain reproducible.",
+    "links": [
+      {
+        "text": "jina-embeddings-v5-text (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.15547"
+      },
+      {
+        "text": "OpenAI Cookbook: Get Embeddings",
+        "href": "https://github.com/openai/openai-cookbook/blob/main/examples/Get_embeddings_from_dataset.ipynb"
+      },
+      {
+        "text": "Voyage Embeddings Docs",
+        "href": "https://docs.voyageai.com/docs/embeddings"
+      },
+      {
+        "text": "Gemini Embeddings Docs",
+        "href": "https://ai.google.dev/gemini-api/docs/embeddings"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Requires reindex",
+        "class": "reindex"
+      }
+    ]
+  },
+  {
+    "key": "EMIT_CHUNK_ORDINAL",
+    "definition": "When enabled, each chunk stores a stable ordinal index inside its parent document. That makes neighbor-window retrieval possible, letting you expand around a high-scoring hit to recover local context that may span chunk boundaries. Ordinals also improve diagnostics by revealing where relevant evidence tends to appear within files. Keep ordinals deterministic for a fixed chunking configuration so experiments are comparable across runs. If chunking logic changes, expect ordinal renumbering and validate any downstream logic that assumes positional continuity.",
+    "links": [
+      {
+        "text": "cAST Structural Chunking for Code RAG (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2506.15655"
+      },
+      {
+        "text": "LangChain Parent Document Retriever",
+        "href": "https://python.langchain.com/docs/how_to/parent_document_retriever/"
+      },
+      {
+        "text": "Pinecone Metadata Filtering",
+        "href": "https://docs.pinecone.io/guides/search/filter-by-metadata"
+      },
+      {
+        "text": "Qdrant Filtering",
+        "href": "https://qdrant.tech/documentation/concepts/filtering/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Context stitching",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "EMIT_PARENT_DOC_ID",
+    "definition": "When enabled, each chunk carries a stable parent document identifier, such as canonical path or document UUID. This supports document-level grouping, de-duplication, and score aggregation so retrieval can reason beyond isolated chunks. Parent IDs are also essential for debugging and observability, because they make it clear which source documents dominate top-k results. Use identifiers that remain stable across routine refactors whenever possible. Combining parent_doc_id with chunk ordinals provides a reliable basis for reconstructing larger contexts around hits.",
+    "links": [
+      {
+        "text": "Breaking It Down: Domain-Aware Segmentation for RAG (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2512.00367"
+      },
+      {
+        "text": "LangChain Parent Document Retriever",
+        "href": "https://python.langchain.com/docs/how_to/parent_document_retriever/"
+      },
+      {
+        "text": "Pinecone Metadata Filtering",
+        "href": "https://docs.pinecone.io/guides/search/filter-by-metadata"
+      },
+      {
+        "text": "Qdrant Filtering",
+        "href": "https://qdrant.tech/documentation/concepts/filtering/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Traceability",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "ENABLE_MMR",
+    "definition": "This enables diversification during retrieval so selected chunks are both relevant and non-redundant. In practice, MMR-style selection reduces near-duplicate hits that otherwise waste context window budget and crowd out complementary evidence. It is especially useful for exploratory or multi-hop questions where coverage across files matters more than slight top-1 similarity gains. The main tradeoff is occasional top-rank precision loss if diversity weight is too high. Tune the relevance-diversity balance with offline evaluation by measuring both answer accuracy and duplication rate in retrieved contexts.",
+    "links": [
+      {
+        "text": "Vendi-RAG: Balancing Accuracy and Diversity in RAG (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2502.11228"
+      },
+      {
+        "text": "LangChain MMR Example Selector",
+        "href": "https://python.langchain.com/docs/how_to/example_selectors_mmr/"
+      },
+      {
+        "text": "LangChain VectorStore Retriever",
+        "href": "https://python.langchain.com/docs/how_to/vectorstore_retriever/"
+      },
+      {
+        "text": "Qdrant Hybrid Queries",
+        "href": "https://qdrant.tech/documentation/concepts/hybrid-queries/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Diversity control",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "ENDPOINT_CALL_FREQUENCY",
+    "definition": "This threshold defines how many calls per minute to a single endpoint are considered anomalous. It is a practical control for catching retry storms, broken client loops, traffic abuse, and accidental hot paths that can degrade retrieval services. Set it from historical percentiles per endpoint instead of one global number, because normal traffic patterns differ widely. If set too low you create alert fatigue; too high and incidents are detected late. Pair this metric with labels like status code and caller identity to speed root-cause analysis after alerts fire.",
+    "links": [
+      {
+        "text": "MINES: Web API Invariant Anomaly Detection (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2512.06906"
+      },
+      {
+        "text": "Prometheus Alerting Rules",
+        "href": "https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/"
+      },
+      {
+        "text": "Grafana Alerting Fundamentals",
+        "href": "https://grafana.com/docs/grafana/latest/alerting/fundamentals/"
+      },
+      {
+        "text": "OpenTelemetry Metrics Concepts",
+        "href": "https://opentelemetry.io/docs/concepts/signals/metrics/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Anomaly detection",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "ENDPOINT_SUSTAINED_DURATION",
+    "definition": "This sets how long elevated endpoint call frequency must persist before an alert is triggered. It acts as a temporal noise filter that separates transient bursts from real incidents such as infinite loops or sustained abuse traffic. Short durations improve detection speed but can increase false positives; longer durations reduce noise but delay response. Tune duration together with frequency threshold using historical traffic playback, not one setting in isolation. Many teams use staged alerting windows so warnings arrive quickly while critical pages require longer persistence.",
+    "links": [
+      {
+        "text": "LO2: Microservice API Anomaly Dataset (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2504.12067"
+      },
+      {
+        "text": "Prometheus Alerting Rules",
+        "href": "https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/"
+      },
+      {
+        "text": "Grafana Alerting Fundamentals",
+        "href": "https://grafana.com/docs/grafana/latest/alerting/fundamentals/"
+      },
+      {
+        "text": "OpenTelemetry Metrics Concepts",
+        "href": "https://opentelemetry.io/docs/concepts/signals/metrics/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Noise filtering",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "ENRICH_BACKEND",
+    "definition": "This chooses the runtime that generates enrichment metadata during indexing, such as chunk summaries, tags, and semantic hints. Backend choice changes quality, latency, cost, privacy posture, and operational complexity, so it can materially alter downstream retrieval and reranking behavior. Hosted backends generally reduce ops burden and may provide stronger quality, while local backends can improve data control and predictable marginal cost. Treat backend changes like model migrations: version prompts and settings, then rerun evaluation before production rollout. Do not assume enrichment outputs are interchangeable across backends.",
+    "links": [
+      {
+        "text": "Meta-RAG on Large Codebases Using Code Summarization (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2508.02611"
+      },
+      {
+        "text": "openai-python API Reference",
+        "href": "https://github.com/openai/openai-python/blob/main/api.md"
+      },
+      {
+        "text": "Ollama API Docs",
+        "href": "https://github.com/ollama/ollama/blob/main/docs/api.md"
+      },
+      {
+        "text": "MLX Repository",
+        "href": "https://github.com/ml-explore/mlx"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Index pipeline",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "ENRICH_CODE_CHUNKS",
+    "definition": "When enabled, each code chunk is augmented with model-generated summaries or semantic descriptors during indexing. This often improves conceptual retrieval because rerankers can match intent signals beyond literal token overlap. The tradeoff is extra indexing time, compute cost, and the risk of noisy metadata if prompts or models are weak. Chunk size and model selection both matter: oversized chunks produce vague summaries, while tiny chunks lose architectural context. Evaluate this feature with task-based retrieval metrics to confirm the added metadata improves real query outcomes.",
+    "links": [
+      {
+        "text": "EyeLayer: Human Attention for Code Summarization (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.22368"
+      },
+      {
+        "text": "Meta-RAG on Large Codebases Using Code Summarization (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2508.02611"
+      },
+      {
+        "text": "LlamaIndex Repository",
+        "href": "https://github.com/run-llama/llama_index"
+      },
+      {
+        "text": "LangChain Repository",
+        "href": "https://github.com/langchain-ai/langchain"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Slower indexing",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "ENRICH_DISABLED",
+    "definition": "This switch disables enrichment generation entirely during indexing. It is useful for fast iteration, low-cost development cycles, and emergency backfills where raw embedding retrieval is acceptable. The cost of disabling is reduced semantic metadata for reranking, cards, and explanatory UX features, which can lower answer quality on abstract or architecture-level questions. Use it intentionally and record when it is active so benchmark comparisons remain meaningful. A common pattern is enrichment disabled for local loops and enabled for production-grade index builds.",
+    "links": [
+      {
+        "text": "Not All Tokens Matter: Efficient Code Summarization (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.20147"
+      },
+      {
+        "text": "Ollama README",
+        "href": "https://github.com/ollama/ollama/blob/main/README.md"
+      },
+      {
+        "text": "openai-python API Reference",
+        "href": "https://github.com/openai/openai-python/blob/main/api.md"
+      },
+      {
+        "text": "MLX Repository",
+        "href": "https://github.com/ml-explore/mlx"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Faster indexing",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "ENRICH_MODEL",
+    "definition": "This selects the exact model used by the configured enrichment backend. It is the main lever on the quality versus cost versus throughput tradeoff for generated summaries and keywords. Higher-capability models can improve semantic signals for reranking and explanation quality, while lighter models reduce expense and indexing time. Even without changing embeddings, enrichment model swaps can shift retrieval outcomes, so they should be benchmarked and version-controlled. Pin model ids and evaluate outputs on representative repositories before adopting changes in production pipelines.",
+    "links": [
+      {
+        "text": "Code vs Serialized AST Inputs for Code Summarization (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.06671"
+      },
+      {
+        "text": "EyeLayer: Human Attention for Code Summarization (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.22368"
+      },
+      {
+        "text": "openai-python API Reference",
+        "href": "https://github.com/openai/openai-python/blob/main/api.md"
+      },
+      {
+        "text": "Ollama API Docs",
+        "href": "https://github.com/ollama/ollama/blob/main/docs/api.md"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Affects quality/cost",
+        "class": "warn"
+      }
+    ]
+  }
+]

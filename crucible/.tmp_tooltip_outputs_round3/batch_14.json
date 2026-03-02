@@ -1,0 +1,237 @@
+[
+  {
+    "key": "THEME_MODE",
+    "definition": "Controls the interface color system used by the app (`light`, `dark`, or `auto`). In `auto`, the UI should track OS/browser preference (`prefers-color-scheme`) and apply color tokens before first paint to avoid flash-of-incorrect-theme. This setting is not just aesthetic: it affects readability, contrast compliance, and operator fatigue during long debugging sessions. In production, pair theme switching with contrast checks so status badges, charts, and alert colors remain distinguishable in both modes.",
+    "links": [
+      {
+        "text": "Predicting Human Color Preferences Through LLMs (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2512.00516"
+      },
+      {
+        "text": "MDN: prefers-color-scheme",
+        "href": "https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-color-scheme"
+      },
+      {
+        "text": "MDN: color-scheme",
+        "href": "https://developer.mozilla.org/en-US/docs/Web/CSS/color-scheme"
+      },
+      {
+        "text": "WCAG 2.2: Contrast (Minimum)",
+        "href": "https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "THREAD_ID",
+    "definition": "Stable conversation identifier used to bind requests to one persistent dialogue state. Reusing the same `THREAD_ID` allows checkpoints, tool outputs, and prior turns to be recovered across retries and restarts; changing it creates a clean session boundary. In multi-user systems, construct IDs deterministically (workspace + user + session) to prevent cross-user context bleed. Treat this value as state-routing infrastructure, not just a label, because it determines where memory is read and written.",
+    "links": [
+      {
+        "text": "TiMem: Tokenized Time-Based Memory Management for Agentic LLMs (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.02845"
+      },
+      {
+        "text": "Membox: Memory Hub for Agentic Systems (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.03785"
+      },
+      {
+        "text": "LangGraph Platform: Use Threads",
+        "href": "https://docs.langchain.com/langgraph-platform/use-threads"
+      },
+      {
+        "text": "LangGraph Concepts: Persistence",
+        "href": "https://langchain-ai.github.io/langgraph/concepts/persistence/"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TIMEOUT_ERRORS_THRESHOLD",
+    "definition": "Defines how many timeout failures are tolerated inside a rolling 5-minute window before paging or incident workflows trigger. This threshold should align with your SLO budget: too low causes alert storms during normal jitter, too high delays detection of real saturation. Tune it together with upstream timeouts, retry policy, and queue depth so alerts represent sustained user-impacting latency rather than transient spikes. Revisit after infrastructure or model-provider changes, since timeout baselines can shift quickly.",
+    "links": [
+      {
+        "text": "SRE Agentics: Intelligent Alerting and Incident Management (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.03965"
+      },
+      {
+        "text": "Prometheus: Alerting Rules",
+        "href": "https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/"
+      },
+      {
+        "text": "AWS Builders Library: Timeouts, retries, and backoff with jitter",
+        "href": "https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/"
+      },
+      {
+        "text": "Google SRE Book: Handling Overload",
+        "href": "https://sre.google/sre-book/handling-overload/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Reliability",
+        "class": "err"
+      }
+    ]
+  },
+  {
+    "key": "TOKENIZATION_ESTIMATE_ONLY",
+    "definition": "When enabled, token counts are approximated instead of computed with the exact tokenizer. This speeds large indexing passes and quick planning runs, but estimates can drift on code, mixed-language text, and Unicode-heavy corpora where token boundaries are irregular. Use this mode for rough budgeting and capacity checks, then switch to exact counting before final chunking and cost-sensitive production runs. The key tradeoff is throughput versus boundary accuracy.",
+    "links": [
+      {
+        "text": "Length-MAX: Truncation-Resilient LLM Training for Long Inputs (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2511.20849"
+      },
+      {
+        "text": "OpenAI Cookbook: Count tokens with tiktoken",
+        "href": "https://cookbook.openai.com/examples/how_to_count_tokens_with_tiktoken"
+      },
+      {
+        "text": "OpenAI tiktoken repository",
+        "href": "https://github.com/openai/tiktoken"
+      },
+      {
+        "text": "LangChain: Split text by tokens",
+        "href": "https://python.langchain.com/docs/how_to/split_by_token/"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TOKENIZATION_HF_TOKENIZER_NAME",
+    "definition": "Specifies the Hugging Face tokenizer implementation used when strategy is set to `huggingface` (for example, a model-specific BPE or SentencePiece tokenizer). The tokenizer should match the downstream embedding or generation model family; mismatches can skew token counts, split points, and truncation behavior. Pinning an explicit tokenizer name also improves reproducibility across environments and package updates. If this is wrong, chunk boundaries can drift even when text and chunk-size configs stay constant.",
+    "links": [
+      {
+        "text": "Tokenizer Choice For LLM Training: Negligible or Crucial? (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2503.19693"
+      },
+      {
+        "text": "Hugging Face Tokenizers documentation",
+        "href": "https://huggingface.co/docs/tokenizers/main/en"
+      },
+      {
+        "text": "Transformers: Tokenizer main classes",
+        "href": "https://huggingface.co/docs/transformers/main_classes/tokenizer"
+      },
+      {
+        "text": "Transformers: AutoTokenizer",
+        "href": "https://huggingface.co/docs/transformers/model_doc/auto#transformers.AutoTokenizer"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TOKENIZATION_LOWERCASE",
+    "definition": "Lowercases text before tokenization to reduce vocabulary sparsity and make matching less case-sensitive. This often improves recall for noisy user queries, but it can also erase meaning in case-sensitive domains (identifiers, product SKUs, legal names, biomedical symbols). For code retrieval and logs, keeping case is usually safer; for broad natural-language corpora, lowercasing may stabilize indexing. Evaluate it with representative queries rather than enabling globally by default.",
+    "links": [
+      {
+        "text": "Parity-Aware BPE for Information-Preserving Tokenization (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2508.04796"
+      },
+      {
+        "text": "Unicode Standard Annex #15: Normalization Forms",
+        "href": "https://www.unicode.org/reports/tr15/"
+      },
+      {
+        "text": "Hugging Face Tokenizers: Normalizers",
+        "href": "https://huggingface.co/docs/tokenizers/main/en/components#normalizers"
+      },
+      {
+        "text": "scikit-learn: Text feature extraction",
+        "href": "https://scikit-learn.org/stable/modules/feature_extraction.html#text-feature-extraction"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TOKENIZATION_MAX_TOKENS_PER_CHUNK_HARD",
+    "definition": "Absolute upper bound on per-chunk token count after all splitting logic. If a chunk still exceeds this cap, it must be split again or truncated, preventing oversized payloads from breaking embedding/model limits. Set this above your normal target chunk size but below the strictest model context boundary in your stack. This parameter is a safety guardrail, and it should be tuned with overlap and splitter strategy to avoid accidental semantic fragmentation.",
+    "links": [
+      {
+        "text": "Rethinking Chunk Size in Retrieval-Augmented Generation (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2505.21700"
+      },
+      {
+        "text": "LangChain: Text splitters concepts",
+        "href": "https://python.langchain.com/docs/concepts/text_splitters/"
+      },
+      {
+        "text": "LlamaIndex: TokenTextSplitter",
+        "href": "https://developers.llamaindex.ai/python/framework/module_guides/loading/node_parsers/modules/#tokentextsplitter"
+      },
+      {
+        "text": "Cohere: Chunking strategies",
+        "href": "https://docs.cohere.com/page/chunking-strategies"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TOKENIZATION_NORMALIZE_UNICODE",
+    "definition": "Applies Unicode normalization (commonly NFKC) before tokenization so visually similar or canonically equivalent forms collapse to consistent code points. This reduces hard-to-debug token drift caused by mixed sources (PDF extraction, OCR, copied web text, multilingual content). It improves index consistency and duplicate detection, but can alter some script-specific distinctions, so validate on domain text before enforcing globally. In practice, normalization is a high-leverage cleanup step for heterogeneous corpora.",
+    "links": [
+      {
+        "text": "PRAcTICaL: Prompt Compression with Character-Level Merging (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2511.03080"
+      },
+      {
+        "text": "Unicode Standard Annex #15: Normalization Forms",
+        "href": "https://www.unicode.org/reports/tr15/"
+      },
+      {
+        "text": "Python docs: unicodedata.normalize",
+        "href": "https://docs.python.org/3/library/unicodedata.html#unicodedata.normalize"
+      },
+      {
+        "text": "ICU User Guide: Normalization",
+        "href": "https://unicode-org.github.io/icu/userguide/transforms/normalization/"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TOKENIZATION_STRATEGY",
+    "definition": "Chooses which tokenizer engine drives token-aware chunking and cost/context calculations (for example `tiktoken`, `huggingface`, or simpler fallback methods). Different strategies produce different token boundaries and counts on the same text, which directly changes chunk sizes, truncation points, and retrieval behavior. Pick the strategy that matches your serving model family to minimize budgeting error and split instability. Standardize one strategy per pipeline stage so evaluation metrics remain comparable across runs.",
+    "links": [
+      {
+        "text": "Length-MAX: Truncation-Resilient LLM Training for Long Inputs (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2511.20849"
+      },
+      {
+        "text": "OpenAI tiktoken repository",
+        "href": "https://github.com/openai/tiktoken"
+      },
+      {
+        "text": "Hugging Face Tokenizers documentation",
+        "href": "https://huggingface.co/docs/tokenizers/main/en"
+      },
+      {
+        "text": "Google SentencePiece repository",
+        "href": "https://github.com/google/sentencepiece"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TOKENIZATION_TIKTOKEN_ENCODING",
+    "definition": "Defines the exact tiktoken vocabulary/merge table used to count and split tokens (for example `o200k_base`). The encoding choice must match the target model family; otherwise token budgets, chunk boundaries, and truncation guards can be wrong even when chunk-size settings look correct. Explicitly pinning encoding improves reproducibility across deployments and helps avoid silent fallback behavior. For mixed-model systems, store encoding per model assignment rather than globally.",
+    "links": [
+      {
+        "text": "Length-MAX: Truncation-Resilient LLM Training for Long Inputs (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2511.20849"
+      },
+      {
+        "text": "tiktoken model-to-encoding mapping (GitHub)",
+        "href": "https://github.com/openai/tiktoken/blob/main/tiktoken/model.py"
+      },
+      {
+        "text": "OpenAI Cookbook: Count tokens with tiktoken",
+        "href": "https://cookbook.openai.com/examples/how_to_count_tokens_with_tiktoken"
+      },
+      {
+        "text": "OpenAI tiktoken repository",
+        "href": "https://github.com/openai/tiktoken"
+      }
+    ],
+    "badges": []
+  }
+]

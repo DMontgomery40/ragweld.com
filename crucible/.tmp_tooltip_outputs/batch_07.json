@@ -1,0 +1,562 @@
+[
+  {
+    "key": "FUSION_NORMALIZE_SCORES",
+    "definition": "In weighted fusion, vector similarity, BM25 relevance, and graph traversal scores usually exist on different numeric scales. This setting rescales them before combination so each retriever contributes based on relevance rather than raw magnitude. Keep normalization enabled when using weighted fusion, because otherwise one modality can dominate final ranking even with balanced weights. For rank-only fusion like RRF, normalization is usually unnecessary because only positions matter. If tuning weights does not change top results much, inspect score distributions first; poor normalization is often the real issue.",
+    "links": [
+      {
+        "text": "DAT: Dynamic Alpha Tuning for Hybrid Retrieval in RAG (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2503.23013"
+      },
+      {
+        "text": "OpenSearch Normalization Processor",
+        "href": "https://docs.opensearch.org/latest/search-plugins/search-pipelines/normalization-processor/"
+      },
+      {
+        "text": "Weaviate Hybrid Search",
+        "href": "https://docs.weaviate.io/weaviate/search/hybrid"
+      },
+      {
+        "text": "Elasticsearch Reciprocal Rank Fusion API",
+        "href": "https://www.elastic.co/docs/reference/elasticsearch/rest-apis/reciprocal-rank-fusion"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Fusion tuning",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "FUSION_RRF_K",
+    "definition": "RRF combines result lists with the formula 1 divided by k plus rank, so k controls how quickly importance decays with lower-ranked items. Smaller k values strongly favor top hits from each retriever, while larger values preserve more mid-ranked candidates and improve diversity. In tri-brid retrieval, k interacts with each retriever depth and chunk granularity, so tune it with offline metrics instead of intuition. Start near 60, then lower it if results feel noisy and raise it if relevant alternatives disappear too quickly. Changing k is often safer than hand-tuning many modality weights.",
+    "links": [
+      {
+        "text": "Hybrid RAG for Multilingual QA with RRF (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2512.12694"
+      },
+      {
+        "text": "Reciprocal Rank Fusion Original Paper",
+        "href": "https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf"
+      },
+      {
+        "text": "Elasticsearch Reciprocal Rank Fusion API",
+        "href": "https://www.elastic.co/docs/reference/elasticsearch/rest-apis/reciprocal-rank-fusion"
+      },
+      {
+        "text": "Unified Learning-to-Rank for Multi-Channel Retrieval (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.23530"
+      }
+    ],
+    "badges": [
+      {
+        "text": "RRF control",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "FUSION_SPARSE_WEIGHT",
+    "definition": "This weight controls how much lexical evidence from sparse retrieval influences the final fused ranking. Raising it improves exact-term tasks such as API names, error messages, file paths, and identifiers, but can reduce semantic recall when user wording differs from source text. Sparse weight should be tuned together with tokenizer and BM25 settings, because score behavior changes when stemming or chunk length changes. Use an evaluation set that includes both literal and conceptual queries so one class does not overfit the setting. If results become too keyword-literal, reduce this value before changing retriever architecture.",
+    "links": [
+      {
+        "text": "DAT: Dynamic Alpha Tuning for Hybrid Retrieval in RAG (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2503.23013"
+      },
+      {
+        "text": "Pinecone Hybrid Search Guide",
+        "href": "https://docs.pinecone.io/guides/search/hybrid-search"
+      },
+      {
+        "text": "Weaviate Hybrid Search",
+        "href": "https://docs.weaviate.io/weaviate/search/hybrid"
+      },
+      {
+        "text": "Elasticsearch Similarity and BM25 Settings",
+        "href": "https://www.elastic.co/docs/reference/elasticsearch/index-settings/similarity"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Keyword bias",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "FUSION_VECTOR_WEIGHT",
+    "definition": "This weight determines how strongly semantic nearest-neighbor matches influence fused ranking. Higher values help when users ask conceptual questions using synonyms not present in source text, while lower values protect exact-match intent such as identifiers and versioned commands. Re-tune this after embedding-model changes, chunking changes, or reranker changes because score calibration shifts quickly across those updates. Evaluate with mixed query types and inspect which retriever wins per query, not just aggregate averages. If answers feel topically related but miss required literals, vector weight is likely too high.",
+    "links": [
+      {
+        "text": "DAT: Dynamic Alpha Tuning for Hybrid Retrieval in RAG (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2503.23013"
+      },
+      {
+        "text": "pgvector Extension",
+        "href": "https://github.com/pgvector/pgvector"
+      },
+      {
+        "text": "Pinecone Hybrid Search Guide",
+        "href": "https://docs.pinecone.io/guides/search/hybrid-search"
+      },
+      {
+        "text": "Weaviate Hybrid Search",
+        "href": "https://docs.weaviate.io/weaviate/search/hybrid"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Semantic bias",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "GEN_BACKEND",
+    "definition": "Generation backend selects the provider stack that executes model calls, which affects auth, parameter semantics, rate limits, timeouts, and tool-calling behavior. Treat backend choice as an operational contract, not a cosmetic model switch. In RAG systems, keep backend-specific defaults normalized so output length, safety behavior, and citation style stay predictable across providers. If you support multiple backends, define a deterministic fallback order and record backend metadata in logs for incident triage. Backend heterogeneity without observability is a common source of inconsistent answer quality.",
+    "links": [
+      {
+        "text": "Universal Model Routing for Efficient LLM Inference (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2502.08773"
+      },
+      {
+        "text": "OpenAI Python SDK",
+        "href": "https://github.com/openai/openai-python"
+      },
+      {
+        "text": "Anthropic Claude Models",
+        "href": "https://docs.anthropic.com/en/docs/about-claude/models"
+      },
+      {
+        "text": "Ollama API Reference",
+        "href": "https://github.com/ollama/ollama/blob/main/docs/api.md"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Provider routing",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "GEN_MAX_TOKENS",
+    "definition": "This is the upper bound on generated output length per request. In RAG, it directly controls cost and latency, but also determines whether answers can include full reasoning, citations, and edge-case handling without truncation. Set defaults by task class instead of one global value, then enforce stricter caps on interactive channels to protect tail latency. Pair this with context packing and answer format constraints so tokens are spent on grounded content rather than repetition. Monitor both truncation frequency and response quality, because either metric alone can hide a bad token budget.",
+    "links": [
+      {
+        "text": "TimeBill: Time-Budgeted Inference for LLMs (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2512.21859"
+      },
+      {
+        "text": "Anthropic Messages API",
+        "href": "https://docs.anthropic.com/en/api/messages"
+      },
+      {
+        "text": "Gemini Token Counting",
+        "href": "https://ai.google.dev/gemini-api/docs/tokens"
+      },
+      {
+        "text": "OpenAI Cookbook: Count Tokens with tiktoken",
+        "href": "https://github.com/openai/openai-cookbook/blob/main/examples/How_to_count_tokens_with_tiktoken.ipynb"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Cost and latency",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "GEN_MODEL",
+    "definition": "This is the primary model used to synthesize answers from retrieved context, and it dominates quality, latency, and cost behavior. Choose it with workload-specific evaluation sets, not leaderboard intuition, because retrieval quality and prompt structure can change model rankings. Version model IDs explicitly so experiments are reproducible and regressions can be traced. Re-evaluate whenever provider releases shift default behavior, even if API names stay stable. Good retrieval can still underperform if the generation model is misaligned with your task style and response requirements.",
+    "links": [
+      {
+        "text": "Lookahead Routing for Large Language Models (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2510.19506"
+      },
+      {
+        "text": "OpenAI Python SDK",
+        "href": "https://github.com/openai/openai-python"
+      },
+      {
+        "text": "Anthropic Claude Models",
+        "href": "https://docs.anthropic.com/en/docs/about-claude/models"
+      },
+      {
+        "text": "OpenRouter Provider Selection",
+        "href": "https://openrouter.ai/docs/guides/routing/provider-selection"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Primary quality lever",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "GEN_MODEL_CHAT",
+    "definition": "This override applies a different model only for chat UX, letting you optimize interactivity without changing global generation defaults. A common pattern is faster chat responses for iteration while retaining a stronger model for offline or API workflows. Keep prompts and guardrails aligned across channels to avoid unexplained behavioral drift. Capture active channel model in telemetry so user feedback can be mapped to the correct configuration. If chat answers differ from API answers, check this override before changing retrieval or prompting.",
+    "links": [
+      {
+        "text": "INFERENCEDYNAMICS: Efficient Routing Across LLMs (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2505.16303"
+      },
+      {
+        "text": "LiteLLM Router",
+        "href": "https://docs.litellm.ai/docs/routing"
+      },
+      {
+        "text": "Anthropic Messages API",
+        "href": "https://docs.anthropic.com/en/api/messages"
+      },
+      {
+        "text": "OpenAI Cookbook: Formatting Chat Inputs",
+        "href": "https://github.com/openai/openai-cookbook/blob/main/examples/How_to_format_inputs_to_ChatGPT_models.ipynb"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Channel override",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "GEN_MODEL_CLI",
+    "definition": "This override selects a model specifically for CLI sessions, which are usually iterative and speed-sensitive. Using a smaller or local model here can improve developer feedback loops while keeping production channels on a higher-capability model. Keep retrieval stack and system prompts aligned across channels so CLI debugging reflects real behavior. Log the active CLI model in run metadata to make test results reproducible. Use this for workflow optimization, not as an untracked fork of application behavior.",
+    "links": [
+      {
+        "text": "Universal Model Routing for Efficient LLM Inference (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2502.08773"
+      },
+      {
+        "text": "Ollama Quickstart",
+        "href": "https://github.com/ollama/ollama#quickstart"
+      },
+      {
+        "text": "LiteLLM Router",
+        "href": "https://docs.litellm.ai/docs/routing"
+      },
+      {
+        "text": "OpenAI Python SDK",
+        "href": "https://github.com/openai/openai-python"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Developer workflow",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "GEN_MODEL_HTTP",
+    "definition": "This override controls model selection for HTTP/API traffic, where SLOs, concurrency, and cost controls are usually stricter than interactive internal use. It enables channel-specific governance, such as serving public endpoints with stable low-variance models while reserving premium models for internal workflows. Treat changes here as API behavior changes and validate with canary rollouts. Align timeout and retry policies to the chosen model because latency profile varies significantly by provider and model class. Clear fallback order prevents unpredictable responses during upstream incidents.",
+    "links": [
+      {
+        "text": "Lookahead Routing for Large Language Models (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2510.19506"
+      },
+      {
+        "text": "Anthropic Messages API",
+        "href": "https://docs.anthropic.com/en/api/messages"
+      },
+      {
+        "text": "LiteLLM Router",
+        "href": "https://docs.litellm.ai/docs/routing"
+      },
+      {
+        "text": "OpenRouter Provider Selection",
+        "href": "https://openrouter.ai/docs/guides/routing/provider-selection"
+      }
+    ],
+    "badges": [
+      {
+        "text": "API channel",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "GEN_MODEL_MCP",
+    "definition": "This override applies to MCP tool-invocation paths, where requests are structured and often latency-sensitive. A lighter model can be sufficient for tool selection and argument construction, reducing spend without degrading end-to-end quality. Prioritize schema adherence and tool-call reliability over open-ended generation fluency in this channel. Validate with tool-call success rate, argument validity, and recovery behavior after tool errors. If tool use regresses while chat quality remains stable, this override is the first place to inspect.",
+    "links": [
+      {
+        "text": "INFERENCEDYNAMICS: Efficient Routing Across LLMs (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2505.16303"
+      },
+      {
+        "text": "Model Context Protocol Introduction",
+        "href": "https://modelcontextprotocol.io/introduction"
+      },
+      {
+        "text": "Model Context Protocol Specification (2025-06-18)",
+        "href": "https://modelcontextprotocol.io/specification/2025-06-18"
+      },
+      {
+        "text": "MCP Transport Specification",
+        "href": "https://modelcontextprotocol.io/specification/2025-06-18/basic/transports"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Tool channel",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "GEN_RETRY_MAX",
+    "definition": "This sets how many times generation requests are retried after transient failures such as rate limits or temporary backend faults. Higher values can improve success rate but also increase latency and amplify traffic during outages if backoff is weak. Use bounded retries with exponential backoff and jitter, and track request IDs to avoid accidental duplicate side effects. Interactive channels usually need fewer retries than background jobs. If retries are frequent but final success stays low, reduce retries and fix timeout, routing, or provider health first.",
+    "links": [
+      {
+        "text": "KevlarFlow: Resiliency in LLM Serving (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.22438"
+      },
+      {
+        "text": "OpenAI Cookbook: Handle Rate Limits",
+        "href": "https://github.com/openai/openai-cookbook/blob/main/examples/How_to_handle_rate_limits.ipynb"
+      },
+      {
+        "text": "Anthropic API Errors",
+        "href": "https://docs.anthropic.com/en/api/errors"
+      },
+      {
+        "text": "LiteLLM Reliability and Fallbacks",
+        "href": "https://docs.litellm.ai/docs/proxy/reliability"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Resilience",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "GEN_TEMPERATURE",
+    "definition": "Temperature controls sampling randomness. In retrieval-grounded QA, lower values usually improve consistency and factual stability, while higher values increase stylistic variation and drift risk. Keep defaults low for technical explanations, debugging steps, and config guidance where repeatability matters. Raise it only for explicitly creative tasks and monitor variance across repeated runs of the same query. If answer facts change across retries with identical context, temperature is likely set too high for your use case.",
+    "links": [
+      {
+        "text": "Learning Temperature Policy from LLM Internal States (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.13035"
+      },
+      {
+        "text": "Anthropic Prompt Engineering: Use Temperature",
+        "href": "https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/use-temperature"
+      },
+      {
+        "text": "Hugging Face Text Generation Parameters",
+        "href": "https://huggingface.co/docs/transformers/main_classes/text_generation"
+      },
+      {
+        "text": "OpenAI Cookbook: Formatting Chat Inputs",
+        "href": "https://github.com/openai/openai-cookbook/blob/main/examples/How_to_format_inputs_to_ChatGPT_models.ipynb"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Sampling control",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "GEN_TIMEOUT",
+    "definition": "Timeout sets the maximum wait for generation before the request is aborted. This is a reliability boundary that protects workers and users during provider slowdowns; too low causes false failures, too high causes queue buildup and cascading retries. Tune it by model class and expected output length, then enforce stricter limits for interactive paths. Combine timeout with retry policy so slow requests do not create retry storms. Rising timeout rates usually indicate context bloat, backend saturation, or routing misconfiguration rather than a need for unlimited timeout.",
+    "links": [
+      {
+        "text": "KevlarFlow: Resiliency in LLM Serving (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.22438"
+      },
+      {
+        "text": "LiteLLM Timeout Controls",
+        "href": "https://docs.litellm.ai/docs/proxy/timeout"
+      },
+      {
+        "text": "LiteLLM Reliability and Fallbacks",
+        "href": "https://docs.litellm.ai/docs/proxy/reliability"
+      },
+      {
+        "text": "Anthropic API Errors",
+        "href": "https://docs.anthropic.com/en/api/errors"
+      }
+    ],
+    "badges": [
+      {
+        "text": "SLO guardrail",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "GEN_TOP_P",
+    "definition": "Top-p applies nucleus sampling by limiting choices to the smallest token set whose cumulative probability reaches p. Lower values narrow the candidate set and improve determinism, while higher values increase lexical diversity. In RAG answers, top-p is usually tuned with temperature; high values for both can increase hallucination risk even with good retrieval context. Keep top-p conservative for technical and policy-sensitive responses. When troubleshooting unstable outputs, reduce top-p before redesigning prompts so you isolate sampling entropy effects first.",
+    "links": [
+      {
+        "text": "Top-H Decoding: Bounded Entropy Text Generation (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2509.02510"
+      },
+      {
+        "text": "Hugging Face Text Generation Parameters",
+        "href": "https://huggingface.co/docs/transformers/main_classes/text_generation"
+      },
+      {
+        "text": "Anthropic Messages API",
+        "href": "https://docs.anthropic.com/en/api/messages"
+      },
+      {
+        "text": "OpenAI Cookbook: Formatting Chat Inputs",
+        "href": "https://github.com/openai/openai-cookbook/blob/main/examples/How_to_format_inputs_to_ChatGPT_models.ipynb"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Sampling control",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "GOLDEN_PATH",
+    "definition": "Golden path points to the curated evaluation file used for repeatable quality checks. This dataset should represent real user intents and include expected retrieval or answer signals so regressions are detectable after any model or retrieval change. Treat it as versioned test data and expand it when new failure modes appear in production. Run it automatically during configuration and model rollout workflows to prevent silent quality drift. A disciplined golden set is the fastest way to compare fusion, chunking, and model changes on equal ground.",
+    "links": [
+      {
+        "text": "RAGVUE: Explainable and Automated RAG Evaluation (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.04196"
+      },
+      {
+        "text": "BEIR Benchmark",
+        "href": "https://github.com/beir-cellar/beir"
+      },
+      {
+        "text": "RAGAS Framework",
+        "href": "https://github.com/explodinggradients/ragas"
+      },
+      {
+        "text": "trec_eval",
+        "href": "https://trec.nist.gov/trec_eval/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Evaluation",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "GOOGLE_API_KEY",
+    "definition": "This key authenticates calls to Google Gemini and related APIs, so it should be managed as a production secret. In RAG systems, key misuse can create unexpected spend, quota exhaustion, or unauthorized access patterns that degrade service quality. Store it in a secret manager, scope permissions minimally, and rotate on schedule or incident. Never expose it in client code, logs, or prompt artifacts. Add per-key monitoring and alerting so abnormal traffic is detected before it impacts retrieval and generation pipelines.",
+    "links": [
+      {
+        "text": "Encrypted Prompt: Securing LLM Applications (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2503.23250"
+      },
+      {
+        "text": "Gemini API Key Setup",
+        "href": "https://ai.google.dev/gemini-api/docs/api-key"
+      },
+      {
+        "text": "Gemini API Quickstart",
+        "href": "https://ai.google.dev/gemini-api/docs/quickstart"
+      },
+      {
+        "text": "Google Cloud API Key Best Practices",
+        "href": "https://cloud.google.com/docs/authentication/api-keys-best-practices"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Secret management",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "GRAFANA_AUTH_MODE",
+    "definition": "Auth mode determines how your app authenticates to Grafana and therefore defines the monitoring trust boundary. Token or service-account auth is preferred for automated integrations because it supports least privilege and clearer auditing. Basic auth can work for small internal setups but is harder to rotate safely and tends to leak into scripts. No-auth mode should be limited to intentionally public dashboards only. Align auth mode with environment tier and explicitly restrict access to administrative API surfaces.",
+    "links": [
+      {
+        "text": "AgentSight: Observability for AI Agents (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2508.02736"
+      },
+      {
+        "text": "Grafana Security Configuration",
+        "href": "https://grafana.com/docs/grafana/latest/setup-grafana/configure-security/"
+      },
+      {
+        "text": "Grafana HTTP API Authentication",
+        "href": "https://grafana.com/docs/grafana/latest/developer-resources/api-reference/http-api/authentication/"
+      },
+      {
+        "text": "Grafana Service Accounts",
+        "href": "https://grafana.com/docs/grafana/latest/administration/service-accounts/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Access control",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "GRAFANA_AUTH_TOKEN",
+    "definition": "This token is the credential used for Grafana API or embed access when token auth mode is enabled. Prefer service-account tokens scoped to only required dashboards and APIs. Rotate tokens regularly and revoke immediately when leakage is suspected. Do not store them in frontend bundles, browser storage, or verbose logs. Monitor 401 and 403 failures against Grafana endpoints so expired or revoked tokens are detected quickly and do not silently break observability views.",
+    "links": [
+      {
+        "text": "AgentSight: Observability for AI Agents (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2508.02736"
+      },
+      {
+        "text": "Grafana Service Accounts",
+        "href": "https://grafana.com/docs/grafana/latest/administration/service-accounts/"
+      },
+      {
+        "text": "Grafana HTTP API Authentication",
+        "href": "https://grafana.com/docs/grafana/latest/developer-resources/api-reference/http-api/authentication/"
+      },
+      {
+        "text": "Grafana Security Configuration",
+        "href": "https://grafana.com/docs/grafana/latest/setup-grafana/configure-security/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Credential",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "GRAFANA_BASE_URL",
+    "definition": "This is the canonical Grafana endpoint your app uses for links, API calls, and embedded dashboards. It must match deployment topology, including scheme, host, and any subpath behind reverse proxies. Misalignment between app base URL and Grafana root URL often causes broken embeds, redirect loops, or partial auth failures. Validate this value at startup and in health checks, especially across dev, staging, and production environments. Keep it environment-specific and versioned with infrastructure config so monitor links remain stable.",
+    "links": [
+      {
+        "text": "AgentSight: Observability for AI Agents (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2508.02736"
+      },
+      {
+        "text": "Grafana Setup Guide",
+        "href": "https://grafana.com/docs/grafana/latest/setup-grafana/#start-the-grafana-server"
+      },
+      {
+        "text": "Grafana root_url Configuration",
+        "href": "https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/#root_url"
+      },
+      {
+        "text": "Grafana Configuration Reference",
+        "href": "https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Endpoint config",
+        "class": "info"
+      }
+    ]
+  }
+]

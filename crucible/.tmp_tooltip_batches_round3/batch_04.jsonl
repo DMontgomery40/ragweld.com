@@ -1,0 +1,10 @@
+{"key":"MAX_QUERY_REWRITES"}
+{"key":"MCP_API_KEY"}
+{"key":"MCP_HTTP_HOST"}
+{"key":"MCP_HTTP_PATH"}
+{"key":"MCP_HTTP_PORT"}
+{"key":"MCP_SERVER_URL"}
+{"key":"METRICS_ENABLED"}
+{"key":"MIN_CHUNK_CHARS"}
+{"key":"MIN_SCORE_GRAPH"}
+{"key":"MIN_SCORE_SPARSE"}

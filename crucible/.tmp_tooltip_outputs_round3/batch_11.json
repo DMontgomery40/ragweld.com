@@ -1,0 +1,283 @@
+[
+  {
+    "key": "RERANKER_TRAIN_MAXLEN",
+    "definition": "`RERANKER_TRAIN_MAXLEN` sets the tokenizer-level cap used when building reranker training pairs, so every query-document pair is truncated to this maximum length before it reaches the cross-encoder. In implementation terms, this is one of the strongest memory controls in the training loop because self-attention cost grows roughly with sequence length squared; increasing this value can quickly push GPU/MLX memory over the limit and trigger OOM exits. In practice, treat this as a budget knob: start lower for stability, then raise only if error analysis shows that relevant evidence is being cut off and ranking quality is bottlenecked by truncation rather than model capacity.",
+    "links": [
+      {
+        "text": "BAR-RAG: Boundary-Aware Adaptive Retrieval for Better Reranking (arXiv)",
+        "href": "https://arxiv.org/abs/2602.03689"
+      },
+      {
+        "text": "Hugging Face Transformers Tokenizer API",
+        "href": "https://huggingface.co/docs/transformers/main_classes/tokenizer"
+      },
+      {
+        "text": "Hugging Face Padding and Truncation",
+        "href": "https://huggingface.co/docs/transformers/main/pad_truncation"
+      },
+      {
+        "text": "Sentence Transformers Cross-Encoder Reranker Training",
+        "href": "https://www.sbert.net/examples/cross_encoder/training/rerankers/README.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Memory sensitive",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "RERANKER_TRAIN_MAX_LENGTH",
+    "definition": "`RERANKER_TRAIN_MAX_LENGTH` is the explicit training-example token ceiling for reranker fine-tuning, and it controls how much joint query-context evidence the model can score in one forward pass. For this codepath, larger values can improve relevance discrimination on long passages, but they also increase per-step compute, reduce feasible batch size, and can force heavier gradient accumulation to stay within memory limits. Use it with a measurement loop: watch training throughput, memory headroom, and validation ranking metrics together, because pushing max length without enough optimization budget often slows training more than it improves retrieval quality.",
+    "links": [
+      {
+        "text": "BAR-RAG: Boundary-Aware Adaptive Retrieval for Better Reranking (arXiv)",
+        "href": "https://arxiv.org/abs/2602.03689"
+      },
+      {
+        "text": "Hugging Face Padding and Truncation",
+        "href": "https://huggingface.co/docs/transformers/main/pad_truncation"
+      },
+      {
+        "text": "Hugging Face Transformers Tokenizer API",
+        "href": "https://huggingface.co/docs/transformers/main_classes/tokenizer"
+      },
+      {
+        "text": "OpenSearch Cross-Encoder Reranking Tutorial",
+        "href": "https://docs.opensearch.org/latest/tutorials/reranking/reranking-cross-encoder/"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "RERANKER_TRAIN_PRIMARY_K_OVERRIDE",
+    "definition": "`RERANKER_TRAIN_PRIMARY_K_OVERRIDE` chooses the evaluation cutoff used by @k metrics (for example MRR@k or nDCG@k) when deciding what counts as the run's primary score. Implementation-wise, this determines how deep into the ranked candidate list the trainer looks before scoring success, so smaller k values enforce top-of-list precision while larger k values reward broader coverage deeper in the list. This should be aligned with product behavior: if users only inspect a handful of retrieved chunks, a large k can make offline metrics look strong while real UX still feels weak.",
+    "links": [
+      {
+        "text": "GaRAGe: Grounded Retrieval-Augmented Generation Evaluation Benchmark (arXiv)",
+        "href": "https://arxiv.org/abs/2506.07671"
+      },
+      {
+        "text": "scikit-learn `ndcg_score`",
+        "href": "https://scikit-learn.org/stable/modules/generated/sklearn.metrics.ndcg_score.html"
+      },
+      {
+        "text": "TorchMetrics Retrieval MRR",
+        "href": "https://lightning.ai/docs/torchmetrics/stable/retrieval/mrr.html"
+      },
+      {
+        "text": "TorchMetrics Retrieval MAP",
+        "href": "https://lightning.ai/docs/torchmetrics/stable/retrieval/map.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Advanced",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "RERANKER_TRAIN_PRIMARY_METRIC_OVERRIDE",
+    "definition": "`RERANKER_TRAIN_PRIMARY_METRIC_OVERRIDE` sets which single ranking metric is treated as the run's decision metric for model selection and run comparison. In practical pipeline terms, this changes which checkpoint is tagged as best and which headline score determines whether a training run is considered an improvement. The metric choice should match your relevance labeling regime: MRR emphasizes first-hit speed, nDCG captures graded ordering quality across top-k, and MAP emphasizes precision across many relevant items. Overriding this can be useful for targeted experiments, but if changed too often it reduces comparability across historical runs.",
+    "links": [
+      {
+        "text": "GaRAGe: Grounded Retrieval-Augmented Generation Evaluation Benchmark (arXiv)",
+        "href": "https://arxiv.org/abs/2506.07671"
+      },
+      {
+        "text": "scikit-learn `ndcg_score`",
+        "href": "https://scikit-learn.org/stable/modules/generated/sklearn.metrics.ndcg_score.html"
+      },
+      {
+        "text": "TorchMetrics Retrieval MRR",
+        "href": "https://lightning.ai/docs/torchmetrics/stable/retrieval/mrr.html"
+      },
+      {
+        "text": "TorchMetrics Retrieval MAP",
+        "href": "https://lightning.ai/docs/torchmetrics/stable/retrieval/map.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Advanced",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "RERANKER_TRAIN_RECOMMENDED_METRIC",
+    "definition": "`RERANKER_TRAIN_RECOMMENDED_METRIC` is the auto-selected north-star ranking metric that the training system uses by default to summarize model quality for this corpus. Under the hood, the recommendation should be driven by label structure (single relevant item vs multiple relevant items vs graded relevance), so the selected metric reflects the actual retrieval objective instead of a generic score. This is important for implementation consistency: using one stable primary metric across runs keeps checkpoint selection, dashboards, and regression alerts aligned, and prevents metric switching from masking performance regressions on real queries.",
+    "links": [
+      {
+        "text": "GaRAGe: Grounded Retrieval-Augmented Generation Evaluation Benchmark (arXiv)",
+        "href": "https://arxiv.org/abs/2506.07671"
+      },
+      {
+        "text": "scikit-learn `ndcg_score`",
+        "href": "https://scikit-learn.org/stable/modules/generated/sklearn.metrics.ndcg_score.html"
+      },
+      {
+        "text": "TorchMetrics Retrieval MRR",
+        "href": "https://lightning.ai/docs/torchmetrics/stable/retrieval/mrr.html"
+      },
+      {
+        "text": "TorchMetrics Retrieval MAP",
+        "href": "https://lightning.ai/docs/torchmetrics/stable/retrieval/map.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Auto-selected",
+        "class": "info"
+      },
+      {
+        "text": "North Star",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "RERANKER_WARMUP_RATIO",
+    "definition": "`RERANKER_WARMUP_RATIO` defines what fraction of total optimization steps uses a gradual learning-rate ramp before entering the main scheduler phase. In this training stack, warmup protects early updates when the reranker head and backbone are still unstable, reducing gradient spikes and divergence risk that can otherwise corrupt the first checkpoints. Operationally, this value interacts with total step count: short runs need a smaller warmup fraction so useful learning starts early, while longer runs can tolerate a larger warmup to improve stability. Tune it together with batch size and base LR, because warmup that is too short can destabilize training, while warmup that is too long can waste compute on underpowered updates.",
+    "links": [
+      {
+        "text": "Warmup-Stable-Decay Learning Rates in Language Model Pre-Training (arXiv)",
+        "href": "https://arxiv.org/abs/2602.06797"
+      },
+      {
+        "text": "Hugging Face Optimizer Schedules (`get_linear_schedule_with_warmup`)",
+        "href": "https://huggingface.co/docs/transformers/main_classes/optimizer_schedules#transformers.get_linear_schedule_with_warmup"
+      },
+      {
+        "text": "Hugging Face `TrainingArguments.warmup_ratio`",
+        "href": "https://huggingface.co/docs/transformers/main_classes/trainer#transformers.TrainingArguments.warmup_ratio"
+      },
+      {
+        "text": "PyTorch `LinearLR` Scheduler",
+        "href": "https://pytorch.org/docs/stable/generated/torch.optim.lr_scheduler.LinearLR.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Advanced ML training",
+        "class": "warn"
+      },
+      {
+        "text": "Stabilizes training",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "RERANK_BACKEND",
+    "definition": "`RERANK_BACKEND` selects which reranking engine is used after initial candidate retrieval and fusion, effectively deciding where the relevance model executes (hosted API, local model runtime, or disabled path). Implementation-wise this affects latency profile, token/input limits, operational cost, and failure modes: cloud backends usually offer strong model quality with network dependency, while local backends trade setup complexity for tighter control and offline capability. Keeping this setting explicit is important for reproducibility, because evaluation scores and production behavior can shift materially when backend model families, truncation behavior, or inference constraints differ.",
+    "links": [
+      {
+        "text": "BAR-RAG: Boundary-Aware Adaptive Retrieval for Better Reranking (arXiv)",
+        "href": "https://arxiv.org/abs/2602.03689"
+      },
+      {
+        "text": "OpenSearch Cross-Encoder Reranking Tutorial",
+        "href": "https://docs.opensearch.org/latest/tutorials/reranking/reranking-cross-encoder/"
+      },
+      {
+        "text": "Cohere Rerank Overview",
+        "href": "https://docs.cohere.com/docs/rerank-overview"
+      },
+      {
+        "text": "Voyage AI Reranker Docs",
+        "href": "https://docs.voyageai.com/docs/reranker"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "RERANK_INPUT_SNIPPET_CHARS",
+    "definition": "`RERANK_INPUT_SNIPPET_CHARS` caps how many characters from each retrieved chunk are forwarded into reranker scoring. In implementation terms, this is a throughput and quality guardrail: smaller snippets reduce request size and latency, but risk truncating decisive evidence; larger snippets preserve context at the cost of higher tokenization load, longer inference, and potentially provider-side input-limit errors. The right value should be based on corpus structure and query style, then validated with offline ranking metrics plus p95 latency and cost tracking so you can find the smallest snippet size that preserves relevance quality.",
+    "links": [
+      {
+        "text": "BAR-RAG: Boundary-Aware Adaptive Retrieval for Better Reranking (arXiv)",
+        "href": "https://arxiv.org/abs/2602.03689"
+      },
+      {
+        "text": "Cohere Rerank Overview",
+        "href": "https://docs.cohere.com/docs/rerank-overview"
+      },
+      {
+        "text": "Voyage AI Reranker Docs",
+        "href": "https://docs.voyageai.com/docs/reranker"
+      },
+      {
+        "text": "Hugging Face Padding and Truncation",
+        "href": "https://huggingface.co/docs/transformers/main/pad_truncation"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Affects latency/cost",
+        "class": "warn"
+      },
+      {
+        "text": "Context guardrail",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "RRF_K_DIV",
+    "definition": "`RRF_K_DIV` is the Reciprocal Rank Fusion smoothing constant in the fusion formula `score += 1 / (k + rank)`, and it governs how aggressively top-ranked items dominate the merged ranking. Lower values make the fusion more top-heavy and sensitive to rank-1/2 positions from individual retrievers, while higher values flatten contributions so deeper-ranked hits still influence final order. In implementation, this is a calibration parameter for hybrid retrieval behavior: tune it with representative queries and compare recall, top-k precision, and downstream answer grounding, because an overly small k can overfit to one retriever and an overly large k can dilute strong top signals.",
+    "links": [
+      {
+        "text": "Exp4Fuse: Online Learning for Robust Search Result Fusion with Modified RRF (arXiv)",
+        "href": "https://arxiv.org/abs/2506.04760"
+      },
+      {
+        "text": "Elasticsearch Reciprocal Rank Fusion (RRF)",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html"
+      },
+      {
+        "text": "Azure AI Search Hybrid Search Ranking (RRF)",
+        "href": "https://learn.microsoft.com/en-us/azure/search/hybrid-search-ranking"
+      },
+      {
+        "text": "Weaviate Hybrid Search Concepts",
+        "href": "https://docs.weaviate.io/weaviate/concepts/search/hybrid-search"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "RUN_EVAL_ANALYSIS",
+    "definition": "`RUN_EVAL_ANALYSIS` triggers the end-to-end evaluation pass for the current RAG configuration, executing the full question set through retrieval, reranking, and answer generation, then computing aggregate quality metrics. From an implementation perspective, this is the guardrail step that turns configuration changes into measurable evidence: it should produce repeatable run artifacts (scores, traces, and run metadata) so regressions can be diagnosed instead of guessed. Use it whenever retrieval weights, reranker settings, chunking, or prompt strategy changes, and interpret results slice-by-slice rather than only by one global average so failures on difficult query classes are not hidden.",
+    "links": [
+      {
+        "text": "GaRAGe: Grounded Retrieval-Augmented Generation Evaluation Benchmark (arXiv)",
+        "href": "https://arxiv.org/abs/2506.07671"
+      },
+      {
+        "text": "LangSmith Evaluation",
+        "href": "https://docs.smith.langchain.com/evaluation"
+      },
+      {
+        "text": "MLflow LLM Evaluation",
+        "href": "https://mlflow.org/docs/latest/llms/llm-evaluate/index.html"
+      },
+      {
+        "text": "Ragas Documentation",
+        "href": "https://docs.ragas.io/en/stable/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Uses current config",
+        "class": "info"
+      },
+      {
+        "text": "~1-5 min runtime",
+        "class": "warn"
+      }
+    ]
+  }
+]
