@@ -56,6 +56,14 @@ export interface EstimateRequest {
   architecture: Architecture
   moe_total_experts: number
   moe_active_experts: number
+  model_hidden_size?: number
+  model_num_layers?: number
+  model_num_attention_heads?: number
+  model_num_kv_heads?: number
+  model_intermediate_size?: number
+  model_vocab_size?: number
+  model_max_position_embeddings?: number
+  model_module_shapes?: Partial<Record<LoRATargetModule, ModuleShape>>
 
   method: FineTuneMethod
   quantization_bits: QuantizationBits

@@ -447,6 +447,14 @@ export function InputPanel({
                   architecture: selected.architecture,
                   moe_total_experts: selected.moeTotal,
                   moe_active_experts: selected.moeActive,
+                  model_hidden_size: undefined,
+                  model_num_layers: undefined,
+                  model_num_attention_heads: undefined,
+                  model_num_kv_heads: undefined,
+                  model_intermediate_size: undefined,
+                  model_vocab_size: undefined,
+                  model_max_position_embeddings: undefined,
+                  model_module_shapes: undefined,
                 })
               }}
             >

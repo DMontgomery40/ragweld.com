@@ -121,6 +121,14 @@ function App() {
           architecture,
           moe_total_experts: architecture === 'MoE' ? (resolved.moe_total_experts ?? 8) : 1,
           moe_active_experts: architecture === 'MoE' ? (resolved.moe_active_experts ?? 2) : 1,
+          model_hidden_size: resolved.hidden_size,
+          model_num_layers: resolved.num_layers,
+          model_num_attention_heads: resolved.num_attention_heads,
+          model_num_kv_heads: resolved.num_kv_heads,
+          model_intermediate_size: resolved.intermediate_size,
+          model_vocab_size: resolved.vocab_size,
+          model_max_position_embeddings: resolved.max_position_embeddings,
+          model_module_shapes: resolved.module_shapes,
         })
         setModelResolveMessage(
           `Loaded ${resolved.display_name} (${resolved.params_billions}B, ${resolved.num_layers} layers).`,
