@@ -33,13 +33,20 @@ const FIFTEEN_MINUTES_MS = 15 * 60 * 1000
 const SHADEFORM_PRICING_URL = 'https://api.shadeform.ai/v1/instances/types'
 
 const PROJECT_ROOT = process.cwd()
+const FUNCTION_DIR = typeof __dirname === 'string' ? __dirname : PROJECT_ROOT
 
 const STATIC_PRICING_PATH_CANDIDATES = [
+  path.resolve(FUNCTION_DIR, '../../crucible/data/static-pricing.json'),
+  path.resolve(FUNCTION_DIR, '../crucible/data/static-pricing.json'),
+  path.resolve('/var/task/crucible/data/static-pricing.json'),
   path.resolve(PROJECT_ROOT, 'crucible/data/static-pricing.json'),
   path.resolve(PROJECT_ROOT, '../crucible/data/static-pricing.json'),
 ]
 
 const MODELS_PATH_CANDIDATES = [
+  path.resolve(FUNCTION_DIR, '../../crucible/data/models.json'),
+  path.resolve(FUNCTION_DIR, '../crucible/data/models.json'),
+  path.resolve('/var/task/crucible/data/models.json'),
   path.resolve(PROJECT_ROOT, 'crucible/data/models.json'),
   path.resolve(PROJECT_ROOT, '../crucible/data/models.json'),
 ]
