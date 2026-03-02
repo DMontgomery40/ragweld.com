@@ -173,13 +173,33 @@ function buildFallbackModelConfig(modelName: string, paramsBillions: number): Mo
   }
 }
 
+function kvProjectionOutDim(model: ModelConfig): number {
+  const hidden = model.hidden_size
+  const totalHeads = model.num_attention_heads
+  const kvHeads = model.num_kv_heads
+
+  if (hidden <= 0 || totalHeads <= 0 || kvHeads <= 0) {
+    return hidden
+  }
+
+  const headDim = hidden / totalHeads
+  if (!Number.isFinite(headDim) || headDim <= 0) {
+    return hidden
+  }
+
+  return Math.max(1, Math.round(headDim * kvHeads))
+}
+
 function defaultModuleShape(module: LoRATargetModule, model: ModelConfig): ModuleShape {
+  const kvOutDim = kvProjectionOutDim(model)
+
   switch (module) {
     case 'q':
-    case 'k':
-    case 'v':
     case 'o':
       return { in_dim: model.hidden_size, out_dim: model.hidden_size }
+    case 'k':
+    case 'v':
+      return { in_dim: model.hidden_size, out_dim: kvOutDim }
     case 'gate':
     case 'up':
       return { in_dim: model.hidden_size, out_dim: model.intermediate_size }
@@ -200,9 +220,54 @@ export function getModelConfig(modelName: string, paramsBillions: number): Model
 }
 
 export function getModelConfigFromRequest(
-  params: Pick<EstimateRequest, 'model_name' | 'model_params_billions'>,
+  params: Pick<
+    EstimateRequest,
+    | 'model_name'
+    | 'model_params_billions'
+    | 'architecture'
+    | 'moe_total_experts'
+    | 'moe_active_experts'
+    | 'model_hidden_size'
+    | 'model_num_layers'
+    | 'model_num_attention_heads'
+    | 'model_num_kv_heads'
+    | 'model_intermediate_size'
+    | 'model_vocab_size'
+    | 'model_max_position_embeddings'
+    | 'model_module_shapes'
+  >,
 ): ModelConfig {
-  return getModelConfig(params.model_name, params.model_params_billions)
+  const baseModel = getModelConfig(params.model_name, params.model_params_billions)
+
+  const hiddenSize = params.model_hidden_size ?? baseModel.hidden_size
+  const numLayers = params.model_num_layers ?? baseModel.num_layers
+  const numAttentionHeads = params.model_num_attention_heads ?? baseModel.num_attention_heads
+  const numKVHeads = params.model_num_kv_heads ?? baseModel.num_kv_heads
+  const intermediateSize = params.model_intermediate_size ?? baseModel.intermediate_size
+  const vocabSize = params.model_vocab_size ?? baseModel.vocab_size
+  const maxPositionEmbeddings =
+    params.model_max_position_embeddings ?? baseModel.max_position_embeddings
+
+  return {
+    ...baseModel,
+    architecture: params.architecture === 'MoE' ? 'moe' : 'dense',
+    moe_total_experts:
+      params.architecture === 'MoE'
+        ? (params.moe_total_experts ?? baseModel.moe_total_experts)
+        : undefined,
+    moe_active_experts:
+      params.architecture === 'MoE'
+        ? (params.moe_active_experts ?? baseModel.moe_active_experts)
+        : undefined,
+    hidden_size: hiddenSize,
+    num_layers: numLayers,
+    num_attention_heads: numAttentionHeads,
+    num_kv_heads: numKVHeads,
+    intermediate_size: intermediateSize,
+    vocab_size: vocabSize,
+    max_position_embeddings: maxPositionEmbeddings,
+    module_shapes: params.model_module_shapes ?? baseModel.module_shapes,
+  }
 }
 
 export function resolveModuleShape(model: ModelConfig, module: LoRATargetModule): ModuleShape {
