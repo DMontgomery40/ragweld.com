@@ -19,6 +19,36 @@
   status = 200
 
 [[redirects]]
+  from = "/crucible/api/v1/estimate"
+  to = "/.netlify/functions/estimate"
+  status = 200
+
+[[redirects]]
+  from = "/crucible/api/v1/prices"
+  to = "/.netlify/functions/prices"
+  status = 200
+
+[[redirects]]
+  from = "/crucible/api/v1/models"
+  to = "/.netlify/functions/models"
+  status = 200
+
+[[redirects]]
+  from = "/crucible/api/v1/health"
+  to = "/.netlify/functions/health"
+  status = 200
+
+[[redirects]]
+  from = "/crucible/api/v1/resolve-model"
+  to = "/.netlify/functions/resolve-model"
+  status = 200
+
+[[redirects]]
+  from = "/crucible/*"
+  to = "/crucible/index.html"
+  status = 200
+
+[[redirects]]
   from = "https://deepseek-mcp.ragweld.com/mcp"
   to = "/.netlify/functions/deepseek-mcp"
   status = 200
