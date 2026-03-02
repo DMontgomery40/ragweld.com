@@ -25,11 +25,10 @@ function formatDate(value: string | null): string {
 
   const parsed = new Date(value)
   if (Number.isNaN(parsed.getTime())) {
-    return value.replaceAll(',', '')
+    return value
   }
 
-  const pad = (part: number) => String(part).padStart(2, '0')
-  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())} ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}:${pad(parsed.getSeconds())}`
+  return parsed.toLocaleString('en-US')
 }
 
 function formatHours(value: number): string {
@@ -37,7 +36,16 @@ function formatHours(value: number): string {
 }
 
 function formatInteger(value: number): string {
-  return String(Math.round(value))
+  return new Intl.NumberFormat('en-US').format(Math.round(value))
+}
+
+function formatCurrency(value: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value)
 }
 
 export function ResultsPanel({
@@ -106,7 +114,7 @@ export function ResultsPanel({
               <h3>Best Fit Option</h3>
               {bestOption ? (
                 <>
-                  <p className="summary-main mono">${bestOption.total_cost_dollars.toFixed(2)}</p>
+                  <p className="summary-main mono">{formatCurrency(bestOption.total_cost_dollars)}</p>
                   <p className="summary-sub">
                     {bestOption.provider} {bestOption.gpu} in {formatHours(bestOption.estimated_hours)}
                   </p>

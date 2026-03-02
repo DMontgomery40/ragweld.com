@@ -18,7 +18,10 @@ function formatNumber(value: number): string {
   }
 
   if (absolute >= 1000) {
-    return value.toFixed(2)
+    return value.toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
   }
 
   return value.toFixed(4)

@@ -588,12 +588,13 @@ button:disabled {
 }
 
 .chart-tooltip {
-  border: 1px solid #2e3f4b;
-  background: rgba(10, 17, 22, 0.96);
+  border: 1px solid #415b6f;
+  background: rgba(17, 31, 42, 0.98);
   border-radius: 6px;
   padding: 0.52rem 0.58rem;
   box-shadow: 0 12px 22px rgba(0, 0, 0, 0.45);
   min-width: 170px;
+  color: #eef5fa !important;
 }
 
 .chart-tooltip-title {
@@ -619,11 +620,20 @@ button:disabled {
   color: #9fb0bc;
 }
 
+.chart-tooltip * {
+  color: inherit !important;
+}
+
 .recharts-tooltip-wrapper,
 .recharts-default-tooltip,
 .recharts-tooltip-label,
 .recharts-tooltip-item {
   color: #dbe5ec !important;
+}
+
+.recharts-default-tooltip {
+  background: rgba(17, 31, 42, 0.98) !important;
+  border: 1px solid #415b6f !important;
 }
 
 .vram-chart {

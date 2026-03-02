@@ -18,12 +18,11 @@ interface CostComparisonProps {
 }
 
 const integerNumberFormatter = new Intl.NumberFormat('en-US', {
-  useGrouping: false,
   maximumFractionDigits: 0,
 })
 
 const decimalNumberFormatter = new Intl.NumberFormat('en-US', {
-  useGrouping: false,
+  useGrouping: true,
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 })
@@ -65,7 +64,7 @@ function formatCurrencyTick(value: number | string): string {
 
 function formatHoursTick(value: number | string): string {
   const numericValue = toFiniteNumber(value)
-  return `${integerNumberFormatter.format(numericValue)}h`
+  return `${integerNumberFormatter.format(Math.round(numericValue))}h`
 }
 
 function formatHourly(cents: number): string {
@@ -196,7 +195,7 @@ export function CostComparison({ entries }: CostComparisonProps) {
         <div className="chart-wrap scatter-chart">
           <h4>Time vs Cost</h4>
           <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 8, right: 28, left: 50, bottom: 18 }}>
+            <ScatterChart margin={{ top: 8, right: 32, left: 62, bottom: 18 }}>
               <CartesianGrid strokeDasharray="4 4" stroke="#202a2f" />
               <XAxis
                 type="number"
@@ -204,6 +203,7 @@ export function CostComparison({ entries }: CostComparisonProps) {
                 name="Training hours"
                 stroke="#7d8993"
                 tickFormatter={formatHoursTick}
+                tickMargin={6}
                 domain={[0, Math.max(1, maxHours * 1.05)]}
               />
               <YAxis
@@ -211,8 +211,9 @@ export function CostComparison({ entries }: CostComparisonProps) {
                 dataKey="cost"
                 name="Total cost"
                 stroke="#7d8993"
-                width={102}
+                width={118}
                 tickFormatter={formatCurrencyTick}
+                tickMargin={8}
                 domain={[0, Math.max(1, maxCost * 1.05)]}
               />
               <ZAxis type="number" dataKey="vram" range={[80, 320]} name="VRAM" />
