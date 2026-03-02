@@ -60,6 +60,7 @@ interface Props {
 }
 
 const { term, related, slug } = Astro.props;
+const glossaryTotal = loadGlossaryJson().terms.length;
 const category = GLOSSARY_CATEGORIES[categorizeGlossaryKey(term.key)];
 const definition = glossaryDefinitionToDisplayText(term.definition || '');
 
@@ -210,7 +211,7 @@ const badgeClass = (raw: string) => {
       {/* Back to glossary */}
       <div class="mt-8 text-center">
         <a href="/glossary/" class="text-sm text-gray-400 hover:text-white transition-colors">
-          ← Back to full glossary ({396} parameters)
+          ← Back to full glossary ({glossaryTotal} parameters)
         </a>
       </div>
 
