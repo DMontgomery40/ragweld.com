@@ -87,10 +87,7 @@ npm run sync:demo
 # Strict parity check (fails on non-allowlisted drift)
 npm run check:demo-parity
 
-# Warn-only parity check (always exits 0)
-npm run check:demo-parity:warn
-
-# Build demo + site (includes warn-only parity logging)
+# Build demo + site
 npm run build
 ```
 
