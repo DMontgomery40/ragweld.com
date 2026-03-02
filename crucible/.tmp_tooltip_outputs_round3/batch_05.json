@@ -1,0 +1,241 @@
+[
+  {
+    "key": "MIN_SCORE_VECTOR",
+    "definition": "Minimum score for dense retrieval gates out semantically weak neighbors before they reach fusion and reranking. In practice, this parameter is your first defense against embedding drift: ambiguous queries can pull near-random vectors unless a floor is enforced. Tune it against labeled queries by measuring recall@k and false-positive rate together, because raising the floor improves precision but can suppress valid long-tail matches. Use the threshold jointly with chunk size and reranker settings so you do not over-prune before higher-quality ranking stages can recover context.",
+    "links": [
+      {
+        "text": "On The Theoretical Limitations of Embedding-Based Retrieval (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2508.21038"
+      },
+      {
+        "text": "Qdrant Search Concepts (score threshold behavior)",
+        "href": "https://qdrant.tech/documentation/concepts/search/"
+      },
+      {
+        "text": "Qdrant Query Points API",
+        "href": "https://api.qdrant.tech/api-reference/search/query-points/"
+      },
+      {
+        "text": "LangChain Qdrant VectorStore API",
+        "href": "https://api.python.langchain.com/en/latest/community/vectorstores/langchain_community.vectorstores.qdrant.Qdrant.html"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "MMR_LAMBDA",
+    "definition": "MMR lambda controls how much your retriever prioritizes raw relevance versus novelty across selected chunks. Values near 1.0 behave like pure similarity ranking and often return near-duplicates; lower values force more topical spread, which helps multi-facet questions and reduces redundant context. Treat lambda as a coupled parameter with top-k and reranker depth, because aggressive diversification with small candidate pools can lower answer grounding. For production tuning, track duplicate-rate, answer completeness, and p95 latency together rather than optimizing one metric in isolation.",
+    "links": [
+      {
+        "text": "DF-RAG: Diversified and Fidelity-aware RAG (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.17212"
+      },
+      {
+        "text": "Diversity Enhances Large Language Model Performance (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2502.09017"
+      },
+      {
+        "text": "Google Bigtable: MMR for Vector Search",
+        "href": "https://docs.cloud.google.com/bigtable/docs/mmr-vector-search"
+      },
+      {
+        "text": "LangChain Qdrant API (MMR lambda_mult)",
+        "href": "https://api.python.langchain.com/en/latest/community/vectorstores/langchain_community.vectorstores.qdrant.Qdrant.html"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "MODEL_ASSIGNMENTS",
+    "definition": "Model assignments define which model handles each pipeline stage (rewrite, embedding, reranking, generation, and evaluation). This mapping is operationally critical because stage-level mismatches can silently degrade quality: for example, embeddings with incompatible dimensions or generation models with insufficient context windows. Keep assignments explicit so you can audit cost, latency, and safety policy per task instead of per request. In practice, treat this table as a routing contract and version it with your evaluation suite to catch regressions when providers or model defaults change.",
+    "links": [
+      {
+        "text": "RouteMoA: Multi-Agent Routing with Mixture of Experts (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.18130"
+      },
+      {
+        "text": "LangChain Router (multi-agent/task routing)",
+        "href": "https://docs.langchain.com/oss/python/langchain/multi-agent/router"
+      },
+      {
+        "text": "Ray Serve LLMs",
+        "href": "https://docs.ray.io/en/latest/serve/llm/"
+      },
+      {
+        "text": "LiteLLM Documentation",
+        "href": "https://docs.litellm.ai/"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "MQ_REWRITES",
+    "definition": "Multi-query rewrites control how many alternate phrasings are generated before retrieval. Each additional rewrite can improve recall for underspecified queries, but it multiplies retrieval and reranking load, so latency and cost increase roughly with rewrite count. The practical strategy is to keep rewrites low by default (for example 2-3), then raise only for question classes that empirically benefit from expansion. Pair this with duplicate suppression and query-intent logging so expanded branches add new evidence instead of repeating the same documents.",
+    "links": [
+      {
+        "text": "RL-QR: Reinforcement Learning for Query Rewriting in RAG (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2507.23242"
+      },
+      {
+        "text": "SAGE: Learning Better Query Rewrites in RAG (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2506.19783"
+      },
+      {
+        "text": "Vespa Query Rewriting",
+        "href": "https://docs.vespa.ai/en/linguistics/query-rewriting.html"
+      },
+      {
+        "text": "OpenSearch Rewrite Parameter",
+        "href": "https://docs.opensearch.org/docs/latest/query-dsl/rewrite-parameter/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Affects latency",
+        "class": "info"
+      },
+      {
+        "text": "Higher cost",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "NEIGHBOR_WINDOW",
+    "definition": "Neighbor window expands each top hit by pulling adjacent chunks using chunk order metadata. This helps when meaning spans boundaries (code blocks, list continuations, multi-paragraph explanations) and reduces brittle answers based on truncated snippets. The tradeoff is context bloat: larger windows increase token usage and can reintroduce boilerplate noise, especially in repetitive files. Tune this after chunking is stable, and evaluate grounded-answer rate plus prompt token growth to find the smallest window that restores continuity.",
+    "links": [
+      {
+        "text": "MLDocRAG: Dynamic Multi-Path Retrieval for Long Documents (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.10271"
+      },
+      {
+        "text": "LlamaIndex Metadata Replacement + Sentence Window Example",
+        "href": "https://developers.llamaindex.ai/python/examples/node_postprocessor/metadatareplacementdemo/"
+      },
+      {
+        "text": "LangChain ParentDocumentRetriever",
+        "href": "https://python.langchain.com/docs/how_to/parent_document_retriever/"
+      },
+      {
+        "text": "LlamaIndex Sentence Window Node Parser API",
+        "href": "https://developers.llamaindex.ai/python/framework-api-reference/node_parsers/sentence_window/"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "NEO4J_URI",
+    "definition": "Neo4j URI config determines how clients connect, route, and secure graph queries in retrieval workflows. Use `neo4j://` for routed cluster-aware connections and `bolt://` for direct connections when routing is not needed. Misconfigured schemes can produce subtle behavior differences in failover, read routing, and TLS handling that only appear under load. Treat this value as infrastructure configuration: validate connectivity at startup, enforce encrypted transport in shared environments, and keep URI/auth settings externalized from source code.",
+    "links": [
+      {
+        "text": "SCOUT-RAG: Dynamic Graph Retrieval-Augmented Generation (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.08400"
+      },
+      {
+        "text": "Neo4j Browser DBMS Connection",
+        "href": "https://neo4j.com/docs/browser-manual/current/operations/dbms-connection/"
+      },
+      {
+        "text": "Neo4j Python Driver Advanced Connection",
+        "href": "https://neo4j.com/docs/python-manual/current/connect-advanced/"
+      },
+      {
+        "text": "Neo4j GraphRAG",
+        "href": "https://neo4j.com/labs/genai-ecosystem/graphrag/"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "NETLIFY_API_KEY",
+    "definition": "Netlify API key is a privileged credential used to trigger deployments and administrative site actions through automation. Treat it as a high-risk secret: use least privilege where possible, rotate on schedule, and store only in a managed secret system (never in repo or client-side bundles). Operationally, deployment failures from invalid or expired keys often look like generic API errors, so explicit key-health checks are worth adding to CI. For incident response, maintain clear ownership and revocation procedures because compromised deploy credentials can alter production content quickly.",
+    "links": [
+      {
+        "text": "IssueGuard: Vulnerability Framework for Token Exposure (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.08072"
+      },
+      {
+        "text": "Netlify API: Get Started",
+        "href": "https://docs.netlify.com/api/get-started/"
+      },
+      {
+        "text": "Netlify User Settings (Personal Access Tokens)",
+        "href": "https://docs.netlify.com/manage/accounts-and-billing/user-settings/"
+      },
+      {
+        "text": "Netlify CLI: Get Started",
+        "href": "https://docs.netlify.com/api-and-cli-guides/cli-guides/get-started-with-cli/"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "NETLIFY_DOMAINS",
+    "definition": "Netlify domains should be treated as an explicit deployment target allowlist, not just display metadata. In automated deploy tooling, this parameter reduces misrouting risk by constraining which sites can receive publish actions. Include canonical and alias domains intentionally, and validate that each domain maps to the correct site before enabling unattended release jobs. Keep this list synchronized with DNS and ownership changes so stale entries do not become hidden failure points during release windows.",
+    "links": [
+      {
+        "text": "FaaSGuard: Security of Serverless Function Deployments (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2509.04328"
+      },
+      {
+        "text": "Netlify: Understand Domains",
+        "href": "https://docs.netlify.com/domains/domains-fundamentals/understand-domains/"
+      },
+      {
+        "text": "Netlify: Assign a Domain to Your Site/App",
+        "href": "https://docs.netlify.com/domains/manage-domains/assign-a-domain-to-your-site-app/"
+      },
+      {
+        "text": "Netlify: Add a Domain Alias",
+        "href": "https://docs.netlify.com/domains/configure-domains/add-a-domain-alias/"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "OLLAMA_NUM_CTX",
+    "definition": "Ollama `num_ctx` sets the maximum context tokens used per generation request, directly affecting both quality headroom and memory footprint. Higher values let you include more retrieved evidence and longer instructions, but they increase KV-cache pressure and can reduce throughput on constrained hardware. Tune this parameter from measured prompt composition (system + query + retrieved chunks + expected answer) rather than guessing. If requests regularly approach the ceiling, improve chunk selection and compression before simply raising `num_ctx`, because blindly increasing window size can destabilize latency.",
+    "links": [
+      {
+        "text": "ParisKV: KV-Cache Compression for Long-Context LLMs (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.07721"
+      },
+      {
+        "text": "Ollama Context Length",
+        "href": "https://docs.ollama.com/context-length"
+      },
+      {
+        "text": "Ollama Modelfile Reference",
+        "href": "https://docs.ollama.com/modelfile"
+      },
+      {
+        "text": "Ollama FAQ",
+        "href": "https://docs.ollama.com/faq"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "OLLAMA_REQUEST_TIMEOUT",
+    "definition": "Ollama request timeout is the hard client-side budget for a full generation call, including model warmup, first-token delay, and decode time. Set it too low and valid long-context responses fail prematurely; set it too high and stalled calls tie up worker capacity and degrade system responsiveness. Calibrate timeout from observed p95/p99 latency per model and hardware profile, and revisit after model swaps or context-window changes. Use streaming plus clear retry/abort policy so timeout behavior remains predictable during spikes.",
+    "links": [
+      {
+        "text": "Efficient Multi-Adapter LLM Serving via Cross-Model KV-Cache Reuse (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2512.17910"
+      },
+      {
+        "text": "Ollama Generate API",
+        "href": "https://docs.ollama.com/api/generate"
+      },
+      {
+        "text": "Ollama Streaming API",
+        "href": "https://docs.ollama.com/api/streaming"
+      },
+      {
+        "text": "vLLM Multi-LoRA Serving and Latency Metrics (2026)",
+        "href": "https://blog.vllm.ai/2026/02/26/multi-lora.html"
+      }
+    ],
+    "badges": []
+  }
+]

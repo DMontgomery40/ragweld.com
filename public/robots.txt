@@ -9,6 +9,14 @@ Sitemap: https://ragweld.com/sitemap-index.xml
 # See https://llmstxt.org/
 # llms.txt: https://ragweld.com/llms.txt
 # llms-full.txt: https://ragweld.com/llms-full.txt
+#
+# AEO discovery hints (authoritative surfaces)
+# Main entity: https://ragweld.com/
+# Crucible app: https://ragweld.com/crucible/
+# Glossary: https://ragweld.com/glossary/
+# DeepSeek MCP endpoint: https://deepseek-mcp.ragweld.com/mcp
+# Bird-data operations domain: https://bird-data.ragweld.com/
+# Reserved MCP domain (not DeepSeek): https://mcp.ragweld.com/
 
 # AI crawlers welcome
 User-agent: GPTBot

@@ -313,6 +313,8 @@ function normalizeShadeformPricing(raw: unknown): ProviderPricing[] {
         ? raw.results
         : isRecord(raw) && Array.isArray(raw.instances)
           ? raw.instances
+          : isRecord(raw) && Array.isArray(raw.instance_types)
+            ? raw.instance_types
           : []
 
   const pricing: ProviderPricing[] = []

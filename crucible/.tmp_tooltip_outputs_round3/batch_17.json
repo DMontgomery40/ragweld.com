@@ -1,0 +1,241 @@
+[
+  {
+    "key": "TRIPLETS_MINE_MODE",
+    "definition": "Controls how newly mined triplets are persisted to disk: `replace` creates a clean dataset for a reproducible training run, while `append` extends an existing corpus for incremental hard-negative collection. Use `replace` when you want strict experiment comparability, fixed train/validation splits, and clear provenance. Use `append` when your retrieval index, query set, or domain vocabulary is evolving and you intentionally want longitudinal data accumulation. In production retraining pipelines, pair this setting with dataset versioning and a run manifest so you can trace exactly which mined triplets entered each reranker checkpoint.",
+    "links": [
+      {
+        "text": "Reranker Optimization via Geodesic Distances on k-NN Manifolds (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.15860"
+      },
+      {
+        "text": "PyTorch TripletMarginLoss",
+        "href": "https://pytorch.org/docs/stable/generated/torch.nn.TripletMarginLoss.html"
+      },
+      {
+        "text": "Sentence-Transformers Loss Functions",
+        "href": "https://www.sbert.net/docs/package_reference/sentence_transformer/losses.html"
+      },
+      {
+        "text": "Sentence-Transformers MS MARCO Training Example",
+        "href": "https://www.sbert.net/examples/training/ms_marco/README.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Advanced training control",
+        "class": "warn"
+      },
+      {
+        "text": "Use semi-hard for production",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "TriBridRAG_EDITION",
+    "definition": "Selects the runtime edition profile used for capability gating and operational defaults. Typical values map to deployment tiers (`oss`, `pro`, `enterprise`) and should be treated as a policy switch, not just a label. In practice this flag should determine which features are exposed in UI/API, which background jobs are enabled, and which observability or governance controls are required. Keep edition checks centralized in one resolver so behavior remains deterministic across frontend, backend, and training jobs, and avoid scattering conditional checks across the codebase.",
+    "links": [
+      {
+        "text": "Unified Learning-to-Rank for Multi-Channel Retrieval (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.23530"
+      },
+      {
+        "text": "OpenFeature Specification",
+        "href": "https://openfeature.dev/specification/"
+      },
+      {
+        "text": "The Twelve-Factor App: Config",
+        "href": "https://12factor.net/config"
+      },
+      {
+        "text": "Kubernetes Deployments",
+        "href": "https://kubernetes.io/docs/concepts/workloads/controllers/deployment/"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TriBridRAG_LOG_PATH",
+    "definition": "Legacy alias for `TRIBRID_LOG_PATH`. Defines the filesystem location where reranker and retrieval pipeline logs are written. Set this to a durable, writable path with rotation/retention policies aligned to your incident-response window. For local development, a relative project path keeps logs co-located with artifacts; for production, prefer an absolute path backed by a volume and a collector agent. If this path is invalid or non-writable, failures are often silent until debugging is needed, so add startup validation and emit a fatal configuration error on bad paths.",
+    "links": [
+      {
+        "text": "DS SERVE: Scalable Neural Retrieval Serving (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.22224"
+      },
+      {
+        "text": "Python Logging Documentation",
+        "href": "https://docs.python.org/3/library/logging.html"
+      },
+      {
+        "text": "OpenTelemetry Logs Data Model",
+        "href": "https://opentelemetry.io/docs/specs/otel/logs/data-model/"
+      },
+      {
+        "text": "The Twelve-Factor App: Config",
+        "href": "https://12factor.net/config"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TriBridRAG_RERANKER_ALPHA",
+    "definition": "Legacy alias for `TRIBRID_RERANKER_ALPHA`. This is the blend weight that determines how strongly reranker scores influence final ordering versus first-stage retrieval scores. Higher values make the cross-encoder (or learned reranker) dominate; lower values preserve sparse/dense retrieval priors. Tune `alpha` with a fixed evaluation set and monitor both ranking quality and stability by query segment (short keyword queries, long natural-language questions, and code-specific lookups). If alpha is too high, reranker noise can overfit to lexical artifacts; if too low, reranking cost is paid without meaningful ranking gains.",
+    "links": [
+      {
+        "text": "BAR-RAG: Boundary-Aware Adaptive Retrieval for Better Reranking (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.03689"
+      },
+      {
+        "text": "Elasticsearch Reciprocal Rank Fusion (RRF)",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html"
+      },
+      {
+        "text": "Weaviate Hybrid Search",
+        "href": "https://docs.weaviate.io/weaviate/search/hybrid"
+      },
+      {
+        "text": "Sentence-Transformers MS MARCO Training Example",
+        "href": "https://www.sbert.net/examples/training/ms_marco/README.html"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TriBridRAG_RERANKER_BATCH",
+    "definition": "Batch size for inference-time reranking. Larger batches improve hardware utilization and reduce per-item overhead, but increase peak memory and can raise tail latency if queues back up. Smaller batches reduce memory pressure and can improve responsiveness for interactive workloads, but may lower throughput. Tune this parameter against your real document-length distribution, not synthetic short text, because sequence length and batch size interact multiplicatively in transformer memory usage. For production, pair with dynamic batching windows and per-request latency SLOs.",
+    "links": [
+      {
+        "text": "Dynamic Batching for LLM Throughput (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2503.05248"
+      },
+      {
+        "text": "NVIDIA Triton: Dynamic Batching Guide",
+        "href": "https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/tutorials/Conceptual_Guide/Part_2-improving_resource_utilization/README.html"
+      },
+      {
+        "text": "PyTorch DataLoader",
+        "href": "https://pytorch.org/docs/stable/data.html#torch.utils.data.DataLoader"
+      },
+      {
+        "text": "Sentence-Transformers MS MARCO Training Example",
+        "href": "https://www.sbert.net/examples/training/ms_marco/README.html"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TriBridRAG_RERANKER_MAXLEN",
+    "definition": "Maximum token length for each `(query, candidate)` pair passed to the reranker at inference time. This value directly controls memory cost and latency, and indirectly affects ranking quality because aggressive truncation can remove decisive evidence near the end of long passages. For code search, moderate lengths often work well because relevant signals are concentrated around function signatures or nearby comments; for policy or documentation corpora, you may need a larger ceiling. Tune together with chunk size and overlap so that important evidence lands inside the reranker window instead of being truncated away.",
+    "links": [
+      {
+        "text": "Query-focused and Memory-aware Reranker for Unrestricted Context (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.12192"
+      },
+      {
+        "text": "Hugging Face: Padding and Truncation",
+        "href": "https://huggingface.co/docs/transformers/pad_truncation"
+      },
+      {
+        "text": "Hugging Face: Model APIs",
+        "href": "https://huggingface.co/docs/transformers/main_classes/model"
+      },
+      {
+        "text": "Sentence-Transformers MS MARCO Training Example",
+        "href": "https://www.sbert.net/examples/training/ms_marco/README.html"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TriBridRAG_RERANKER_MINE_MODE",
+    "definition": "Legacy alias for triplet mining strategy selection (`random`, `semi-hard`, `hard`). This setting controls the difficulty of negative examples used to train the reranker. `random` negatives are fast but often too easy; `hard` negatives maximize discrimination pressure but can inject label noise and instability; `semi-hard` is usually the best production default because it balances signal strength and training robustness. Treat mining mode as a data curriculum parameter and re-evaluate it whenever your corpus changes materially.",
+    "links": [
+      {
+        "text": "Reranker Optimization via Geodesic Distances on k-NN Manifolds (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.15860"
+      },
+      {
+        "text": "PyTorch TripletMarginLoss",
+        "href": "https://pytorch.org/docs/stable/generated/torch.nn.TripletMarginLoss.html"
+      },
+      {
+        "text": "Sentence-Transformers Loss Functions",
+        "href": "https://www.sbert.net/docs/package_reference/sentence_transformer/losses.html"
+      },
+      {
+        "text": "Sentence-Transformers MS MARCO Training Example",
+        "href": "https://www.sbert.net/examples/training/ms_marco/README.html"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TriBridRAG_RERANKER_MINE_RESET",
+    "definition": "Controls whether previously mined triplets are deleted before starting a new mining run. Enabling reset gives a clean dataset boundary, which is useful for reproducible experiments and preventing old sampling bias from contaminating new runs. Disabling reset accumulates data over time, which can improve coverage but risks drift and duplicate-heavy training sets. In production pipelines, snapshot the prior triplet file before reset and log the run ID, commit SHA, and mining parameters so you can audit exactly what data was used to train each model version.",
+    "links": [
+      {
+        "text": "Reranker Optimization via Geodesic Distances on k-NN Manifolds (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.15860"
+      },
+      {
+        "text": "PyTorch: Saving and Loading Models",
+        "href": "https://pytorch.org/tutorials/beginner/saving_loading_models.html"
+      },
+      {
+        "text": "Python Logging Documentation",
+        "href": "https://docs.python.org/3/library/logging.html"
+      },
+      {
+        "text": "The Twelve-Factor App: Config",
+        "href": "https://12factor.net/config"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TriBridRAG_RERANKER_MODEL_PATH",
+    "definition": "Filesystem path to the reranker checkpoint directory used at inference time. This value should point to an immutable artifact location once a model is promoted to production, with explicit versioning (`model-vYYYYMMDD-HHMM` style) rather than a floating path. Relative paths are convenient for local development, while production should prefer absolute, volume-backed paths with integrity checks. Startup should fail fast if the path is missing required files (weights, tokenizer, config), because silent fallback behavior can produce hard-to-debug ranking regressions.",
+    "links": [
+      {
+        "text": "LLMTailor: Fine-Tuning LLMs by Checking Components and LoRA (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.22158"
+      },
+      {
+        "text": "Hugging Face: Model APIs",
+        "href": "https://huggingface.co/docs/transformers/main_classes/model"
+      },
+      {
+        "text": "PyTorch: Saving and Loading Models",
+        "href": "https://pytorch.org/tutorials/beginner/saving_loading_models.html"
+      },
+      {
+        "text": "The Twelve-Factor App: Config",
+        "href": "https://12factor.net/config"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TriBridRAG_RERANKER_RELOAD_ON_CHANGE",
+    "definition": "Legacy alias for `TRIBRID_RERANKER_RELOAD_ON_CHANGE`. When enabled, the service reloads reranker artifacts after path/config changes without a full process restart. This shortens iteration time and can reduce deployment friction, but reload behavior must be atomic: load into a shadow instance, run health checks, then swap pointers only on success. Without atomicity, mid-request model swaps can produce inconsistent scores. In production, pair this flag with file-watch debounce, checksum validation, and structured reload events so rollbacks are safe and observable.",
+    "links": [
+      {
+        "text": "DS SERVE: Scalable Neural Retrieval Serving (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.22224"
+      },
+      {
+        "text": "Watchdog: Python File System Events",
+        "href": "https://watchdog.readthedocs.io/en/latest/"
+      },
+      {
+        "text": "Kubernetes Deployments",
+        "href": "https://kubernetes.io/docs/concepts/workloads/controllers/deployment/"
+      },
+      {
+        "text": "PyTorch: Saving and Loading Models",
+        "href": "https://pytorch.org/tutorials/beginner/saving_loading_models.html"
+      }
+    ],
+    "badges": []
+  }
+]

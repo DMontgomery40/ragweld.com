@@ -36,6 +36,25 @@ interface ModelProfile {
   moeActive: number
 }
 
+interface MultiSelectOption {
+  value: string
+  label: string
+  disabled?: boolean
+}
+
+interface MultiSelectMatrixProps {
+  label: string
+  options: MultiSelectOption[]
+  selectedValues: string[]
+  onChange: (nextValues: string[]) => void
+  emptyHint?: string
+  helperText?: string
+  noneLabel?: string
+  allowEmpty?: boolean
+  searchPlaceholder?: string
+  dropdownThreshold?: number
+}
+
 const MODEL_PROFILES: ModelProfile[] = [
   {
     id: 'llama-3.3-70b',
@@ -127,6 +146,7 @@ const LORA_TARGET_MODULE_OPTIONS: LoRATargetModule[] = [
   'up',
   'down',
 ]
+const DROPDOWN_THRESHOLD = 5
 
 function parseNumber(value: string, fallback: number): number {
   const parsed = Number(value)
@@ -180,6 +200,195 @@ function hasTierPrice(row: ProviderPricing, tier: PricingTier): boolean {
   return row.reserved_3mo_price_cents !== null && row.reserved_3mo_price_cents !== undefined
 }
 
+function MultiSelectMatrix({
+  label,
+  options,
+  selectedValues,
+  onChange,
+  emptyHint,
+  helperText,
+  noneLabel = 'None selected',
+  allowEmpty = true,
+  searchPlaceholder = 'Filter options',
+  dropdownThreshold = DROPDOWN_THRESHOLD,
+}: MultiSelectMatrixProps) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+
+  const selectedSet = useMemo(() => new Set(selectedValues), [selectedValues])
+  const selectedLabels = useMemo(
+    () => options.filter((option) => selectedSet.has(option.value)).map((option) => option.label),
+    [options, selectedSet],
+  )
+
+  const normalizedSearch = search.trim().toLowerCase()
+  const filteredOptions = useMemo(() => {
+    const visibleOptions = normalizedSearch
+      ? options.filter((option) => {
+          return (
+            option.label.toLowerCase().includes(normalizedSearch) ||
+            option.value.toLowerCase().includes(normalizedSearch)
+          )
+        })
+      : options
+
+    return [...visibleOptions].sort((left, right) => {
+      const leftSelected = selectedSet.has(left.value) ? 1 : 0
+      const rightSelected = selectedSet.has(right.value) ? 1 : 0
+      if (leftSelected !== rightSelected) {
+        return rightSelected - leftSelected
+      }
+      return left.label.localeCompare(right.label)
+    })
+  }, [normalizedSearch, options, selectedSet])
+
+  const selectedCount = selectedLabels.length
+  const useDropdown = options.length > dropdownThreshold
+  const canClear = allowEmpty ? selectedCount > 0 : selectedCount > 1
+  const canSelectVisible = filteredOptions.some((option) => {
+    return !option.disabled && !selectedSet.has(option.value)
+  })
+
+  const applyToggle = useCallback(
+    (optionValue: string) => {
+      const isSelected = selectedSet.has(optionValue)
+      if (isSelected && !allowEmpty && selectedValues.length <= 1) {
+        return
+      }
+
+      if (isSelected) {
+        onChange(selectedValues.filter((value) => value !== optionValue))
+        return
+      }
+
+      onChange([...selectedValues, optionValue])
+    },
+    [allowEmpty, onChange, selectedSet, selectedValues],
+  )
+
+  const clearSelection = useCallback(() => {
+    if (!canClear) {
+      return
+    }
+    if (!allowEmpty && selectedValues.length > 0) {
+      onChange([selectedValues[0]])
+      return
+    }
+    onChange([])
+  }, [allowEmpty, canClear, onChange, selectedValues])
+
+  const selectVisible = useCallback(() => {
+    if (!canSelectVisible) {
+      return
+    }
+
+    const nextSet = new Set(selectedValues)
+    for (const option of filteredOptions) {
+      if (!option.disabled) {
+        nextSet.add(option.value)
+      }
+    }
+    onChange(options.filter((option) => nextSet.has(option.value)).map((option) => option.value))
+  }, [canSelectVisible, filteredOptions, onChange, options, selectedValues])
+
+  const summaryText =
+    selectedCount === 0
+      ? noneLabel
+      : selectedCount <= 2
+        ? selectedLabels.join(', ')
+        : `${selectedLabels.slice(0, 2).join(', ')} +${selectedCount - 2} more`
+
+  return (
+    <div className="checkbox-matrix">
+      <p className="matrix-label">{label}</p>
+      {options.length === 0 ? (
+        <span className="field-hint">{emptyHint ?? 'No options available for the current filter.'}</span>
+      ) : useDropdown ? (
+        <div className="multi-select-dropdown">
+          <button
+            type="button"
+            className="multi-select-trigger"
+            aria-expanded={open}
+            onClick={() => setOpen((current) => !current)}
+          >
+            <span className="multi-select-trigger-main">{summaryText}</span>
+            <span className="multi-select-trigger-meta">{`${selectedCount}/${options.length}`}</span>
+          </button>
+
+          {open ? (
+            <div className="multi-select-panel">
+              <div className="multi-select-toolbar">
+                <input
+                  type="text"
+                  value={search}
+                  placeholder={searchPlaceholder}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+                <div className="multi-select-actions">
+                  <button
+                    type="button"
+                    className="multi-select-action"
+                    disabled={!canSelectVisible}
+                    onClick={selectVisible}
+                  >
+                    All visible
+                  </button>
+                  <button
+                    type="button"
+                    className="multi-select-action"
+                    disabled={!canClear}
+                    onClick={clearSelection}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+
+              <div className="multi-select-list">
+                {filteredOptions.length === 0 ? (
+                  <p className="multi-select-empty">No matches for the current filter.</p>
+                ) : (
+                  filteredOptions.map((option) => (
+                    <label
+                      key={option.value}
+                      className={`multi-select-option-row ${selectedSet.has(option.value) ? 'selected' : ''} ${
+                        option.disabled ? 'disabled' : ''
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedSet.has(option.value)}
+                        disabled={option.disabled}
+                        onChange={() => applyToggle(option.value)}
+                      />
+                      <span>{option.label}</span>
+                    </label>
+                  ))
+                )}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="pill-grid">
+          {options.map((option) => (
+            <label key={option.value} className="pill-option">
+              <input
+                type="checkbox"
+                checked={selectedSet.has(option.value)}
+                disabled={option.disabled}
+                onChange={() => applyToggle(option.value)}
+              />
+              <span>{option.label}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      {helperText ? <span className="field-hint">{helperText}</span> : null}
+    </div>
+  )
+}
+
 export function InputPanel({
   value,
   onChange,
@@ -200,7 +409,7 @@ export function InputPanel({
     [onChange],
   )
 
-  const toggleArrayValue = useCallback(
+  const patchArrayField = useCallback(
     <
       K extends
         | 'target_gpu'
@@ -210,17 +419,10 @@ export function InputPanel({
         | 'target_regions'
         | 'target_interconnects'
         | 'target_instance_types',
-    >(
-      key: K,
-      item: string,
-    ) => {
-      const current = value[key] as string[]
-      const hasItem = current.includes(item)
-      const next = hasItem ? current.filter((entry) => entry !== item) : [...current, item]
-
-      patchField(key, next as EstimateRequest[K])
+    >(key: K, nextValues: string[]) => {
+      patchField(key, nextValues as EstimateRequest[K])
     },
-    [patchField, value],
+    [patchField],
   )
 
   const providerRows = useMemo(() => {
@@ -317,6 +519,56 @@ export function InputPanel({
       sourceRows.map((row) => row.cloud_instance_type.trim()).filter((instanceType) => instanceType.length > 0),
     )
   }, [providerGpuCountRows, providerGpuRows])
+
+  const gpuFamilyOptions = useMemo<MultiSelectOption[]>(() => {
+    return availableGpuFamilies.map((gpu) => ({
+      value: gpu,
+      label: gpu.replaceAll('_', ' '),
+    }))
+  }, [availableGpuFamilies])
+
+  const pricingTierOptions = useMemo<MultiSelectOption[]>(() => {
+    return PRICING_TIER_OPTIONS.map((tier) => ({
+      value: tier,
+      label: formatPricingTierLabel(tier),
+      disabled: !availablePricingTiers.includes(tier),
+    }))
+  }, [availablePricingTiers])
+
+  const providerOptions = useMemo<MultiSelectOption[]>(() => {
+    return availableProviders.map((provider) => ({
+      value: provider,
+      label: provider,
+    }))
+  }, [availableProviders])
+
+  const regionOptions = useMemo<MultiSelectOption[]>(() => {
+    return availableRegions.map((region) => ({
+      value: region,
+      label: toTitleCase(region),
+    }))
+  }, [availableRegions])
+
+  const interconnectOptions = useMemo<MultiSelectOption[]>(() => {
+    return availableInterconnects.map((interconnect) => ({
+      value: interconnect,
+      label: interconnect === INTERCONNECT_UNKNOWN ? 'Unknown' : interconnect.toUpperCase(),
+    }))
+  }, [availableInterconnects])
+
+  const instanceTypeOptions = useMemo<MultiSelectOption[]>(() => {
+    return availableInstanceTypes.map((instanceType) => ({
+      value: instanceType,
+      label: instanceType,
+    }))
+  }, [availableInstanceTypes])
+
+  const loraTargetOptions = useMemo<MultiSelectOption[]>(() => {
+    return LORA_TARGET_MODULE_OPTIONS.map((module) => ({
+      value: module,
+      label: module,
+    }))
+  }, [])
 
   useEffect(() => {
     const providerSet = new Set(availableProviders.map((provider) => normalizeLower(provider)))

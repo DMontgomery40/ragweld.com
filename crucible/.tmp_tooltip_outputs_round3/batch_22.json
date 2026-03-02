@@ -1,0 +1,262 @@
+[
+  {
+    "key": "chat.system_prompt_recall_suffix",
+    "definition": "This suffix is appended to the legacy system prompt only when Recall context is attached to the request and the active four-state system prompt slot is empty. Treat it as a narrowly scoped adapter layer: it should clarify how memory snippets are interpreted, how conflicts between memory and user intent are resolved, and how uncertainty is surfaced when recalled facts are stale or low-confidence. In practice, the safest pattern is to keep this suffix procedural instead of stylistic: define citation behavior, conflict resolution order, and refusal conditions. Overly broad suffixes can silently change answer style for all recall-backed turns, so version this text and evaluate it against memory-heavy test prompts before rollout.",
+    "links": [
+      {
+        "text": "TiMem: Temporal Knowledge Integration in Multi-Session Conversational LLMs (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.02845"
+      },
+      {
+        "text": "MEGAN: Memory-Enhanced Graph Attention Networks for Conversational Agents (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.02681"
+      },
+      {
+        "text": "Anthropic Prompt Engineering: System Prompts",
+        "href": "https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/system-prompts"
+      },
+      {
+        "text": "Anthropic Messages API",
+        "href": "https://docs.anthropic.com/en/api/messages"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "chat.temperature",
+    "definition": "This temperature applies when retrieval is active (RAG corpus context and/or Recall memory). Because retrieval already constrains the answer space, temperature should usually be tuned lower than direct-chat settings to reduce drift from grounded evidence. Higher values can improve phrasing diversity, but they also increase the chance the model over-generalizes beyond retrieved passages. A practical workflow is to tune this jointly with retrieval thresholds: if context precision is high, modest temperature increases can help fluency; if retrieval is noisy, lower temperature prevents compounding errors. Evaluate with groundedness checks, citation adherence, and contradiction rate against source chunks, not only user preference scores.",
+    "links": [
+      {
+        "text": "MIRAGE: Model-Instructed Retrieval-Augmented Generation (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2504.17137"
+      },
+      {
+        "text": "TiMem: Temporal Knowledge Integration in Multi-Session Conversational LLMs (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.02845"
+      },
+      {
+        "text": "Cohere Temperature Guide",
+        "href": "https://docs.cohere.com/docs/temperature"
+      },
+      {
+        "text": "Hugging Face Transformers: Text Generation Controls",
+        "href": "https://huggingface.co/docs/transformers/main_classes/text_generation"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "chat.temperature_no_retrieval",
+    "definition": "This temperature is used for direct chat turns with no retrieval context attached. It is intentionally independent from retrieval-mode temperature so you can keep grounded answers conservative while allowing freer ideation in non-retrieval conversation. In deployment terms, this split lets you run two sampling policies inside one chat product: evidence-constrained behavior for grounded questions and creativity-oriented behavior for open-ended drafting. Recommended practice is to validate no-retrieval temperature with prompt categories that do not need factual anchoring (brainstorming, rewriting, tone variation) and keep guardrails strong for policy-sensitive topics where higher randomness can increase unsafe or inconsistent outputs.",
+    "links": [
+      {
+        "text": "MIRAGE: Model-Instructed Retrieval-Augmented Generation (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2504.17137"
+      },
+      {
+        "text": "MEGAN: Memory-Enhanced Graph Attention Networks for Conversational Agents (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.02681"
+      },
+      {
+        "text": "Google Gemini API: Text Generation Parameters",
+        "href": "https://ai.google.dev/gemini-api/docs/text-generation"
+      },
+      {
+        "text": "Hugging Face Transformers: Text Generation Controls",
+        "href": "https://huggingface.co/docs/transformers/main_classes/text_generation"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "chat_recall_intensity",
+    "definition": "Recall intensity is a one-message control that changes how aggressively memory retrieval runs before the next model call, then resets to auto. Operationally, it trades retrieval depth for latency and memory noise: lighter modes reduce cost and over-fetching, while deeper modes increase recall probability for long-running conversations with sparse cues. This knob is most useful when users explicitly signal intent (for example, \"use what I told you last week\") or when you need to skip memory for isolated tasks. Treat this as part of retrieval orchestration, not generation style; measure its impact using hit-rate on known memory facts, response latency, and the rate of irrelevant memory insertion.",
+    "links": [
+      {
+        "text": "TiMem: Temporal Knowledge Integration in Multi-Session Conversational LLMs (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.02845"
+      },
+      {
+        "text": "MEGAN: Memory-Enhanced Graph Attention Networks for Conversational Agents (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.02681"
+      },
+      {
+        "text": "LangGraph Memory Concepts",
+        "href": "https://langchain-ai.github.io/langgraph/concepts/memory/"
+      },
+      {
+        "text": "LangChain: How to Add Memory to Chatbots",
+        "href": "https://python.langchain.com/docs/how_to/chatbots_memory/"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "neo4j_auto_create_databases",
+    "definition": "When enabled in Enterprise multi-database deployments, missing per-corpus databases are created automatically during corpus provisioning. This reduces setup friction but shifts responsibility to strict naming rules, quota controls, and privilege boundaries. In production, auto-create should be paired with role-scoped credentials and explicit lifecycle policies so temporary corpora do not accumulate into unmanaged state. Also define failure behavior: if creation fails due to permissions or cluster health, ingestion should surface a clear operational error instead of silently falling back to shared storage assumptions. Use this setting when tenant isolation matters and platform automation can reliably manage database creation, monitoring, and cleanup.",
+    "links": [
+      {
+        "text": "GraphAnchor: Graph Query Optimization for GraphRAG (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.16462"
+      },
+      {
+        "text": "EA-GraphRAG: Efficient Adaptive GraphRAG for Knowledge-Intensive QA (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.03578"
+      },
+      {
+        "text": "Neo4j Operations Manual: Create Databases",
+        "href": "https://neo4j.com/docs/operations-manual/current/database-administration/standard-databases/create-databases/"
+      },
+      {
+        "text": "Neo4j Operations Manual: Clustering and Databases",
+        "href": "https://neo4j.com/docs/operations-manual/current/clustering/databases/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Enterprise",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "neo4j_database",
+    "definition": "This is the database name used in shared mode, where all corpora write into one Neo4j database and isolation is enforced at query level (for example via corpus identifiers and labels). Shared mode simplifies operations for Community-compatible setups and small deployments, but it concentrates workload and increases the importance of strict filtering correctness. Use stable naming, pin this value in environment configuration, and verify every read/write path includes tenant-scoping predicates. If you later migrate to per-corpus databases, treat the current shared name as a migration source and plan for data copy or dual-write periods to avoid mixed visibility during cutover.",
+    "links": [
+      {
+        "text": "GraphAnchor: Graph Query Optimization for GraphRAG (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.16462"
+      },
+      {
+        "text": "Neo4j Operations Manual: Listing Databases",
+        "href": "https://neo4j.com/docs/operations-manual/current/database-administration/standard-databases/listing-databases/"
+      },
+      {
+        "text": "Neo4j Operations Manual: Create Databases",
+        "href": "https://neo4j.com/docs/operations-manual/current/database-administration/standard-databases/create-databases/"
+      },
+      {
+        "text": "Neo4j Operations Manual: Composite Database Concepts",
+        "href": "https://neo4j.com/docs/operations-manual/current/database-administration/composite-databases/concepts/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Shared Mode",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "neo4j_database_mode",
+    "definition": "This switch chooses the isolation model: shared database with logical filtering, or per-corpus physical separation. Shared mode is operationally simpler and Community-friendly, but its safety depends on consistently correct filters in every query path. Per-corpus mode improves blast-radius containment, access segmentation, and maintenance flexibility (backup, restore, lifecycle by corpus), but needs Enterprise features plus database provisioning automation. Choose based on tenant boundaries, compliance requirements, and operational maturity. If changing modes after deployment, treat it as a migration project with validation of query parity, index coverage, and rollback strategy, since mode changes can alter both performance characteristics and failure domains.",
+    "links": [
+      {
+        "text": "EA-GraphRAG: Efficient Adaptive GraphRAG for Knowledge-Intensive QA (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.03578"
+      },
+      {
+        "text": "GraphAnchor: Graph Query Optimization for GraphRAG (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.16462"
+      },
+      {
+        "text": "Neo4j Operations Manual: Clustering and Databases",
+        "href": "https://neo4j.com/docs/operations-manual/current/clustering/databases/"
+      },
+      {
+        "text": "Neo4j Operations Manual: Composite Database Concepts",
+        "href": "https://neo4j.com/docs/operations-manual/current/database-administration/composite-databases/concepts/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Enterprise",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "neo4j_database_prefix",
+    "definition": "In per-corpus mode, this prefix is prepended to sanitized corpus identifiers to generate physical Neo4j database names. A stable prefix prevents naming collisions and makes fleet operations easier (monitoring filters, backup targeting, retention tooling). Keep it short, lowercase, and environment-specific when needed (for example prod vs staging) so operational scripts can scope safely. Changing the prefix after data exists is effectively a rename/migration event, because existing databases retain old names until explicitly moved. Plan prefix strategy early and pair it with naming validation to avoid runtime creation failures from unsupported characters or length constraints.",
+    "links": [
+      {
+        "text": "GraphAnchor: Graph Query Optimization for GraphRAG (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.16462"
+      },
+      {
+        "text": "Neo4j Operations Manual: Create Databases",
+        "href": "https://neo4j.com/docs/operations-manual/current/database-administration/standard-databases/create-databases/"
+      },
+      {
+        "text": "Neo4j Operations Manual: Listing Databases",
+        "href": "https://neo4j.com/docs/operations-manual/current/database-administration/standard-databases/listing-databases/"
+      },
+      {
+        "text": "Neo4j Operations Manual: Composite Database Concepts",
+        "href": "https://neo4j.com/docs/operations-manual/current/database-administration/composite-databases/concepts/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Per-corpus Mode",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "neo4j_password",
+    "definition": "This credential is required for authenticated Neo4j access and should never be hardcoded in app settings, client bundles, or repository-tracked config files. Load it from environment or a secret manager, rotate it on a schedule, and scope the corresponding user to minimum privileges needed by the application path. For multi-database setups, privilege boundaries should map to the chosen isolation model (shared vs per-corpus) so a leaked credential cannot traverse unrelated data. Also pair password policy with transport security (TLS-enabled Bolt schemes and connector configuration), because secure credentials without encrypted transport still expose risk in transit.",
+    "links": [
+      {
+        "text": "EA-GraphRAG: Efficient Adaptive GraphRAG for Knowledge-Intensive QA (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.03578"
+      },
+      {
+        "text": "Neo4j Operations Manual: Manage Users",
+        "href": "https://neo4j.com/docs/operations-manual/current/authentication-authorization/manage-users/"
+      },
+      {
+        "text": "Neo4j Operations Manual: Password and User Recovery",
+        "href": "https://neo4j.com/docs/operations-manual/current/authentication-authorization/password-and-user-recovery/"
+      },
+      {
+        "text": "Neo4j Operations Manual: Connector Configuration",
+        "href": "https://neo4j.com/docs/operations-manual/current/configuration/connectors/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Security",
+        "class": "err"
+      }
+    ]
+  },
+  {
+    "key": "neo4j_uri",
+    "definition": "This URI defines how the application reaches Neo4j and whether routing and encryption are used (`bolt`, `neo4j`, `bolt+s`, `bolt+ssc`, etc.). It is not a cosmetic setting: the scheme controls TLS behavior and, in clustered deployments, routing-aware connection semantics. Use explicit hostnames and production-safe schemes, then validate handshake behavior from the runtime environment where the app actually executes. If latency or connectivity issues appear, inspect connector settings and DNS/network boundaries before changing query logic. Keep URI, credentials, and database mode changes coordinated, because mismatched connection targets can look like data or permission bugs when the root cause is transport configuration.",
+    "links": [
+      {
+        "text": "GraphAnchor: Graph Query Optimization for GraphRAG (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2601.16462"
+      },
+      {
+        "text": "Neo4j Python Driver Manual: Advanced Connection Information",
+        "href": "https://neo4j.com/docs/python-manual/current/connect-advanced/"
+      },
+      {
+        "text": "Neo4j Operations Manual: Connector Configuration",
+        "href": "https://neo4j.com/docs/operations-manual/current/configuration/connectors/"
+      },
+      {
+        "text": "Neo4j Operations Manual: Clustering and Databases",
+        "href": "https://neo4j.com/docs/operations-manual/current/clustering/databases/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Core Setting",
+        "class": "info"
+      }
+    ]
+  }
+]

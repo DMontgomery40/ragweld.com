@@ -66,24 +66,6 @@ This repo powers the public ragweld site and live hosted demo. It is the product
 
 - Docs: [Chat config](https://dmontgomery40.github.io/ragweld/latest/reference/config/chat/) · [Semantic cache config](https://dmontgomery40.github.io/ragweld/latest/reference/config/semantic_cache/)
 
-### 7) Infrastructure services + runtime controls
-
-![Infrastructure services](public/screenshots/infrastructure-services.png)
-
-- Docs: [Operations](https://dmontgomery40.github.io/ragweld/latest/operations/) · [Observability](https://dmontgomery40.github.io/ragweld/latest/observability/)
-
-### 8) Knowledge graph canvas drilldown
-
-![Knowledge graph canvas](public/screenshots/knowledge-graph-canvas.png)
-
-- Docs: [Graph retrieval](https://dmontgomery40.github.io/ragweld/latest/retrieval/graph/) · [Graph search config](https://dmontgomery40.github.io/ragweld/latest/reference/config/graph_search/)
-
-### 9) Dockable workspace chooser
-
-![Dock chooser](public/screenshots/dock-chooser.png)
-
-- Docs: [UI manual](https://dmontgomery40.github.io/ragweld/latest/manual/ui/) · [Configuration](https://dmontgomery40.github.io/ragweld/latest/configuration/)
-
 ## Quickstart
 
 ```bash

@@ -1,0 +1,280 @@
+[
+  {
+    "key": "TRIBRID_RERANKER_ALPHA",
+    "definition": "Interpolation weight used when combining the reranker score with upstream hybrid retrieval score. In practical terms, this is the control for how much the final ranking trusts pairwise relevance modeling versus the broader BM25+dense candidate order. Raising alpha usually improves precision for well-formed queries, but if it is set too high the system can overfit to reranker biases and underweight lexical exact-match evidence. Tune it with fixed query sets and report both quality metrics (nDCG, MRR, grounded answer rate) and latency to avoid hidden regressions.",
+    "links": [
+      {
+        "text": "Rethinking the Reranker: Boundary-Aware Evidence Selection (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.03689"
+      },
+      {
+        "text": "AcuRank: Uncertainty-Aware Adaptive Computation for Listwise Reranking (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2505.18512"
+      },
+      {
+        "text": "Elasticsearch Reciprocal Rank Fusion (RRF)",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html"
+      },
+      {
+        "text": "SentenceTransformers Cross-Encoder Reranker Training",
+        "href": "https://www.sbert.net/examples/cross_encoder/training/rerankers/README.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Affects ranking",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "TRIBRID_RERANKER_BATCH",
+    "definition": "Inference micro-batch size for reranker scoring over candidate documents. Larger batches can increase throughput and reduce per-item overhead on GPU, but memory pressure grows quickly with longer inputs and higher top-N. If this value is too aggressive you will see OOMs, allocator fragmentation, or latency spikes from retries and paging. Production tuning should sweep batch size jointly with max sequence length and candidate count, because these three parameters multiply into total token compute.",
+    "links": [
+      {
+        "text": "AcuRank: Uncertainty-Aware Adaptive Computation for Listwise Reranking (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2505.18512"
+      },
+      {
+        "text": "PyTorch DataLoader Reference",
+        "href": "https://pytorch.org/docs/stable/data.html#torch.utils.data.DataLoader"
+      },
+      {
+        "text": "SentenceTransformers Cross-Encoder Applications",
+        "href": "https://www.sbert.net/examples/cross_encoder/applications/README.html"
+      },
+      {
+        "text": "Hugging Face Transformers Padding and Truncation",
+        "href": "https://huggingface.co/docs/transformers/main/pad_truncation"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Tune for memory",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "TRIBRID_RERANKER_MAXLEN",
+    "definition": "Maximum token budget for each query-document pair at rerank time. This parameter directly controls truncation behavior: small values improve speed and memory, while large values preserve long-context evidence at higher cost. For code and technical retrieval, quality gains usually plateau after a certain length unless queries depend on long-range context. Evaluate max length using long-tail queries, because overly short truncation tends to hide failures that only appear on long files and verbose documentation.",
+    "links": [
+      {
+        "text": "Query-focused and Memory-aware Reranker for Long Context Processing (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.12192"
+      },
+      {
+        "text": "DeAR: Dual-Stage Document Reranking with Reasoning Agents (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2508.16998"
+      },
+      {
+        "text": "Hugging Face Transformers Padding and Truncation",
+        "href": "https://huggingface.co/docs/transformers/main/pad_truncation"
+      },
+      {
+        "text": "SentenceTransformers Cross-Encoder Applications",
+        "href": "https://www.sbert.net/examples/cross_encoder/applications/README.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Performance sensitive",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "TRIBRID_RERANKER_MINE_MODE",
+    "definition": "Negative-sampling policy used when generating triplets for reranker training. Random negatives are stable but often weak; semi-hard negatives improve discrimination without overwhelming optimization; hard negatives are highest signal but can inject false negatives and noise if mining quality is low. The right mode depends on corpus ambiguity and label fidelity, so teams typically stage mining as a curriculum (random to semi-hard to hard) with periodic audit sets. Treat this as a data-quality lever first and a model-quality lever second.",
+    "links": [
+      {
+        "text": "BiCA: Dense Retrieval with Citation-Aware Hard Negatives (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2511.08029"
+      },
+      {
+        "text": "RRRA: Resampling and Reranking through a Retriever Adapter (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2508.11670"
+      },
+      {
+        "text": "SentenceTransformers Utility Functions (including hard-negative mining)",
+        "href": "https://www.sbert.net/docs/package_reference/util.html"
+      },
+      {
+        "text": "SentenceTransformers Losses (Triplet and ranking losses)",
+        "href": "https://www.sbert.net/docs/package_reference/sentence_transformer/losses.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Advanced",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "TRIBRID_RERANKER_MINE_RESET",
+    "definition": "Whether to clear previously mined triplets before a new mining run. Enabling reset gives a clean dataset snapshot and avoids mixing stale and fresh negatives, which is useful for controlled experiments. Disabling reset preserves historical data and can improve coverage, but it also increases the risk of drift and duplicate/noisy samples. Use this setting with explicit dataset versioning so you can reproduce training results and roll back when mining quality drops.",
+    "links": [
+      {
+        "text": "BiCA: Dense Retrieval with Citation-Aware Hard Negatives (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2511.08029"
+      },
+      {
+        "text": "Hugging Face Datasets: Loading Local JSON/JSONL",
+        "href": "https://huggingface.co/docs/datasets/en/loading"
+      },
+      {
+        "text": "JSON Lines Format Specification",
+        "href": "https://jsonlines.org/"
+      },
+      {
+        "text": "MLflow Tracking (experiment and artifact reproducibility)",
+        "href": "https://mlflow.org/docs/latest/tracking.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Destructive",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "TRIBRID_RERANKER_MODEL_PATH",
+    "definition": "Filesystem location of the active reranker checkpoint or adapter bundle used at inference time. This path is effectively a deployment control: whichever artifact is loaded here defines live ranking behavior. Use stable, versioned directories and atomically swap symlinks or folder names to avoid partial reads during update windows. In adapter-based pipelines, keep base model version and adapter metadata aligned so path changes do not silently load incompatible weights.",
+    "links": [
+      {
+        "text": "RRRA: Resampling and Reranking through a Retriever Adapter (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2508.11670"
+      },
+      {
+        "text": "PEFT Checkpoint Format and Loading",
+        "href": "https://huggingface.co/docs/peft/developer_guides/checkpoint"
+      },
+      {
+        "text": "Transformers from_pretrained() Model Loading",
+        "href": "https://huggingface.co/docs/transformers/main_classes/model#transformers.PreTrainedModel.from_pretrained"
+      },
+      {
+        "text": "Python pathlib (path handling and portability)",
+        "href": "https://docs.python.org/3/library/pathlib.html"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "TRIBRID_RERANKER_RELOAD_ON_CHANGE",
+    "definition": "Toggles hot-reload behavior when the reranker model path changes at runtime. In development this shortens iteration loops because newly trained adapters can be activated without restarting the service. In production, uncontrolled auto-reload can introduce jitter, temporary cache invalidation, and model consistency issues across replicas. If enabled, pair it with health checks and staged rollout logic so reload events do not degrade retrieval latency or answer stability.",
+    "links": [
+      {
+        "text": "AcuRank: Uncertainty-Aware Adaptive Computation for Listwise Reranking (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2505.18512"
+      },
+      {
+        "text": "watchfiles Documentation (file change monitoring)",
+        "href": "https://watchfiles.helpmanual.io/"
+      },
+      {
+        "text": "PEFT Checkpoint Format and Loading",
+        "href": "https://huggingface.co/docs/peft/developer_guides/checkpoint"
+      },
+      {
+        "text": "Transformers from_pretrained() Model Loading",
+        "href": "https://huggingface.co/docs/transformers/main_classes/model#transformers.PreTrainedModel.from_pretrained"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Development feature",
+        "class": "info"
+      },
+      {
+        "text": "Disable in production",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "TRIBRID_RERANKER_TOPN",
+    "definition": "Upper bound on how many retrieved candidates are passed into the reranker stage. Higher Top-N usually improves recall headroom because more borderline candidates are reconsidered, but reranker cost grows roughly linearly with this value. If set too low, relevant documents never reach reranking; if set too high, latency and GPU utilization can explode for little quality gain. Choose Top-N by plotting quality-latency curves and selecting the smallest value that keeps recall stable on hard queries.",
+    "links": [
+      {
+        "text": "Rethinking the Reranker: Boundary-Aware Evidence Selection (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.03689"
+      },
+      {
+        "text": "DeAR: Dual-Stage Document Reranking with Reasoning Agents (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2508.16998"
+      },
+      {
+        "text": "Qdrant Reranking and Hybrid Search",
+        "href": "https://qdrant.tech/documentation/search-precision/reranking-hybrid-search/"
+      },
+      {
+        "text": "SentenceTransformers Cross-Encoder Reranker Training",
+        "href": "https://www.sbert.net/examples/cross_encoder/training/rerankers/README.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Advanced RAG tuning",
+        "class": "info"
+      },
+      {
+        "text": "Affects latency",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "TRIBRID_SYNONYMS_PATH",
+    "definition": "Path to the synonyms dictionary used for controlled query expansion and lexical normalization. This file can materially change retrieval behavior, especially for domain acronyms, aliases, and product-specific terminology that embeddings may underrepresent. Keep the synonym set versioned and scoped: broad global replacements can hurt precision by over-expanding ambiguous terms. Treat updates as relevance experiments, not static configuration, and validate with representative query buckets before rollout.",
+    "links": [
+      {
+        "text": "Generative Query Expansion with Multilingual LLMs (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2511.19325"
+      },
+      {
+        "text": "Elasticsearch Synonym Token Filter",
+        "href": "https://www.elastic.co/docs/reference/text-analysis/analysis-synonym-tokenfilter"
+      },
+      {
+        "text": "OpenSearch Synonym Token Filter",
+        "href": "https://docs.opensearch.org/latest/analyzers/token-filters/synonym/"
+      },
+      {
+        "text": "PostgreSQL Text Search Dictionaries and Synonym Support",
+        "href": "https://www.postgresql.org/docs/current/textsearch-features.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Optional override",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "TRIBRID_TRIPLETS_PATH",
+    "definition": "Location of the JSONL triplets corpus used to mine and train the reranker. Because this dataset defines supervision quality, the path should point to a durable, versioned artifact rather than an ad hoc local file. Maintain a consistent schema (query, positive, negative, metadata) and track generation provenance so model regressions can be traced back to specific triplet revisions. In practice, good triplet hygiene often improves ranking quality more than additional training steps.",
+    "links": [
+      {
+        "text": "BiCA: Dense Retrieval with Citation-Aware Hard Negatives (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2511.08029"
+      },
+      {
+        "text": "SentenceTransformers Losses (Triplet and ranking losses)",
+        "href": "https://www.sbert.net/docs/package_reference/sentence_transformer/losses.html"
+      },
+      {
+        "text": "Hugging Face Datasets: Loading Local JSON/JSONL",
+        "href": "https://huggingface.co/docs/datasets/en/loading"
+      },
+      {
+        "text": "JSON Lines Format Specification",
+        "href": "https://jsonlines.org/"
+      }
+    ],
+    "badges": []
+  }
+]

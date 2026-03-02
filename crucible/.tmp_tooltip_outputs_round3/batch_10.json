@@ -1,0 +1,290 @@
+[
+  {
+    "key": "RERANKER_BACKEND",
+    "definition": "Selects where second-stage relevance scoring runs: disabled, local learning reranker, or external cloud reranker. Backend choice changes both ranking behavior and operational constraints, because cross-encoder reranking improves precision but adds per-query compute and latency. Cloud backends usually provide stronger out-of-the-box quality, while local backends give tighter cost control, privacy, and reproducibility. Treat this as an evaluation knob: compare answer accuracy, NDCG/Recall@k, and p95 latency on the same query set before standardizing one backend.",
+    "links": [
+      {
+        "text": "MICE: Advancing Retrieval with In-Context Learning and Reranking (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.16299"
+      },
+      {
+        "text": "Cohere Rerank API Reference",
+        "href": "https://docs.cohere.com/reference/rerank"
+      },
+      {
+        "text": "Voyage AI Reranker Docs",
+        "href": "https://docs.voyageai.com/docs/reranker"
+      },
+      {
+        "text": "Elastic + Jina Rerank Integration",
+        "href": "https://www.elastic.co/docs/explore-analyze/machine-learning/nlp/ml-nlp-jina"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Improves quality",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "RERANKER_CLOUD_MODEL",
+    "definition": "Specifies the provider model ID used for cloud reranking, such as a Cohere, Voyage, or Jina reranker family variant. This parameter directly controls tradeoffs between multilingual support, context length handling, pricing, and latency. Model IDs are provider-scoped, so the same string is not portable across providers; keep explicit provider-model pairing in configuration and tests. When changing models, re-baseline ranking metrics and failure behavior because score distributions and calibration can shift materially even when APIs look identical.",
+    "links": [
+      {
+        "text": "InsertRank: Bias Mitigation in Rerankers (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2506.14086"
+      },
+      {
+        "text": "Cohere Models Documentation",
+        "href": "https://docs.cohere.com/docs/models"
+      },
+      {
+        "text": "Voyage AI Reranker Docs",
+        "href": "https://docs.voyageai.com/docs/reranker"
+      },
+      {
+        "text": "Jina Reranker v2 Model Card",
+        "href": "https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Provider-scoped",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "RERANKER_CLOUD_PROVIDER",
+    "definition": "Determines which external vendor handles reranking when cloud mode is enabled. Provider choice affects auth, rate limits, billing units, token limits, and model availability, so swapping providers is a behavior change, not just a credential change. Keep provider-specific defaults explicit (timeouts, top-N caps, retry policy) and validate with provider-specific regression queries. For production stability, monitor provider error classes separately so fallback rules can distinguish auth/config issues from transient throttling.",
+    "links": [
+      {
+        "text": "HyperRAG: Hybrid Retrieval-Augmented Generation (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2504.02921"
+      },
+      {
+        "text": "Cohere Reranking Guide",
+        "href": "https://docs.cohere.com/docs/reranking-with-cohere"
+      },
+      {
+        "text": "Voyage AI Reranker Docs",
+        "href": "https://docs.voyageai.com/docs/reranker"
+      },
+      {
+        "text": "Jina Rerank Models via Elastic Open Inference API",
+        "href": "https://www.elastic.co/search-labs/blog/jina-ai-embeddings-rerank-model-open-inference-api"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Requires API key",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "RERANKER_CLOUD_TOP_N",
+    "definition": "Limits how many first-pass candidates are sent into the cloud reranker. This is the main quality-cost control for API reranking: higher Top-N usually improves final precision/recall at the expense of latency and request cost. Tune it jointly with first-stage retrieval depth; a small Top-N can hide relevant documents before reranking ever sees them, while an oversized Top-N can waste budget on obvious non-matches. Start from an empirically measured knee point (quality gain flattening vs latency growth) rather than a fixed default.",
+    "links": [
+      {
+        "text": "RankFlow: Reranking Pipeline Optimization (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2502.00709"
+      },
+      {
+        "text": "Cohere Rerank API (top_n parameter)",
+        "href": "https://docs.cohere.com/reference/rerank"
+      },
+      {
+        "text": "OpenSearch Rerank Processor",
+        "href": "https://docs.opensearch.org/latest/search-plugins/search-pipelines/rerank-processor/"
+      },
+      {
+        "text": "LangChain Contextual Compression Retriever",
+        "href": "https://api.python.langchain.com/en/latest/retrievers/langchain.retrievers.contextual_compression.ContextualCompressionRetriever.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Cloud API costs",
+        "class": "warn"
+      },
+      {
+        "text": "Rate limits apply",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "RERANKER_MODE",
+    "definition": "Global switch for reranking behavior, typically `none`, `learning`, or `cloud`. Use `none` for lowest latency baselines, `learning` for locally trainable behavior, and `cloud` for managed cross-encoder quality with external dependencies. Because this mode changes the scoring path after retrieval, it can change user-visible answers even when retrieval is identical. Lock this setting per environment and benchmark each mode against shared evaluation sets before promoting to production.",
+    "links": [
+      {
+        "text": "MICE: Retrieval + Reranking Improvements (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.16299"
+      },
+      {
+        "text": "Cohere Reranking Guide",
+        "href": "https://docs.cohere.com/docs/reranking-with-cohere"
+      },
+      {
+        "text": "Jina MLX Retrieval (Local Reranker Training/Serving)",
+        "href": "https://github.com/jina-ai/mlx-retrieval"
+      },
+      {
+        "text": "OpenSearch Rerank Processor",
+        "href": "https://docs.opensearch.org/latest/search-plugins/search-pipelines/rerank-processor/"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Controls reranking behavior",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "RERANKER_PROVIDER",
+    "definition": "Provider identifier used by the cloud reranker configuration layer (for example, values surfaced from `models.json`). Keep this value aligned with your model catalog so UI selections resolve to valid API credentials, base URLs, and model IDs at runtime. A provider mismatch often fails late (during request dispatch), so validate provider-model compatibility at config load time when possible. In multi-provider setups, this key is the routing pivot that determines which API semantics and reliability envelope apply to the same query workload.",
+    "links": [
+      {
+        "text": "InsertRank: Reranker Behavior and Fairness (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2506.14086"
+      },
+      {
+        "text": "Cohere Models Documentation",
+        "href": "https://docs.cohere.com/docs/models"
+      },
+      {
+        "text": "Voyage AI Reranker Docs",
+        "href": "https://docs.voyageai.com/docs/reranker"
+      },
+      {
+        "text": "Jina Reranker v2 Model Card",
+        "href": "https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual"
+      }
+    ],
+    "badges": [
+      {
+        "text": "models.json-driven",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "RERANKER_TIMEOUT",
+    "definition": "Maximum wait time for cloud reranker requests before failing fast. This parameter protects end-to-end request latency and prevents queue pileups during provider slowdowns, but setting it too low can create false negatives under transient network variance. Tune timeout with retry policy and user-facing SLA in mind; timeout alone is not enough without fallback strategy (for example, use first-stage ranking when reranker times out). Track timeout rate by provider/model so you can distinguish systemic misconfiguration from temporary upstream degradation.",
+    "links": [
+      {
+        "text": "MICE: Retrieval Pipeline Robustness (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.16299"
+      },
+      {
+        "text": "HTTPX Timeouts Guide",
+        "href": "https://www.python-httpx.org/advanced/timeouts/"
+      },
+      {
+        "text": "Cohere Rerank API Reference",
+        "href": "https://docs.cohere.com/reference/rerank"
+      },
+      {
+        "text": "Voyage AI Reranker Docs",
+        "href": "https://docs.voyageai.com/docs/reranker"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Reliability",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "RERANKER_TRAIN_BATCH",
+    "definition": "Number of training examples processed per optimization step during learning-reranker fine-tuning. Larger batches can improve gradient stability and throughput on strong hardware, but they increase memory pressure and can destabilize local/containerized setups if oversized. Smaller batches are safer for constrained environments and can be paired with gradient accumulation to emulate larger effective batch sizes. Tune batch size together with learning rate and sequence length, since all three interact with convergence speed and overfitting risk.",
+    "links": [
+      {
+        "text": "GraLoRA: Gradient-Driven Low-Rank Adaptation (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2505.20355"
+      },
+      {
+        "text": "GoRA: Gradient-guided LoRA (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2502.12171"
+      },
+      {
+        "text": "PyTorch Optimizer Documentation",
+        "href": "https://docs.pytorch.org/docs/stable/optim.html"
+      },
+      {
+        "text": "Hugging Face PEFT Documentation",
+        "href": "https://huggingface.co/docs/peft/index"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Lower = safer on Colima",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "RERANKER_TRAIN_EPOCHS",
+    "definition": "Defines how many full passes over the reranker training dataset are executed. More epochs can improve fit on stable, representative triplets, but excessive epochs on small or noisy data usually reduce generalization and hurt real query performance. Use held-out validation queries and early stopping signals rather than only training loss to choose this value. As your mined data grows or distribution shifts, retune epochs because the optimal point moves with dataset size and difficulty.",
+    "links": [
+      {
+        "text": "Sensitivity-LoRA: Hyperparameter Sensitivity (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2509.09119"
+      },
+      {
+        "text": "GraLoRA: Training Stability for LoRA (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2505.20355"
+      },
+      {
+        "text": "Transformers Optimizer & Schedule Docs",
+        "href": "https://huggingface.co/docs/transformers/main_classes/optimizer_schedules"
+      },
+      {
+        "text": "Jina MLX Retrieval Repository",
+        "href": "https://github.com/jina-ai/mlx-retrieval"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Quality vs overfit",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "RERANKER_TRAIN_LR",
+    "definition": "Learning rate for reranker fine-tuning updates. It controls update magnitude and is often the highest-impact training hyperparameter: too high causes unstable loss and catastrophic drift, too low undertrains and wastes epochs. Choose LR jointly with batch size, adapter rank, and warmup schedule, and validate using ranking metrics rather than loss alone. For reranker adaptation, conservative starting values with short sweeps are usually safer than aggressive defaults.",
+    "links": [
+      {
+        "text": "Sensitivity-LoRA: Learning-Rate Sensitivity (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2509.09119"
+      },
+      {
+        "text": "GoRA: Gradient-guided LoRA Optimization (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2502.12171"
+      },
+      {
+        "text": "PyTorch Optimizer Documentation",
+        "href": "https://docs.pytorch.org/docs/stable/optim.html"
+      },
+      {
+        "text": "Transformers Optimizer & Schedule Docs",
+        "href": "https://huggingface.co/docs/transformers/main_classes/optimizer_schedules"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Advanced ML training",
+        "class": "warn"
+      },
+      {
+        "text": "Requires tuning",
+        "class": "info"
+      }
+    ]
+  }
+]

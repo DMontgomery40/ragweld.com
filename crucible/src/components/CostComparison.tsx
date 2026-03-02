@@ -17,12 +17,31 @@ interface CostComparisonProps {
   entries: CostComparisonEntry[]
 }
 
+const integerNumberFormatter = new Intl.NumberFormat('en-US', {
+  maximumFractionDigits: 0,
+})
+
+function toFiniteNumber(value: number | string): number {
+  const numericValue = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(numericValue) ? numericValue : 0
+}
+
 function formatCurrency(value: number | null): string {
   if (value === null) {
     return 'n/a'
   }
 
   return `$${value.toFixed(2)}`
+}
+
+function formatCurrencyTick(value: number | string): string {
+  const numericValue = toFiniteNumber(value)
+  return `$${integerNumberFormatter.format(Math.round(numericValue))}`
+}
+
+function formatHoursTick(value: number | string): string {
+  const numericValue = toFiniteNumber(value)
+  return `${integerNumberFormatter.format(numericValue)}h`
 }
 
 function formatHourly(cents: number): string {
@@ -83,7 +102,7 @@ export function CostComparison({ entries }: CostComparisonProps) {
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={barChartData} layout="vertical" margin={{ top: 8, right: 12, left: 8, bottom: 8 }}>
               <CartesianGrid strokeDasharray="4 4" stroke="#202a2f" />
-              <XAxis type="number" stroke="#7d8993" tickFormatter={(value) => `$${value.toFixed(0)}`} />
+              <XAxis type="number" stroke="#7d8993" tickFormatter={formatCurrencyTick} />
               <YAxis dataKey="label" type="category" width={140} stroke="#7d8993" />
               <Tooltip
                 formatter={(value) => {
@@ -92,6 +111,8 @@ export function CostComparison({ entries }: CostComparisonProps) {
 
                   return [`$${numericValue.toFixed(2)}`, 'Total cost']
                 }}
+                itemStyle={{ color: '#d7e0e6' }}
+                labelStyle={{ color: '#d7e0e6' }}
                 contentStyle={{
                   backgroundColor: '#0d1418',
                   border: '1px solid #23313a',
@@ -111,25 +132,28 @@ export function CostComparison({ entries }: CostComparisonProps) {
         <div className="chart-wrap scatter-chart">
           <h4>Time vs Cost</h4>
           <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 8, right: 12, left: 8, bottom: 8 }}>
+            <ScatterChart margin={{ top: 8, right: 16, left: 24, bottom: 8 }}>
               <CartesianGrid strokeDasharray="4 4" stroke="#202a2f" />
               <XAxis
                 type="number"
                 dataKey="hours"
                 name="Training hours"
                 stroke="#7d8993"
-                tickFormatter={(value) => `${value.toFixed(1)}h`}
+                tickFormatter={formatHoursTick}
               />
               <YAxis
                 type="number"
                 dataKey="cost"
                 name="Total cost"
                 stroke="#7d8993"
-                tickFormatter={(value) => `$${value.toFixed(0)}`}
+                width={84}
+                tickFormatter={formatCurrencyTick}
               />
               <ZAxis type="number" dataKey="vram" range={[80, 320]} name="VRAM" />
               <Tooltip
                 cursor={{ strokeDasharray: '3 3' }}
+                itemStyle={{ color: '#d7e0e6' }}
+                labelStyle={{ color: '#d7e0e6' }}
                 contentStyle={{
                   backgroundColor: '#0d1418',
                   border: '1px solid #23313a',

@@ -1,0 +1,262 @@
+[
+  {
+    "key": "LANGSMITH_API_KEY",
+    "definition": "Credential used by the runtime to authenticate trace and evaluation events sent to LangSmith. In RAG systems, this key ties each retrieval and generation span to a project so you can debug relevance misses, latency spikes, and hallucination regressions with full trace context. Treat it as production secret material: scope it to the minimum workspace, rotate it regularly, and keep separate keys for development, staging, and production to avoid cross-environment data bleed. If this value is missing or invalid, your app can still answer queries, but observability pipelines lose critical evidence for tuning retrieval, reranking, and prompt behavior.",
+    "links": [
+      {"text": "AgentSight: AI Agent Observability (arXiv)", "href": "https://arxiv.org/abs/2508.02736"},
+      {"text": "LangSmith Docs", "href": "https://docs.smith.langchain.com/"},
+      {"text": "LangSmith Observability Quickstart", "href": "https://docs.langchain.com/langsmith/observability-quickstart"},
+      {"text": "LangSmith OpenTelemetry Tracing", "href": "https://docs.langchain.com/langsmith/trace-with-opentelemetry"}
+    ],
+    "badges": [
+      {"text": "Tracing auth", "class": "info"}
+    ]
+  },
+  {
+    "key": "LANGTRACE_API_HOST",
+    "definition": "Base endpoint for Langtrace ingestion and control APIs. This setting determines where traces from retrieval, reranking, and generation are delivered, so it effectively controls data residency, network path, and tenant routing for observability. Use an explicit host per environment and verify protocol, TLS, and region alignment before enabling high-volume tracing, especially when moving between cloud and self-hosted collectors. Host/key/project mismatches are a common cause of silent trace loss, so validate this alongside credentials during rollout.",
+    "links": [
+      {"text": "AgentSight: AI Agent Observability (arXiv)", "href": "https://arxiv.org/abs/2508.02736"},
+      {"text": "Langtrace Documentation", "href": "https://docs.langtrace.ai/"},
+      {"text": "Langtrace OTEL Configuration", "href": "https://docs.langtrace.ai/supported-integrations/otel-support/otel-configuration"},
+      {"text": "OpenTelemetry Traces", "href": "https://opentelemetry.io/docs/concepts/signals/traces/"}
+    ],
+    "badges": [
+      {"text": "Trace routing", "class": "info"}
+    ]
+  },
+  {
+    "key": "LANGTRACE_API_KEY",
+    "definition": "Authentication token used when exporting trace telemetry to Langtrace services. For RAG/search systems, this key gates whether query rewrites, retrieval spans, reranker decisions, and response-generation timing are actually persisted for debugging and quality analysis. Keep it in a secret manager, never in checked-in config, and rotate on a predictable cadence because observability keys often leak through ad hoc scripts and local shells. When trace ingestion drops unexpectedly, verify this key first, then confirm it matches the configured host and project identifier.",
+    "links": [
+      {"text": "AgentSight: AI Agent Observability (arXiv)", "href": "https://arxiv.org/abs/2508.02736"},
+      {"text": "Langtrace Documentation", "href": "https://docs.langtrace.ai/"},
+      {"text": "Langtrace Integrations Overview", "href": "https://docs.langtrace.ai/supported-integrations/overview"},
+      {"text": "Langtrace OTEL Configuration", "href": "https://docs.langtrace.ai/supported-integrations/otel-support/otel-configuration"}
+    ],
+    "badges": [
+      {"text": "Tracing auth", "class": "info"}
+    ]
+  },
+  {
+    "key": "LANGTRACE_PROJECT_ID",
+    "definition": "Logical project namespace used by Langtrace to partition telemetry from different applications or environments. In practice, it is the boundary that keeps retrieval experiments, reranker tuning runs, and production traffic from mixing in the same dashboard and skewing metrics. Assign stable project IDs per environment and per major product surface so trace analytics remain comparable over time and access controls stay clean. If this is mis-set, traces may appear to vanish when they are actually being written to a different project bucket.",
+    "links": [
+      {"text": "AgentSight: AI Agent Observability (arXiv)", "href": "https://arxiv.org/abs/2508.02736"},
+      {"text": "Langtrace Documentation", "href": "https://docs.langtrace.ai/"},
+      {"text": "Langtrace Integrations Overview", "href": "https://docs.langtrace.ai/supported-integrations/overview"},
+      {"text": "OpenTelemetry Traces", "href": "https://opentelemetry.io/docs/concepts/signals/traces/"}
+    ],
+    "badges": [
+      {"text": "Project scoping", "class": "info"}
+    ]
+  },
+  {
+    "key": "LARGE_FILE_MODE",
+    "definition": "Controls how very large files are ingested before chunking and indexing. `stream` mode processes bounded segments incrementally, which keeps memory predictable and enables indexing of large corpora without loading full files at once; `read_all` is simpler but can create memory spikes and slower recovery when parsing fails mid-file. For production RAG pipelines, stream mode is usually safer because it keeps ingestion throughput stable under heterogeneous file sizes. Choose mode together with chunk size and overlap policy, since ingestion strategy directly affects chunk coherence, retrieval recall, and downstream reranker quality.",
+    "links": [
+      {"text": "SmartChunk: Adaptive Chunk Compression (arXiv)", "href": "https://arxiv.org/abs/2602.22225"},
+      {"text": "LangChain Text Splitters", "href": "https://python.langchain.com/docs/concepts/text_splitters/"},
+      {"text": "LlamaIndex Node Parsers", "href": "https://docs.llamaindex.ai/en/stable/module_guides/loading/node_parsers/"},
+      {"text": "Unstructured Chunking", "href": "https://docs.unstructured.io/open-source/core-functionality/chunking"}
+    ],
+    "badges": [
+      {"text": "Ingestion strategy", "class": "info"}
+    ]
+  },
+  {
+    "key": "LARGE_FILE_STREAM_CHUNK_CHARS",
+    "definition": "Defines the character window read per streaming pass when large-file ingestion runs in `stream` mode. Smaller windows lower peak memory but increase boundary fragmentation, which can split function bodies or semantic units and hurt retrieval precision; larger windows improve local coherence but raise RAM pressure and processing latency per pass. Tune this against your typical document structure, tokenizer behavior, and overlap settings so chunk boundaries align with meaningful units instead of arbitrary offsets. A practical workflow is to benchmark retrieval hit quality at several chunk sizes and select the smallest value that preserves answer-bearing context continuity.",
+    "links": [
+      {"text": "SmartChunk: Adaptive Chunk Compression (arXiv)", "href": "https://arxiv.org/abs/2602.22225"},
+      {"text": "LangChain Text Splitters", "href": "https://python.langchain.com/docs/concepts/text_splitters/"},
+      {"text": "LlamaIndex Node Parsers", "href": "https://docs.llamaindex.ai/en/stable/module_guides/loading/node_parsers/"},
+      {"text": "Unstructured Chunking", "href": "https://docs.unstructured.io/open-source/core-functionality/chunking"}
+    ],
+    "badges": [
+      {"text": "Stream chunking", "class": "info"}
+    ]
+  },
+  {
+    "key": "LATENCY_P99_THRESHOLD",
+    "definition": "Alert threshold for the 99th-percentile request latency, used to detect tail-performance regressions that average latency hides. In RAG applications, p99 is often where user-visible failures emerge first because retries, slow vector index paths, and long model generations accumulate in the slowest slice of traffic. Set this threshold from SLO targets and real traffic baselines, then pair it with minimum sample volume to avoid noisy alerts during low-traffic periods. A well-calibrated p99 threshold improves release safety for retrieval and model changes by surfacing degradation quickly without overwhelming on-call responders.",
+    "links": [
+      {"text": "L4: Tail-Latency-Aware LLM Serving (arXiv)", "href": "https://arxiv.org/abs/2512.19179"},
+      {"text": "Prometheus Histograms and Summaries", "href": "https://prometheus.io/docs/practices/histograms/"},
+      {"text": "Grafana Alerting", "href": "https://grafana.com/docs/grafana/latest/alerting/"},
+      {"text": "SRE Workbook: Alerting on SLOs", "href": "https://sre.google/workbook/alerting-on-slos/"}
+    ],
+    "badges": [
+      {"text": "Reliability SLO", "class": "info"}
+    ]
+  },
+  {
+    "key": "LAYER_BONUS_GUI",
+    "definition": "Score bias applied to chunks from frontend-oriented layers when query intent indicates UI behavior, navigation, or interaction logic. This helps a codebase RAG system rank components, views, and client-side state flows above backend internals when users ask interface-centric questions. Keep the bonus strong enough to overcome weak lexical overlap but not so strong that it suppresses semantically better backend evidence for mixed queries. The right setting is usually measured by evaluating intent-segmented query sets and checking whether UI questions improve without degrading cross-layer tasks.",
+    "links": [
+      {"text": "Meta-RAG for Large Codebases (arXiv)", "href": "https://arxiv.org/abs/2508.02611"},
+      {"text": "Elasticsearch Function Score Query", "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-function-score-query.html"},
+      {"text": "Azure Vector Weighting", "href": "https://learn.microsoft.com/en-us/azure/search/vector-search-how-to-query#vector-weighting"},
+      {"text": "OpenSearch Normalization Processor", "href": "https://docs.opensearch.org/latest/search-plugins/search-pipelines/normalization-processor/"}
+    ],
+    "badges": [
+      {"text": "Intent-layer routing", "class": "info"}
+    ]
+  },
+  {
+    "key": "LAYER_BONUS_RETRIEVAL",
+    "definition": "Score bias applied to backend and data-access layers when intent classification indicates retrieval, API, indexing, or storage questions. It improves ranking for service, route, and data pipeline code when users ask how the system fetches or transforms information. Because this weight can overpower semantic relevance, tune it with side-by-side evaluations on UI and backend query slices to avoid over-routing everything to server code. In well-structured repos, this parameter is a high-leverage control for making architectural answers faster and more precise.",
+    "links": [
+      {"text": "Repository-level Code Search with LLMs (arXiv)", "href": "https://arxiv.org/abs/2502.07067"},
+      {"text": "Elasticsearch Function Score Query", "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-function-score-query.html"},
+      {"text": "Azure Scoring Profiles", "href": "https://learn.microsoft.com/en-us/azure/search/index-add-scoring-profiles"},
+      {"text": "OpenSearch Normalization Processor", "href": "https://docs.opensearch.org/latest/search-plugins/search-pipelines/normalization-processor/"}
+    ],
+    "badges": [
+      {"text": "Intent-layer routing", "class": "info"}
+    ]
+  },
+  {
+    "key": "LAYER_INTENT_MATRIX",
+    "definition": "Advanced mapping that applies different layer weights per detected intent, effectively creating a policy table for architectural routing in retrieval. Instead of one global bonus, you can express rules like boosting frontend for UI intents, boosting services for API intents, and damping unrelated layers to reduce noise. This matrix is powerful but easy to overfit, so values should be tuned with offline eval sets that represent your real question mix and reviewed whenever repository structure changes. Treat it as a ranking policy artifact: version it, test it, and roll it out with the same discipline as model or index updates.",
+    "links": [
+      {"text": "R3A: Query-Intent-Aware Relevance (arXiv)", "href": "https://arxiv.org/abs/2508.02506"},
+      {"text": "Azure Scoring Profiles", "href": "https://learn.microsoft.com/en-us/azure/search/index-add-scoring-profiles"},
+      {"text": "Elasticsearch Function Score Query", "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-function-score-query.html"},
+      {"text": "OpenSearch Normalization Processor", "href": "https://docs.opensearch.org/latest/search-plugins/search-pipelines/normalization-processor/"}
+    ],
+    "badges": [
+      {"text": "Intent policy", "class": "info"}
+    ]
+  },
+  {
+    "key": "LEARNING_RERANKER_BACKEND",
+    "definition": "Selects the execution stack used to train and serve the learning-based reranker. In this project, backend choice determines hardware assumptions, supported model formats, and how adapters are loaded during inference, so it directly affects throughput, reproducibility, and operational complexity. Keep the backend consistent across training and deployment environments whenever possible, or validate compatibility boundaries before shipping adapters. If performance or stability regresses, backend mismatch is one of the first places to investigate.",
+    "links": [
+      {"text": "Qwen3 Embeddings and Rerankers (arXiv)", "href": "https://arxiv.org/abs/2506.05176"},
+      {"text": "MLX-LM Repository", "href": "https://github.com/ml-explore/mlx-lm"},
+      {"text": "Qwen3-Reranker-0.6B", "href": "https://huggingface.co/Qwen/Qwen3-Reranker-0.6B"},
+      {"text": "PEFT LoRA Guide", "href": "https://huggingface.co/docs/peft/main/en/conceptual_guides/lora"}
+    ],
+    "badges": [
+      {"text": "Backend selection", "class": "info"}
+    ]
+  },
+  {
+    "key": "LEARNING_RERANKER_BASE_MODEL",
+    "definition": "Base checkpoint that LoRA adapters are trained against and later mounted on during reranking inference. Adapter weights are architecture-specific, so changing the base model after training usually invalidates existing adapters and can silently degrade ranking quality if not caught. Pin this value explicitly, record it in experiment metadata, and keep train/infer parity to make evaluation deltas trustworthy. In practice, base-model drift is a common root cause of non-reproducible reranker performance.",
+    "links": [
+      {"text": "Qwen3 Embeddings and Rerankers (arXiv)", "href": "https://arxiv.org/abs/2506.05176"},
+      {"text": "Qwen3-Reranker-0.6B", "href": "https://huggingface.co/Qwen/Qwen3-Reranker-0.6B"},
+      {"text": "MLX-LM Repository", "href": "https://github.com/ml-explore/mlx-lm"},
+      {"text": "PEFT LoRA Guide", "href": "https://huggingface.co/docs/peft/main/en/conceptual_guides/lora"}
+    ],
+    "badges": [
+      {"text": "Model compatibility", "class": "info"}
+    ]
+  },
+  {
+    "key": "LEARNING_RERANKER_DEFAULT_PRESET",
+    "definition": "Default studio preset loaded when the learning-reranker workspace opens, controlling which panes and diagnostics are immediately visible. Although it does not change model weights, it changes operator behavior by determining whether users start from metric dashboards, logs, or inspectors, which affects how quickly failures are diagnosed. Good defaults reduce setup friction and increase consistency across experiments, especially when multiple engineers tune reranker training. Choose a preset that exposes the minimum signals needed for safe decision-making in your typical workflow.",
+    "links": [
+      {"text": "ERank: Efficient Learning-to-Rank for RAG (arXiv)", "href": "https://arxiv.org/abs/2509.00520"},
+      {"text": "Dockview", "href": "https://dockview.dev/"},
+      {"text": "xterm.js Documentation", "href": "https://xtermjs.org/docs/"},
+      {"text": "MDN JSON Reference", "href": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON"}
+    ],
+    "badges": [
+      {"text": "Workflow default", "class": "info"}
+    ]
+  },
+  {
+    "key": "LEARNING_RERANKER_GRAD_ACCUM_STEPS",
+    "definition": "Number of micro-batches whose gradients are accumulated before each optimizer update during reranker training. Increasing this value raises effective batch size without requiring equivalent VRAM, which can stabilize ranking-objective learning but also slows update frequency and may require learning-rate retuning. For RAG rerankers, this parameter is most useful when negatives are hard and memory is constrained, because larger effective batches improve signal diversity per update. Tune it jointly with global batch size, learning rate, and training time budget rather than in isolation.",
+    "links": [
+      {"text": "ERank: Efficient Learning-to-Rank for RAG (arXiv)", "href": "https://arxiv.org/abs/2509.00520"},
+      {"text": "PyTorch Gradient Accumulation", "href": "https://pytorch.org/docs/stable/notes/amp_examples.html#gradient-accumulation"},
+      {"text": "MLX-LM Repository", "href": "https://github.com/ml-explore/mlx-lm"},
+      {"text": "PEFT LoRA Guide", "href": "https://huggingface.co/docs/peft/main/en/conceptual_guides/lora"}
+    ],
+    "badges": [
+      {"text": "Training dynamics", "class": "info"}
+    ]
+  },
+  {
+    "key": "LEARNING_RERANKER_LAYOUT_ENGINE",
+    "definition": "UI layout system used by the reranker studio, which governs pane docking behavior, state persistence, and interaction performance for high-density training dashboards. While this is not a retrieval algorithm parameter, it impacts operational efficiency because poor layout ergonomics slow inspection of ranking metrics, error cases, and training logs. Prefer the engine that gives stable panel persistence and low interaction overhead on your target hardware and browser stack. Keep layout configuration versioned so team workflows remain consistent across releases.",
+    "links": [
+      {"text": "ERank: Efficient Learning-to-Rank for RAG (arXiv)", "href": "https://arxiv.org/abs/2509.00520"},
+      {"text": "Dockview", "href": "https://dockview.dev/"},
+      {"text": "Vite Guide", "href": "https://vitejs.dev/guide/"},
+      {"text": "xterm.js Documentation", "href": "https://xtermjs.org/docs/"}
+    ],
+    "badges": [
+      {"text": "Studio ergonomics", "class": "info"}
+    ]
+  },
+  {
+    "key": "LEARNING_RERANKER_LOGS_RENDERER",
+    "definition": "Controls whether studio logs are rendered as terminal-like streaming output or structured JSON views. Terminal rendering is better for real-time operational monitoring during active training, while JSON rendering is better for filtering, programmatic analysis, and postmortem debugging of failed runs. The best choice depends on whether your primary task is live supervision or forensic inspection of reranker behavior. Standardizing this setting across teams improves reproducibility of debugging workflows and incident handoffs.",
+    "links": [
+      {"text": "ERank: Efficient Learning-to-Rank for RAG (arXiv)", "href": "https://arxiv.org/abs/2509.00520"},
+      {"text": "xterm.js Documentation", "href": "https://xtermjs.org/docs/"},
+      {"text": "MDN JSON Reference", "href": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON"},
+      {"text": "LangSmith Observability Quickstart", "href": "https://docs.langchain.com/langsmith/observability-quickstart"}
+    ],
+    "badges": [
+      {"text": "Debug visibility", "class": "info"}
+    ]
+  },
+  {
+    "key": "LEARNING_RERANKER_LORA_ALPHA",
+    "definition": "LoRA scaling factor that determines how strongly adapter updates influence the frozen base reranker during training and inference. The effective adaptation strength is tied to alpha relative to rank, so increasing alpha without considering rank can over-amplify updates and destabilize relevance calibration. In ranking-focused fine-tuning, this value is best tuned with validation metrics that emphasize ordering quality, not just loss reduction. Use conservative increments and track metric movement on hard negatives to avoid overfitting narrow retrieval patterns.",
+    "links": [
+      {"text": "How Relevance Emerges in Fine-tuned Rerankers (arXiv)", "href": "https://arxiv.org/abs/2504.08780"},
+      {"text": "PEFT LoRA Guide", "href": "https://huggingface.co/docs/peft/main/en/conceptual_guides/lora"},
+      {"text": "MLX-LM Repository", "href": "https://github.com/ml-explore/mlx-lm"},
+      {"text": "Qwen3-Reranker-0.6B", "href": "https://huggingface.co/Qwen/Qwen3-Reranker-0.6B"}
+    ],
+    "badges": [
+      {"text": "LoRA scaling", "class": "info"}
+    ]
+  },
+  {
+    "key": "LEARNING_RERANKER_LORA_DROPOUT",
+    "definition": "Dropout probability applied inside LoRA adapter paths during reranker fine-tuning. This acts as regularization against overfitting on narrow training pairs, especially when mined positives and negatives are repetitive or domain-skewed. Too little dropout can produce brittle rankers that fail on unseen queries, while too much can underfit and flatten relevance separation. Tune with validation sets that include both in-domain and near-domain queries so improvements generalize beyond the training distribution.",
+    "links": [
+      {"text": "How Relevance Emerges in Fine-tuned Rerankers (arXiv)", "href": "https://arxiv.org/abs/2504.08780"},
+      {"text": "PEFT LoRA Guide", "href": "https://huggingface.co/docs/peft/main/en/conceptual_guides/lora"},
+      {"text": "MLX-LM Repository", "href": "https://github.com/ml-explore/mlx-lm"},
+      {"text": "Qwen3-Reranker-0.6B", "href": "https://huggingface.co/Qwen/Qwen3-Reranker-0.6B"}
+    ],
+    "badges": [
+      {"text": "LoRA regularization", "class": "info"}
+    ]
+  },
+  {
+    "key": "LEARNING_RERANKER_LORA_RANK",
+    "definition": "Adapter rank determines the capacity of LoRA updates layered onto the base reranker. Higher rank can capture richer relevance transformations and improve difficult ranking tasks, but it increases memory, training cost, and overfitting risk if data volume is limited. Lower rank is cheaper and often sufficient for moderate domain adaptation, especially when base model quality is already high. Select rank by balancing retrieval-quality gains against training budget and inference latency targets, then confirm with held-out ranking benchmarks.",
+    "links": [
+      {"text": "How Relevance Emerges in Fine-tuned Rerankers (arXiv)", "href": "https://arxiv.org/abs/2504.08780"},
+      {"text": "PEFT LoRA Guide", "href": "https://huggingface.co/docs/peft/main/en/conceptual_guides/lora"},
+      {"text": "MLX-LM Repository", "href": "https://github.com/ml-explore/mlx-lm"},
+      {"text": "Qwen3-Reranker-0.6B", "href": "https://huggingface.co/Qwen/Qwen3-Reranker-0.6B"}
+    ],
+    "badges": [
+      {"text": "LoRA capacity", "class": "info"}
+    ]
+  },
+  {
+    "key": "LEARNING_RERANKER_LORA_TARGET_MODULES",
+    "definition": "List of model submodules that receive LoRA adapters, such as attention projections or selected feed-forward layers. This setting determines where adaptation capacity is concentrated, which changes both ranking quality and compute cost more than many scalar hyperparameters. Targeting only key attention paths is efficient for many reranker tasks, while expanding to more modules can help domain shift at the expense of memory and optimization complexity. Treat module selection as an architectural choice and benchmark it with the same rigor as rank or learning rate.",
+    "links": [
+      {"text": "How Relevance Emerges in Fine-tuned Rerankers (arXiv)", "href": "https://arxiv.org/abs/2504.08780"},
+      {"text": "PEFT LoRA Guide", "href": "https://huggingface.co/docs/peft/main/en/conceptual_guides/lora"},
+      {"text": "MLX-LM Repository", "href": "https://github.com/ml-explore/mlx-lm"},
+      {"text": "Qwen3-Reranker-0.6B", "href": "https://huggingface.co/Qwen/Qwen3-Reranker-0.6B"}
+    ],
+    "badges": [
+      {"text": "LoRA targeting", "class": "info"}
+    ]
+  }
+]

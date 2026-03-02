@@ -1,0 +1,10 @@
+{"key":"MIN_SCORE_VECTOR"}
+{"key":"MMR_LAMBDA"}
+{"key":"MODEL_ASSIGNMENTS"}
+{"key":"MQ_REWRITES"}
+{"key":"NEIGHBOR_WINDOW"}
+{"key":"NEO4J_URI"}
+{"key":"NETLIFY_API_KEY"}
+{"key":"NETLIFY_DOMAINS"}
+{"key":"OLLAMA_NUM_CTX"}
+{"key":"OLLAMA_REQUEST_TIMEOUT"}

@@ -1,0 +1,250 @@
+[
+  {
+    "key": "SEMANTIC_KG_LLM_MODEL",
+    "definition": "LLM used for semantic knowledge-graph extraction when KG mode is set to LLM-based extraction. This model is responsible for entity detection, relation typing, and canonicalization decisions that become graph nodes and edges, so it directly controls graph quality and downstream traversal precision. Prefer models that are stable on structured extraction, handle long technical context, and support deterministic formatting or schema-constrained outputs. In practice, tune temperature low, enforce strict relation schemas, and validate extracted triples before write-back; weaker models can over-generate relations, confuse entity aliases, or miss cross-sentence links.",
+    "links": [
+      {
+        "text": "Automated Knowledge Graph Construction and Optimization (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2509.17289"
+      },
+      {
+        "text": "Neo4j LLM Graph Builder",
+        "href": "https://neo4j.com/developer/genai-ecosystem/llm-graph-builder/"
+      },
+      {
+        "text": "LangChain LLMGraphTransformer API",
+        "href": "https://api.python.langchain.com/en/latest/experimental/graph_transformers/langchain_experimental.graph_transformers.llm.LLMGraphTransformer.html"
+      },
+      {
+        "text": "neo4j-labs/llm-graph-builder (GitHub)",
+        "href": "https://github.com/neo4j-labs/llm-graph-builder"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "SEPARATORS",
+    "definition": "Ordered separator list for recursive chunking. The splitter tries separators from highest semantic boundary to lowest (for example paragraph break, newline, sentence punctuation, whitespace, then empty fallback) so chunks stay coherent before falling back to harder cuts. For code and mixed technical docs, this list strongly affects retrieval quality: if separators are too coarse, chunks exceed target size and get aggressively re-cut; if too fine, you fragment context and hurt recall. Keep domain-aware boundaries first (e.g., class/function headers) and retain an empty fallback so splitting always terminates.",
+    "links": [
+      {
+        "text": "RAG Chunking from a Semantic Lens (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.16974"
+      },
+      {
+        "text": "LangChain Recursive Text Splitter Guide",
+        "href": "https://docs.langchain.com/oss/python/integrations/splitters/recursive_text_splitter"
+      },
+      {
+        "text": "RecursiveCharacterTextSplitter API",
+        "href": "https://api.python.langchain.com/en/latest/text_splitters/character/langchain_text_splitters.character.RecursiveCharacterTextSplitter.html"
+      },
+      {
+        "text": "LlamaIndex Sentence Splitter API",
+        "href": "https://docs.llamaindex.ai/en/stable/api_reference/node_parsers/sentence_splitter/"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "SEPARATOR_KEEP",
+    "definition": "Controls whether the matched separator is attached to the preceding chunk (suffix), following chunk (prefix), or dropped. This seems minor, but it changes how punctuation, headings, delimiters, and code tokens survive chunk boundaries, which affects both lexical matching and LLM readability. Keeping separators often helps preserve grammatical and structural cues; dropping them can reduce token overhead but may remove important signals like path delimiters or sentence stops. Choose one mode, then evaluate answer grounding and snippet quality because this setting interacts with chunk overlap and tokenizer behavior.",
+    "links": [
+      {
+        "text": "Intent-Driven Dynamic Chunking for RAG (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.14784"
+      },
+      {
+        "text": "RecursiveCharacterTextSplitter API (keep_separator)",
+        "href": "https://api.python.langchain.com/en/latest/text_splitters/character/langchain_text_splitters.character.RecursiveCharacterTextSplitter.html"
+      },
+      {
+        "text": "LangChain Recursive Text Splitter Guide",
+        "href": "https://docs.langchain.com/oss/python/integrations/splitters/recursive_text_splitter"
+      },
+      {
+        "text": "Haystack DocumentSplitter",
+        "href": "https://docs.haystack.deepset.ai/docs/documentsplitter"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "SKIP_DENSE",
+    "definition": "When enabled, indexing skips dense embedding generation and vector-store writes, leaving retrieval fully lexical (BM25/FTS). This is useful for fast local iteration, constrained CI environments, or deployments where vector infrastructure is unavailable. The tradeoff is predictable: lower indexing cost and simpler ops, but weaker semantic recall for paraphrases and concept-level matches. Use this mode when exact term matching dominates your workload (file names, identifiers, error strings), and disable it for natural-language-heavy corpora where semantic expansion materially improves first-pass recall.",
+    "links": [
+      {
+        "text": "Mixture of Retrieval (MoR): Integrating Sparse and Dense Retrieval for RAG (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2506.15862"
+      },
+      {
+        "text": "PostgreSQL Full Text Search",
+        "href": "https://www.postgresql.org/docs/current/textsearch.html"
+      },
+      {
+        "text": "Elasticsearch Reciprocal Rank Fusion (RRF)",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html"
+      },
+      {
+        "text": "Search in PostgreSQL: Full Text Search (ParadeDB)",
+        "href": "https://www.paradedb.com/learn/search-in-postgresql/full-text-search"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Much faster",
+        "class": "info"
+      },
+      {
+        "text": "Keyword-only",
+        "class": "warn"
+      },
+      {
+        "text": "No semantic search",
+        "class": "warn"
+      }
+    ]
+  },
+  {
+    "key": "SPARSE_SEARCH_ENABLED",
+    "definition": "Master toggle for lexical retrieval. When enabled, keyword scoring (BM25/FTS) is available for exact-term matching and can run standalone or alongside dense retrieval in hybrid ranking. When disabled, the pipeline depends on non-lexical retrieval paths, which can miss exact symbols, file names, and rare identifiers. Keep this on for most code and technical corpora; turn it off only when you intentionally want dense-only behavior or are isolating retrieval regressions. Evaluate this setting with query sets containing both natural-language and exact-token intents.",
+    "links": [
+      {
+        "text": "Mixture of Retrieval (MoR): Integrating Sparse and Dense Retrieval for RAG (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2506.15862"
+      },
+      {
+        "text": "PostgreSQL Full Text Search",
+        "href": "https://www.postgresql.org/docs/current/textsearch.html"
+      },
+      {
+        "text": "Search in PostgreSQL: Full Text Search (ParadeDB)",
+        "href": "https://www.paradedb.com/learn/search-in-postgresql/full-text-search"
+      },
+      {
+        "text": "Elasticsearch Reciprocal Rank Fusion (RRF)",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html"
+      }
+    ],
+    "badges": [
+      {
+        "text": "Core Setting",
+        "class": "info"
+      }
+    ]
+  },
+  {
+    "key": "SPARSE_SEARCH_ENGINE",
+    "definition": "Selects which lexical backend executes sparse retrieval. In practice this governs tokenization behavior, ranking details, index build/maintenance cost, and query features available to the stack. Built-in Postgres FTS offers broad compatibility and simple operations; BM25-focused extensions such as pg_search can improve relevance control and performance for search-heavy workloads. Choose engine based on operational constraints first (extensions allowed, migration path, observability), then benchmark with your real query distribution because ranking differences can be substantial.",
+    "links": [
+      {
+        "text": "Mixture of Retrieval (MoR): Integrating Sparse and Dense Retrieval for RAG (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2506.15862"
+      },
+      {
+        "text": "PostgreSQL Text Search Controls",
+        "href": "https://www.postgresql.org/docs/current/textsearch-controls.html"
+      },
+      {
+        "text": "pg_search Extension (PGXN)",
+        "href": "https://pgxn.org/dist/pg_search/0.20.5/"
+      },
+      {
+        "text": "Search in PostgreSQL: Full Text Search (ParadeDB)",
+        "href": "https://www.paradedb.com/learn/search-in-postgresql/full-text-search"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "SPARSE_SEARCH_FILE_PATH_FALLBACK",
+    "definition": "Enables a path-oriented fallback when normal sparse matching underperforms. This fallback is useful for developer queries dominated by file names, module paths, package hierarchies, and extension filters where standard tokenization may fragment intent. A good fallback parses separators like '/', '.', '-', and '_' to recover high-signal path terms, then issues a targeted lexical query. Keep it enabled for codebases and monorepos; disable only if it introduces false positives in prose-heavy corpora.",
+    "links": [
+      {
+        "text": "Beyond Relevance: Evaluating Code Search Utility in Real Workflows (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2510.08850"
+      },
+      {
+        "text": "Elasticsearch Analysis Tokenizers",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-tokenizers.html"
+      },
+      {
+        "text": "OpenSearch Query String Query",
+        "href": "https://docs.opensearch.org/3.1/query-dsl/full-text/query-string/"
+      },
+      {
+        "text": "ripgrep (GitHub)",
+        "href": "https://github.com/BurntSushi/ripgrep"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "SPARSE_SEARCH_FILE_PATH_MAX_TERMS",
+    "definition": "Upper bound on tokens included when building file-path fallback queries. This prevents overly long path-like inputs from exploding into broad lexical queries that hurt latency and precision. Lower values improve stability and reduce noisy matches in large repositories; higher values may recover deeper paths but can over-bias common directory names. Tune with realistic path queries and monitor both candidate set size and top-k relevance, not just hit counts.",
+    "links": [
+      {
+        "text": "Beyond Relevance: Evaluating Code Search Utility in Real Workflows (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2510.08850"
+      },
+      {
+        "text": "OpenSearch Query String Query",
+        "href": "https://docs.opensearch.org/3.1/query-dsl/full-text/query-string/"
+      },
+      {
+        "text": "PostgreSQL Text Search Controls",
+        "href": "https://www.postgresql.org/docs/current/textsearch-controls.html"
+      },
+      {
+        "text": "Elasticsearch Analysis Tokenizers",
+        "href": "https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-tokenizers.html"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "SPARSE_SEARCH_HIGHLIGHT",
+    "definition": "Turns on lexical-match highlighting metadata (for example snippets or emphasized terms) in sparse retrieval results. This is mainly an observability feature: it helps you verify why a chunk matched, debug tokenizer behavior, and explain ranking decisions to users. Highlight generation can add query-time overhead, so many teams enable it in debug and evaluation environments, then gate it in production by route or role. Keep it on while tuning sparse relevance and parsing modes.",
+    "links": [
+      {
+        "text": "Graph-RAG with Lexical and Semantic Fusion for Explainable Retrieval (arXiv 2025)",
+        "href": "https://arxiv.org/abs/2506.08074"
+      },
+      {
+        "text": "PostgreSQL Text Search Controls (including ts_headline)",
+        "href": "https://www.postgresql.org/docs/current/textsearch-controls.html"
+      },
+      {
+        "text": "PostgreSQL Full Text Search",
+        "href": "https://www.postgresql.org/docs/current/textsearch.html"
+      },
+      {
+        "text": "Search in PostgreSQL: Full Text Search (ParadeDB)",
+        "href": "https://www.paradedb.com/learn/search-in-postgresql/full-text-search"
+      }
+    ],
+    "badges": []
+  },
+  {
+    "key": "SPARSE_SEARCH_QUERY_MODE",
+    "definition": "Determines how sparse queries are parsed before scoring. Typical modes map to plain-term parsing, phrase parsing, or boolean/operator-aware parsing, and each mode changes recall/precision behavior substantially. Plain mode is safest for general user input, phrase mode tightens precision for exact multi-token intent, and boolean mode provides expert control but can degrade results when syntax is malformed. Choose a default that matches user sophistication, then expose advanced modes for debugging and power workflows.",
+    "links": [
+      {
+        "text": "Query Understanding for Retrieval-Augmented Generation Systems (arXiv 2026)",
+        "href": "https://arxiv.org/abs/2602.11841"
+      },
+      {
+        "text": "PostgreSQL Text Search Controls",
+        "href": "https://www.postgresql.org/docs/current/textsearch-controls.html"
+      },
+      {
+        "text": "OpenSearch Query String Query",
+        "href": "https://docs.opensearch.org/3.1/query-dsl/full-text/query-string/"
+      },
+      {
+        "text": "pg_search Extension (PGXN)",
+        "href": "https://pgxn.org/dist/pg_search/0.20.5/"
+      }
+    ],
+    "badges": []
+  }
+]

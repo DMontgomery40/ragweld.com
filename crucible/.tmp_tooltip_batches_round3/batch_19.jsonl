@@ -1,0 +1,10 @@
+{"key":"VENDOR_PENALTY"}
+{"key":"VOYAGE_API_KEY"}
+{"key":"VOYAGE_EMBED_DIM"}
+{"key":"VOYAGE_MODEL"}
+{"key":"VOYAGE_RERANK_MODEL"}
+{"key":"chat.max_tokens"}
+{"key":"chat.multimodal.vision_enabled"}
+{"key":"chat.recall.auto_index"}
+{"key":"chat.recall.index_delay_seconds"}
+{"key":"chat.recall_gate.deep_on_explicit_reference"}
