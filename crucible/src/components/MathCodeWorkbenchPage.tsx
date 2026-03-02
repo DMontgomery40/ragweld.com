@@ -15,6 +15,7 @@ type CodeSection = {
   code: string
 }
 
+// Files shown on /math-code. We import raw source so operators can audit exact implementation.
 const CODE_SECTIONS: CodeSection[] = [
   {
     id: 'estimate-function',
@@ -84,6 +85,7 @@ function highlightTypeScript(code: string): string {
   }
 
   let prepared = code
+    // Extract comments/strings before keyword regexes so we do not syntax-highlight inside literals.
     .replace(COMMENT_PATTERN, (match) => createPlaceholder('comment', match))
     .replace(STRING_PATTERN, (match) => createPlaceholder('string', match))
 
@@ -97,6 +99,7 @@ function highlightTypeScript(code: string): string {
 }
 
 function MonacoCodeBlock({ code }: { code: string }) {
+  // Memoize highlighting so collapsible toggles do not re-tokenize unchanged code blocks.
   const lines = useMemo(() => highlightTypeScript(code).split('\n'), [code])
 
   return (
@@ -125,6 +128,7 @@ function MonacoCodeBlock({ code }: { code: string }) {
 }
 
 export function MathCodeWorkbenchPage() {
+  // Allow this component to work both on / and /crucible deployments.
   const routePrefix =
     typeof window !== 'undefined' && window.location.pathname.startsWith('/crucible') ? '/crucible' : ''
   const estimatorHref = `${routePrefix}/`

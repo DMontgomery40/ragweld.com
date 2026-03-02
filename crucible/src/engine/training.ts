@@ -7,6 +7,7 @@ import type {
 } from '../types/index'
 import { getGPUTFlops, resolveGPUType } from './gpu-specs'
 
+// MFU (model flops utilization) defaults are coarse planning values, not hard guarantees.
 const MFU_BY_FRAMEWORK: Record<Framework, number> = {
   Unsloth: 0.45,
   'HuggingFace+TRL': 0.25,
@@ -16,6 +17,7 @@ const MFU_BY_FRAMEWORK: Record<Framework, number> = {
   Custom: 0.3,
 }
 
+// RL-style post-training often requires more compute per token than pure SFT.
 const TRAINING_TYPE_FLOP_MULTIPLIER: Record<TrainingType, number> = {
   SFT: 1.0,
   DPO: 1.15,
@@ -31,10 +33,12 @@ function asNonNegative(value: number, fallback = 0): number {
   return value < 0 ? 0 : value
 }
 
+// Packing increases average useful tokens per sequence by reducing pad-token waste.
 function tokenUtilization(params: EstimateRequest): number {
   return params.use_packing || params.packing ? 0.95 : 0.7
 }
 
+// Framework-specific speed factors represent kernel/runtime efficiencies beyond raw TFLOPS.
 function speedMultiplier(params: EstimateRequest): number {
   let multiplier = 1.0
   if (params.framework === 'Unsloth') {
@@ -50,6 +54,7 @@ function normalizeTargetGPU(gpu: GPUType): GPUType | string {
   return resolveGPUType(gpu) ?? gpu
 }
 
+// Convert total workload FLOPs into wall-clock time from per-GPU throughput and parallelism.
 function estimateHours(
   params: EstimateRequest,
   totalFLOPs: number,
@@ -82,6 +87,7 @@ export function estimateTraining(params: EstimateRequest): TrainingEstimate {
   const warnings: string[] = []
   const intermediates: Record<string, number> = {}
 
+  // If dataset_tokens is missing/0, infer it from row count and average row length.
   const inferredDatasetTokens =
     asNonNegative(params.dataset_rows ?? 0) * asNonNegative(params.avg_tokens_per_row)
   const datasetTokens = params.dataset_tokens > 0 ? params.dataset_tokens : inferredDatasetTokens
@@ -90,6 +96,7 @@ export function estimateTraining(params: EstimateRequest): TrainingEstimate {
 
   const utilization = tokenUtilization(params)
   const effectiveSeq = asNonNegative(params.max_seq_length) * utilization
+  // Global token throughput per optimizer step.
   const effectiveBatchTokens =
     asNonNegative(params.batch_size, 1) *
     asNonNegative(params.gradient_accumulation_steps, 1) *
@@ -103,6 +110,7 @@ export function estimateTraining(params: EstimateRequest): TrainingEstimate {
     warnings.push('Effective batch tokens evaluated to 0; training steps set to 0.')
   }
 
+  // Dense-transformer planning rule of thumb: ~6 * params * tokens for training FLOPs.
   const modelParams = asNonNegative(params.model_params_billions) * 1e9
   const baseTotalFLOPs = 6 * modelParams * totalTokens
   const loraComputeDiscount = params.method === 'LoRA' || params.method === 'QLoRA' ? 0.9 : 1.0

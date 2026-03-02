@@ -14,6 +14,7 @@ export interface CostComparisonResult {
   warnings: string[]
 }
 
+// Sanitizes numeric user/provider inputs so the math layer never receives NaN/Infinity/negative values.
 function asNonNegative(value: number, fallback = 0): number {
   if (!Number.isFinite(value)) {
     return fallback
@@ -21,8 +22,11 @@ function asNonNegative(value: number, fallback = 0): number {
   return value < 0 ? 0 : value
 }
 
-function tierPriority(tiers: PricingTier[]): PricingTier {
-  return tiers[0] ?? 'on_demand'
+// Pricing tiers can arrive with duplicates or empty values (UI sync + URL state round-trips).
+// We keep the request order but remove duplicates, then force at least one valid tier.
+function normalizeTierSelection(tiers: PricingTier[]): PricingTier[] {
+  const deduped = Array.from(new Set(tiers))
+  return deduped.length > 0 ? deduped : ['on_demand']
 }
 
 function hasTierPrice(pricingEntry: ProviderPricing, tier: PricingTier): boolean {
@@ -48,6 +52,8 @@ function hasTierPrice(pricingEntry: ProviderPricing, tier: PricingTier): boolean
   }
 }
 
+// Billing inputs are stored as cents/hour in pricing payloads.
+// We convert to USD and scale by estimated wall clock hours and run count.
 function costFromHourlyRate(
   hourlyPriceCents: number | null | undefined,
   hours: number,
@@ -62,24 +68,29 @@ function costFromHourlyRate(
   return (hourlyPriceCents / 100) * hours * runs
 }
 
-function pickSelectedTierCost(
-  tier: PricingTier,
-  onDemand: number | null,
-  spot: number | null,
-  reserved1mo: number | null,
-  reserved3mo: number | null,
-): number | null {
-  switch (tier) {
-    case 'spot':
-      return spot ?? onDemand
-    case 'reserved_1mo':
-      return reserved1mo ?? onDemand
-    case 'reserved_3mo':
-      return reserved3mo ?? onDemand
-    case 'on_demand':
-    default:
-      return onDemand
+type TierCostMap = Record<PricingTier, number | null>
+
+// If users select multiple tiers, we model "best available selected tier" for this row.
+// This avoids a silent bug where only the first selected tier influenced all results.
+function pickBestSelectedTierCost(
+  selectedTiers: PricingTier[],
+  tierCosts: TierCostMap,
+): { cost: number | null; tier: PricingTier | null } {
+  let bestCost: number | null = null
+  let bestTier: PricingTier | null = null
+
+  for (const tier of selectedTiers) {
+    const tierCost = tierCosts[tier]
+    if (tierCost === null) {
+      continue
+    }
+    if (bestCost === null || tierCost < bestCost) {
+      bestCost = tierCost
+      bestTier = tier
+    }
   }
+
+  return { cost: bestCost, tier: bestTier }
 }
 
 function deriveEntryHours(
@@ -87,6 +98,8 @@ function deriveEntryHours(
   training: TrainingEstimate,
   pricingEntry: ProviderPricing,
 ): number {
+  // Request and provider rows can represent different cluster sizes.
+  // We normalize wall clock estimates by GPU-count ratio so rows remain comparable.
   const requestedGPUCount = Math.max(1, asNonNegative(params.num_gpus, 1))
   const providerGPUCount = Math.max(1, asNonNegative(pricingEntry.num_gpus, 1))
   const normalizedGPU = resolveGPUType(String(pricingEntry.gpu))
@@ -163,6 +176,42 @@ function normalizeGPUName(value: string): string {
   return normalizeLower(resolveGPUType(value) ?? value)
 }
 
+function summarizeRegionMatch(
+  entry: ProviderPricing,
+  selectedRegions: Set<string>,
+): { matchesFilter: boolean; availableInScope: boolean } {
+  const selectedAny = selectedRegions.has('any')
+  const hasRegionFilter = selectedRegions.size > 0
+
+  if (entry.availability.length === 0) {
+    return {
+      matchesFilter: !hasRegionFilter || selectedAny,
+      availableInScope: entry.available,
+    }
+  }
+
+  if (!hasRegionFilter) {
+    return {
+      matchesFilter: true,
+      availableInScope: entry.availability.some((availability) => availability.available),
+    }
+  }
+
+  const matchingRows = entry.availability.filter((availability) => {
+    const normalizedRegion = normalizeLower(availability.region)
+    return selectedAny || selectedRegions.has(normalizedRegion)
+  })
+
+  if (matchingRows.length === 0) {
+    return { matchesFilter: false, availableInScope: false }
+  }
+
+  return {
+    matchesFilter: true,
+    availableInScope: matchingRows.some((availability) => availability.available),
+  }
+}
+
 export function estimateCostComparison(
   params: EstimateRequest,
   pricing: ProviderPricing[],
@@ -173,7 +222,7 @@ export function estimateCostComparison(
   const intermediates: Record<string, number> = {}
 
   const runs = Math.max(1, asNonNegative(params.num_runs, 1))
-  const selectedTier = tierPriority(params.pricing_tier)
+  const selectedTiers = normalizeTierSelection(params.pricing_tier)
   const minRequiredVRAM = Math.max(0, asNonNegative(params.min_vram_gb ?? requiredVRAMPerGPU))
   const requestedGPUCount = Math.max(1, asNonNegative(params.num_gpus, 1))
   const selectedProviders = new Set(
@@ -216,54 +265,41 @@ export function estimateCostComparison(
         return false
       }
     }
-    if (selectedRegions.size > 0) {
-      const entryRegions = entry.availability
-        .map((availability) => normalizeLower(availability.region))
-        .filter((region) => region.length > 0)
-      const regionMatches =
-        entryRegions.length === 0
-          ? selectedRegions.has('any')
-          : entryRegions.some((region) => selectedRegions.has(region))
-      if (!regionMatches) {
-        return false
-      }
+    const regionSummary = summarizeRegionMatch(entry, selectedRegions)
+    if (!regionSummary.matchesFilter) {
+      return false
     }
-    if (!hasTierPrice(entry, selectedTier)) {
+    if (selectedRegions.size > 0 && !regionSummary.availableInScope) {
+      // Region filters are operational intent filters: only keep rows available in selected regions.
+      return false
+    }
+    if (!selectedTiers.some((tier) => hasTierPrice(entry, tier))) {
       return false
     }
     return true
   })
 
   if (filteredPricing.length === 0) {
+    const tierLabel = selectedTiers.join(', ')
     warnings.push(
-      'No pricing entries matched the selected provider capabilities (provider, GPU, region, interconnect, GPU count, and pricing tier).',
+      `No pricing entries matched the selected provider capabilities (provider, GPU, region, interconnect, GPU count, and selected pricing tiers: ${tierLabel}).`,
     )
   }
 
   const entries: CostComparisonEntry[] = filteredPricing.map((pricingEntry) => {
     const estimatedHours = deriveEntryHours(params, training, pricingEntry)
-    const onDemandCost = costFromHourlyRate(pricingEntry.hourly_price_cents, estimatedHours, runs)
-    const spotCost = costFromHourlyRate(pricingEntry.spot_price_cents, estimatedHours, runs)
-    const reserved1moCost = costFromHourlyRate(
-      pricingEntry.reserved_1mo_price_cents,
-      estimatedHours,
-      runs,
-    )
-    const reserved3moCost = costFromHourlyRate(
-      pricingEntry.reserved_3mo_price_cents,
-      estimatedHours,
-      runs,
-    )
-    const selectedTierCost = pickSelectedTierCost(
-      selectedTier,
-      onDemandCost,
-      spotCost,
-      reserved1moCost,
-      reserved3moCost,
-    )
+    const tierCosts: TierCostMap = {
+      on_demand: costFromHourlyRate(pricingEntry.hourly_price_cents, estimatedHours, runs),
+      spot: costFromHourlyRate(pricingEntry.spot_price_cents, estimatedHours, runs),
+      reserved_1mo: costFromHourlyRate(pricingEntry.reserved_1mo_price_cents, estimatedHours, runs),
+      reserved_3mo: costFromHourlyRate(pricingEntry.reserved_3mo_price_cents, estimatedHours, runs),
+    }
+    const selectedTierCost = pickBestSelectedTierCost(selectedTiers, tierCosts)
 
-    if (selectedTierCost === null) {
-      warnings.push(`${pricingEntry.provider}/${pricingEntry.cloud_instance_type} has no ${selectedTier} price.`)
+    if (selectedTierCost.cost === null) {
+      warnings.push(
+        `${pricingEntry.provider}/${pricingEntry.cloud_instance_type} has no usable price across selected tiers (${selectedTiers.join(', ')}).`,
+      )
     }
 
     if (!Number.isFinite(estimatedHours)) {
@@ -273,10 +309,8 @@ export function estimateCostComparison(
     }
 
     const vramTotal = asNonNegative(pricingEntry.vram_per_gpu_in_gb) * Math.max(1, pricingEntry.num_gpus)
-    const availabilityByRegion =
-      pricingEntry.availability.length === 0
-        ? pricingEntry.available
-        : pricingEntry.availability.some((entry) => entry.available)
+    const regionSummary = summarizeRegionMatch(pricingEntry, selectedRegions)
+    const selectedCostOrFallback = selectedTierCost.cost ?? tierCosts.on_demand
 
     return {
       provider: pricingEntry.provider,
@@ -289,11 +323,11 @@ export function estimateCostComparison(
       reserved_1mo_price_cents: pricingEntry.reserved_1mo_price_cents ?? null,
       reserved_3mo_price_cents: pricingEntry.reserved_3mo_price_cents ?? null,
       estimated_hours: estimatedHours,
-      total_cost_dollars: selectedTierCost ?? onDemandCost ?? 0,
-      spot_cost_dollars: spotCost,
-      reserved_1mo_cost_dollars: reserved1moCost,
-      reserved_3mo_cost_dollars: reserved3moCost,
-      available: pricingEntry.available && availabilityByRegion,
+      total_cost_dollars: selectedCostOrFallback ?? Number.POSITIVE_INFINITY,
+      spot_cost_dollars: tierCosts.spot,
+      reserved_1mo_cost_dollars: tierCosts.reserved_1mo,
+      reserved_3mo_cost_dollars: tierCosts.reserved_3mo,
+      available: pricingEntry.available && regionSummary.availableInScope,
       fits_in_vram: asNonNegative(pricingEntry.vram_per_gpu_in_gb) >= minRequiredVRAM,
       source: pricingEntry.source,
     }
@@ -309,9 +343,11 @@ export function estimateCostComparison(
     return a.estimated_hours - b.estimated_hours
   })
 
+  // Retained for backward compatibility with existing math panel consumers.
   intermediates.selected_pricing_tier_rank = ['on_demand', 'spot', 'reserved_1mo', 'reserved_3mo'].indexOf(
-    selectedTier,
+    selectedTiers[0],
   )
+  intermediates.selected_pricing_tier_count = selectedTiers.length
   intermediates.requested_num_gpus = requestedGPUCount
   intermediates.required_vram_per_gpu = minRequiredVRAM
   intermediates.num_pricing_entries = filteredPricing.length

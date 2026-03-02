@@ -1,6 +1,14 @@
 export type Architecture = 'Dense' | 'MoE'
 export type FineTuneMethod = 'Full Fine-Tune' | 'LoRA' | 'QLoRA'
 export type QuantizationBits = 4 | 8 | 16 | 32
+export type QuantizationProfile =
+  | 'nf4'
+  | 'fp4'
+  | 'mxfp4'
+  | 'dynamic_4bit'
+  | 'int8'
+  | 'int16'
+  | 'int32'
 export type TrainingType = 'SFT' | 'GRPO' | 'DPO' | 'PPO' | 'ORPO'
 export type Optimizer = 'adamw' | 'adamw_8bit' | 'sgd' | 'paged_adamw_8bit' | 'muon'
 export type LRScheduler = 'cosine' | 'linear' | 'constant'
@@ -67,6 +75,7 @@ export interface EstimateRequest {
 
   method: FineTuneMethod
   quantization_bits: QuantizationBits
+  quantization_profile: QuantizationProfile
   lora_rank: number
   lora_alpha: number
   lora_target_modules: LoRATargetModule[]

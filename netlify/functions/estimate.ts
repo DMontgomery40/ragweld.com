@@ -13,9 +13,19 @@ import {
 
 const ALLOW_METHODS = 'POST, OPTIONS'
 const PRICING_TIER_VALUES = new Set(['on_demand', 'spot', 'reserved_1mo', 'reserved_3mo'])
+const QUANTIZATION_PROFILE_VALUES = new Set([
+  'nf4',
+  'fp4',
+  'mxfp4',
+  'dynamic_4bit',
+  'int8',
+  'int16',
+  'int32',
+])
 
 export const config = { path: '/crucible/api/v1/estimate' }
 
+// Lightweight shape validation only. Domain rules are applied later in normalization + filtering.
 function isEstimateRequest(value: unknown): value is EstimateRequest {
   if (typeof value !== 'object' || value === null) {
     return false
@@ -44,11 +54,14 @@ function normalizeLower(value: string): string {
   return value.trim().toLowerCase()
 }
 
+// GPU aliases in provider feeds can differ from UI names (for example A100-80GB vs A100_80G).
+// Normalize into a canonical form before any set-based matching.
 function normalizeGpuValue(value: string): string {
   const resolved = resolveGPUType(value)
   return normalizeLower(resolved ?? value)
 }
 
+// Defensive parsing for request arrays coming from URL state and free-form JSON clients.
 function normalizeStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return []
@@ -66,9 +79,55 @@ function normalizePricingTiers(value: unknown): EstimateRequest['pricing_tier'] 
   return normalized as EstimateRequest['pricing_tier']
 }
 
+function normalizeQuantizationBits(value: number): EstimateRequest['quantization_bits'] {
+  if (value === 4 || value === 8 || value === 16 || value === 32) {
+    return value
+  }
+  return 4
+}
+
+function defaultQuantizationProfileForBits(
+  bits: EstimateRequest['quantization_bits'],
+): EstimateRequest['quantization_profile'] {
+  if (bits === 8) {
+    return 'int8'
+  }
+  if (bits === 16) {
+    return 'int16'
+  }
+  if (bits === 32) {
+    return 'int32'
+  }
+  return 'nf4'
+}
+
+function normalizeQuantizationProfile(
+  value: unknown,
+  bits: EstimateRequest['quantization_bits'],
+): EstimateRequest['quantization_profile'] {
+  if (typeof value !== 'string' || !QUANTIZATION_PROFILE_VALUES.has(value)) {
+    return defaultQuantizationProfileForBits(bits)
+  }
+
+  if (bits === 4) {
+    if (value === 'nf4' || value === 'fp4' || value === 'mxfp4' || value === 'dynamic_4bit') {
+      return value
+    }
+    return 'nf4'
+  }
+
+  return defaultQuantizationProfileForBits(bits)
+}
+
 function normalizeEstimateRequest(request: EstimateRequest): EstimateRequest {
+  const normalizedQuantizationBits = normalizeQuantizationBits(request.quantization_bits)
   return {
     ...request,
+    quantization_bits: normalizedQuantizationBits,
+    quantization_profile: normalizeQuantizationProfile(
+      (request as Partial<EstimateRequest>).quantization_profile,
+      normalizedQuantizationBits,
+    ),
     target_gpu: normalizeStringArray(request.target_gpu) as EstimateRequest['target_gpu'],
     target_providers: normalizeStringArray((request as Partial<EstimateRequest>).target_providers),
     target_regions: normalizeStringArray((request as Partial<EstimateRequest>).target_regions),
@@ -78,6 +137,7 @@ function normalizeEstimateRequest(request: EstimateRequest): EstimateRequest {
   }
 }
 
+// "Tier support" means the provider row has a concrete price for that billing tier.
 function rowSupportsTier(
   row: {
     hourly_price_cents: number
@@ -99,15 +159,6 @@ function rowSupportsTier(
   return row.reserved_3mo_price_cents !== null && row.reserved_3mo_price_cents !== undefined
 }
 
-function hasIntersection(left: string[], rightSet: Set<string>): boolean {
-  for (const entry of left) {
-    if (rightSet.has(normalizeLower(entry))) {
-      return true
-    }
-  }
-  return false
-}
-
 function matchesRequestPricingRow(
   request: EstimateRequest,
   row: {
@@ -116,14 +167,14 @@ function matchesRequestPricingRow(
     num_gpus: number
     cloud_instance_type: string
     interconnect?: string
-    availability: Array<{ region: string }>
+    availability: Array<{ region: string; available?: boolean }>
     hourly_price_cents: number
     spot_price_cents?: number | null
     reserved_1mo_price_cents?: number | null
     reserved_3mo_price_cents?: number | null
   },
 ): boolean {
-  const selectedTier = request.pricing_tier[0] ?? 'on_demand'
+  const selectedTiers = request.pricing_tier.length > 0 ? request.pricing_tier : ['on_demand']
 
   if (request.target_providers.length > 0) {
     const providerSet = new Set(request.target_providers.map((provider) => normalizeLower(provider)))
@@ -164,13 +215,33 @@ function matchesRequestPricingRow(
 
   if (request.target_regions.length > 0) {
     const selectedRegions = new Set(request.target_regions.map((region) => normalizeLower(region)))
-    const rowRegions = row.availability.map((regionEntry) => regionEntry.region || 'any')
-    if (!hasIntersection(rowRegions, selectedRegions)) {
+    if (row.availability.length === 0) {
+      if (!selectedRegions.has('any')) {
+        return false
+      }
+    } else {
+      const matchingAvailability = row.availability.filter((regionEntry) => {
+        const normalizedRegion = normalizeLower(regionEntry.region || 'any')
+        return selectedRegions.has('any') || selectedRegions.has(normalizedRegion)
+      })
+      if (matchingAvailability.length === 0) {
+        return false
+      }
+      if (!matchingAvailability.some((regionEntry) => regionEntry.available !== false)) {
+        return false
+      }
+    }
+  }
+
+  if (request.target_regions.length === 0 && row.availability.length > 0) {
+    // Keep globally unavailable rows out of normal estimate requests even without region filters.
+    if (!row.availability.some((regionEntry) => regionEntry.available !== false)) {
       return false
     }
   }
 
-  return rowSupportsTier(row, selectedTier)
+  // If multiple tiers are selected, keep rows that satisfy at least one selected tier.
+  return selectedTiers.some((tier) => rowSupportsTier(row, tier))
 }
 
 function summarizeCapabilities(
@@ -216,6 +287,7 @@ function summarizeCapabilities(
 }
 
 export const handler: Handler = async (event) => {
+  // OPTIONS handles CORS preflights for browser-based clients.
   if (event.httpMethod === 'OPTIONS') {
     return optionsResponse(ALLOW_METHODS)
   }
@@ -255,6 +327,7 @@ export const handler: Handler = async (event) => {
   if (!isEstimateRequest(requestBody)) {
     return errorResponse(400, 'INVALID_REQUEST', 'Request body does not match EstimateRequest.', responseHeaders)
   }
+  // From here on, use a normalized request to avoid repeated type/shape checks.
   const normalizedRequest = normalizeEstimateRequest(requestBody)
 
   let pricing
@@ -287,7 +360,7 @@ export const handler: Handler = async (event) => {
           providers: normalizedRequest.target_providers,
           gpus: normalizedRequest.target_gpu,
           num_gpus: normalizedRequest.num_gpus,
-          pricing_tier: normalizedRequest.pricing_tier[0] ?? 'on_demand',
+          pricing_tier: normalizedRequest.pricing_tier,
           regions: normalizedRequest.target_regions,
           interconnects: normalizedRequest.target_interconnects,
           instance_types: normalizedRequest.target_instance_types,

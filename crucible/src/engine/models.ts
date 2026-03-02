@@ -14,6 +14,7 @@ interface SizeBucket {
   intermediate_size: number
 }
 
+// Used when a model id is unknown: pick a plausible transformer shape from parameter scale.
 const SIZE_BUCKETS: SizeBucket[] = [
   {
     max_params_billions: 2,
@@ -65,6 +66,7 @@ const SIZE_BUCKETS: SizeBucket[] = [
   },
 ]
 
+// Curated known configs with explicit architectural dimensions.
 const KNOWN_MODELS: ModelConfig[] = [
   {
     id: 'llama-3.3-70b',
@@ -137,6 +139,7 @@ function normalizeModelName(modelName: string): string {
   return modelName.trim().toLowerCase().replace(/[_\s]+/g, '-')
 }
 
+// Build lookup once so id/display-name aliases resolve in O(1).
 const MODEL_LOOKUP: Record<string, ModelConfig> = (() => {
   const lookup: Record<string, ModelConfig> = {}
   for (const model of KNOWN_MODELS) {
@@ -173,6 +176,7 @@ function buildFallbackModelConfig(modelName: string, paramsBillions: number): Mo
   }
 }
 
+// GQA/MQA models use fewer KV heads than attention heads, so K/V projection width is smaller.
 function kvProjectionOutDim(model: ModelConfig): number {
   const hidden = model.hidden_size
   const totalHeads = model.num_attention_heads
@@ -237,6 +241,7 @@ export function getModelConfigFromRequest(
     | 'model_module_shapes'
   >,
 ): ModelConfig {
+  // Start from known/fallback defaults, then allow API/UI-provided structural overrides.
   const baseModel = getModelConfig(params.model_name, params.model_params_billions)
 
   const hiddenSize = params.model_hidden_size ?? baseModel.hidden_size
@@ -271,6 +276,7 @@ export function getModelConfigFromRequest(
 }
 
 export function resolveModuleShape(model: ModelConfig, module: LoRATargetModule): ModuleShape {
+  // Request-level module shape overrides take precedence; otherwise use architecture defaults.
   const override = model.module_shapes?.[module]
   if (override) {
     return override

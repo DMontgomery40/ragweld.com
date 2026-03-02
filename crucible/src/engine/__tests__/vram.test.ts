@@ -39,4 +39,33 @@ describe('estimateVRAM', () => {
     expect(result.intermediates.lora_target_count).toBe(4)
     expect(result.warnings.some((warning) => warning.includes('defaulting to q/k/v/o'))).toBe(true)
   })
+
+  it('models dynamic 4-bit profile as higher metadata overhead than NF4', () => {
+    const nf4 = estimateVRAM(
+      makeEstimateRequest({
+        quantization_bits: 4,
+        quantization_profile: 'nf4',
+      }),
+    )
+    const dynamic4 = estimateVRAM(
+      makeEstimateRequest({
+        quantization_bits: 4,
+        quantization_profile: 'dynamic_4bit',
+      }),
+    )
+
+    expect(dynamic4.breakdown_gb.quant_metadata).toBeGreaterThan(nf4.breakdown_gb.quant_metadata)
+  })
+
+  it('normalizes incompatible quantization profile selections', () => {
+    const result = estimateVRAM(
+      makeEstimateRequest({
+        quantization_bits: 8,
+        quantization_profile: 'fp4',
+      }),
+    )
+
+    expect(result.warnings.some((warning) => warning.includes('incompatible with 8-bit'))).toBe(true)
+    expect(result.intermediates.quantization_profile).toBe(8)
+  })
 })

@@ -17,6 +17,7 @@ const DEFAULT_REQUEST: EstimateRequest = {
 
   method: 'QLoRA',
   quantization_bits: 4,
+  quantization_profile: 'nf4',
   lora_rank: 32,
   lora_alpha: 64,
   lora_target_modules: ['q', 'k', 'v', 'o', 'gate', 'up', 'down'],

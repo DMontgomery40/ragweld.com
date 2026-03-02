@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { resolveGPUType } from '../engine/gpu-specs'
 import type {
   Architecture,
@@ -13,6 +13,7 @@ import type {
   PricingTier,
   ProviderPricing,
   QuantizationBits,
+  QuantizationProfile,
   TrainingType,
 } from '../types'
 
@@ -43,7 +44,7 @@ interface MultiSelectOption {
 }
 
 interface MultiSelectMatrixProps {
-  label: string
+  label: ReactNode
   options: MultiSelectOption[]
   selectedValues: string[]
   onChange: (nextValues: string[]) => void
@@ -59,6 +60,17 @@ const METHOD_OPTIONS: FineTuneMethod[] = ['Full Fine-Tune', 'LoRA', 'QLoRA']
 const ARCHITECTURE_OPTIONS: Architecture[] = ['Dense', 'MoE']
 const TRAINING_TYPE_OPTIONS: TrainingType[] = ['SFT', 'GRPO', 'DPO', 'PPO', 'ORPO']
 const QUANTIZATION_OPTIONS: QuantizationBits[] = [4, 8, 16, 32]
+const FOUR_BIT_QUANTIZATION_PROFILES: QuantizationProfile[] = [
+  'nf4',
+  'fp4',
+  'mxfp4',
+  'dynamic_4bit',
+]
+const NON_FOUR_BIT_PROFILE_BY_BITS: Record<Exclude<QuantizationBits, 4>, QuantizationProfile> = {
+  8: 'int8',
+  16: 'int16',
+  32: 'int32',
+}
 const FRAMEWORK_OPTIONS: Framework[] = [
   'Unsloth',
   'HuggingFace+TRL',
@@ -194,6 +206,41 @@ function normalizeGpuOption(value: string): string {
   return normalizeLower(resolved ?? value)
 }
 
+function defaultQuantizationProfile(bits: QuantizationBits): QuantizationProfile {
+  if (bits === 4) {
+    return 'nf4'
+  }
+  return NON_FOUR_BIT_PROFILE_BY_BITS[bits]
+}
+
+function quantizationProfilesForBits(bits: QuantizationBits): QuantizationProfile[] {
+  if (bits === 4) {
+    return FOUR_BIT_QUANTIZATION_PROFILES
+  }
+  return [defaultQuantizationProfile(bits)]
+}
+
+function formatQuantizationProfileLabel(profile: QuantizationProfile): string {
+  switch (profile) {
+    case 'nf4':
+      return 'NF4 (QLoRA default)'
+    case 'fp4':
+      return 'FP4'
+    case 'mxfp4':
+      return 'MXFP4 (Blackwell-class)'
+    case 'dynamic_4bit':
+      return 'Dynamic 4-bit'
+    case 'int8':
+      return 'INT8'
+    case 'int16':
+      return 'INT16'
+    case 'int32':
+      return 'INT32'
+    default:
+      return profile
+  }
+}
+
 function hasTierPrice(row: ProviderPricing, tier: PricingTier): boolean {
   if (tier === 'on_demand') {
     return row.hourly_price_cents > 0
@@ -205,6 +252,25 @@ function hasTierPrice(row: ProviderPricing, tier: PricingTier): boolean {
     return row.reserved_1mo_price_cents !== null && row.reserved_1mo_price_cents !== undefined
   }
   return row.reserved_3mo_price_cents !== null && row.reserved_3mo_price_cents !== undefined
+}
+
+interface HelpLabelProps {
+  text: string
+  tooltip: string
+}
+
+function HelpLabel({ text, tooltip }: HelpLabelProps) {
+  return (
+    <span className="field-label">
+      <span>{text}</span>
+      <span className="inline-tooltip" tabIndex={0} aria-label={`${text} help`}>
+        <span className="inline-tooltip-mark">?</span>
+        <span className="inline-tooltip-content" role="tooltip">
+          {tooltip}
+        </span>
+      </span>
+    </span>
+  )
 }
 
 function MultiSelectMatrix({
@@ -577,6 +643,13 @@ export function InputPanel({
     }))
   }, [])
 
+  const quantizationProfileOptions = useMemo<MultiSelectOption[]>(() => {
+    return quantizationProfilesForBits(value.quantization_bits).map((profile) => ({
+      value: profile,
+      label: formatQuantizationProfileLabel(profile),
+    }))
+  }, [value.quantization_bits])
+
   const selectedModelPreset = useMemo(() => {
     const selected = MODEL_PROFILES.find((profile) => profile.id === value.model_name)
     return selected?.id ?? 'custom'
@@ -667,7 +740,10 @@ export function InputPanel({
       <fieldset className="panel-section">
         <legend>Model & Method</legend>
         <div className="field">
-          <span>Resolve from Hugging Face URL / repo id</span>
+          <HelpLabel
+            text="Resolve from Hugging Face URL / repo id"
+            tooltip="Paste a Hugging Face URL or repo id to auto-fill model parameters."
+          />
           <div className="inline-field-row">
             <input
               type="text"
@@ -695,7 +771,10 @@ export function InputPanel({
         </div>
         <div className="field-grid field-grid-2">
           <label className="field">
-            <span>Model preset</span>
+            <HelpLabel
+              text="Model preset"
+              tooltip="Loads curated defaults for known models. Use Custom to keep manual values."
+            />
             <select
               value={selectedModelPreset}
               onChange={(event) => {
@@ -736,7 +815,7 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <span>Model id</span>
+            <HelpLabel text="Model id" tooltip="Model identifier used in requests and exports." />
             <input
               type="text"
               value={value.model_name}
@@ -749,7 +828,10 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <span>Model params (B)</span>
+            <HelpLabel
+              text="Model params (B)"
+              tooltip="Total parameters in billions. This directly drives VRAM and compute estimates."
+            />
             <input
               type="number"
               min={0.1}
@@ -765,7 +847,10 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <span>Architecture</span>
+            <HelpLabel
+              text="Architecture"
+              tooltip="Dense uses all parameters each step. MoE activates only a subset of experts."
+            />
             <select
               value={value.architecture}
               onChange={(event) => {
@@ -781,7 +866,10 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <span>Method</span>
+            <HelpLabel
+              text="Method"
+              tooltip="Training strategy: full fine-tune updates base weights, LoRA and QLoRA update adapters."
+            />
             <select
               value={value.method}
               onChange={(event) => {
@@ -801,11 +889,22 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <span>Quantization (bit)</span>
+            <HelpLabel
+              text="Quantization (bit)"
+              tooltip="Weight precision assumption used in memory and throughput calculations."
+            />
             <select
               value={value.quantization_bits}
               onChange={(event) => {
-                patchField('quantization_bits', Number(event.target.value) as QuantizationBits)
+                const nextBits = Number(event.target.value) as QuantizationBits
+                const validProfiles = quantizationProfilesForBits(nextBits)
+                const nextProfile = validProfiles.includes(value.quantization_profile)
+                  ? value.quantization_profile
+                  : defaultQuantizationProfile(nextBits)
+                onChange({
+                  quantization_bits: nextBits,
+                  quantization_profile: nextProfile,
+                })
               }}
             >
               {QUANTIZATION_OPTIONS.map((option) => (
@@ -817,7 +916,30 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <span>Framework</span>
+            <HelpLabel
+              text="Quantization profile"
+              tooltip="Selects profile-specific overhead assumptions for the chosen bit width."
+            />
+            <select
+              value={value.quantization_profile}
+              onChange={(event) => {
+                patchField('quantization_profile', event.target.value as QuantizationProfile)
+              }}
+            >
+              {quantizationProfileOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <span className="field-hint">4-bit profiles model NF4/FP4-era differences; other bit-widths use fixed integer profiles.</span>
+          </label>
+
+          <label className="field">
+            <HelpLabel
+              text="Framework"
+              tooltip="Applies framework-specific throughput and runtime overhead assumptions."
+            />
             <select
               value={value.framework}
               onChange={(event) => {
@@ -836,7 +958,10 @@ export function InputPanel({
         {value.architecture === 'MoE' && (
           <div className="field-grid field-grid-2 conditional-grid">
             <label className="field">
-              <span>Total experts</span>
+              <HelpLabel
+                text="Total experts"
+                tooltip="Total number of experts in the MoE model."
+              />
               <input
                 type="number"
                 min={1}
@@ -852,7 +977,10 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <span>Active experts</span>
+              <HelpLabel
+                text="Active experts"
+                tooltip="Experts used per token during routing. Must be less than or equal to total experts."
+              />
               <input
                 type="number"
                 min={1}
@@ -874,7 +1002,10 @@ export function InputPanel({
         <legend>Dataset & Training</legend>
         <div className="field-grid field-grid-2">
           <label className="field">
-            <span>Dataset tokens</span>
+            <HelpLabel
+              text="Dataset tokens"
+              tooltip="Total training tokens processed per epoch."
+            />
             <input
               type="number"
               min={1}
@@ -887,7 +1018,7 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <span>Epochs</span>
+            <HelpLabel text="Epochs" tooltip="How many full passes over the dataset to run." />
             <input
               type="number"
               min={1}
@@ -900,7 +1031,10 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <span>Batch size</span>
+            <HelpLabel
+              text="Batch size"
+              tooltip="Micro-batch size per step before gradient accumulation."
+            />
             <input
               type="number"
               min={1}
@@ -913,7 +1047,10 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <span>Grad accumulation</span>
+            <HelpLabel
+              text="Grad accumulation"
+              tooltip="Number of micro-steps to accumulate before an optimizer step."
+            />
             <input
               type="number"
               min={1}
@@ -929,7 +1066,10 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <span>Max seq length</span>
+            <HelpLabel
+              text="Max seq length"
+              tooltip="Maximum sequence length used during training."
+            />
             <input
               type="number"
               min={128}
@@ -945,7 +1085,10 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <span>Training type</span>
+            <HelpLabel
+              text="Training type"
+              tooltip="Objective class that changes compute and memory assumptions."
+            />
             <select
               value={value.training_type}
               onChange={(event) => {
@@ -967,7 +1110,10 @@ export function InputPanel({
 
         <div className="field-grid field-grid-2">
           <label className="field">
-            <span>GPUs per run</span>
+            <HelpLabel
+              text="GPUs per run"
+              tooltip="Number of GPUs used in each training run."
+            />
             <select
               value={value.num_gpus}
               onChange={(event) => {
@@ -983,7 +1129,7 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <span>Nodes</span>
+            <HelpLabel text="Nodes" tooltip="Number of machines used for distributed training." />
             <input
               type="number"
               min={1}
@@ -997,7 +1143,12 @@ export function InputPanel({
         </div>
 
         <MultiSelectMatrix
-          label="Target GPU families"
+          label={
+            <HelpLabel
+              text="Target GPU families"
+              tooltip="Filter estimates to specific GPU families. Leave empty to include all."
+            />
+          }
           options={gpuFamilyOptions}
           selectedValues={value.target_gpu}
           onChange={(nextValues) => {
@@ -1008,7 +1159,12 @@ export function InputPanel({
         />
 
         <MultiSelectMatrix
-          label="Pricing tiers"
+          label={
+            <HelpLabel
+              text="Pricing tiers"
+              tooltip="Billing tiers to include in cost comparisons."
+            />
+          }
           options={pricingTierOptions}
           selectedValues={value.pricing_tier}
           onChange={(nextValues) => {
@@ -1020,7 +1176,12 @@ export function InputPanel({
         />
 
         <MultiSelectMatrix
-          label="Cloud providers (blank = all)"
+          label={
+            <HelpLabel
+              text="Cloud providers (blank = all)"
+              tooltip="Restrict calculations to selected providers. Leave empty to include all."
+            />
+          }
           options={providerOptions}
           selectedValues={value.target_providers}
           onChange={(nextValues) => {
@@ -1031,7 +1192,12 @@ export function InputPanel({
         />
 
         <MultiSelectMatrix
-          label="Regions (optional)"
+          label={
+            <HelpLabel
+              text="Regions (optional)"
+              tooltip="Limit to selected cloud regions. Leave empty to allow any region."
+            />
+          }
           options={regionOptions}
           selectedValues={value.target_regions}
           onChange={(nextValues) => {
@@ -1047,7 +1213,12 @@ export function InputPanel({
         />
 
         <MultiSelectMatrix
-          label="Interconnect (optional)"
+          label={
+            <HelpLabel
+              text="Interconnect (optional)"
+              tooltip="Restrict to specific interconnect types such as NVLink or PCIe."
+            />
+          }
           options={interconnectOptions}
           selectedValues={value.target_interconnects}
           onChange={(nextValues) => {
@@ -1063,7 +1234,12 @@ export function InputPanel({
         />
 
         <MultiSelectMatrix
-          label="Instance types (optional)"
+          label={
+            <HelpLabel
+              text="Instance types (optional)"
+              tooltip="Filter to specific cloud instance SKUs."
+            />
+          }
           options={instanceTypeOptions}
           selectedValues={value.target_instance_types}
           onChange={(nextValues) => {
@@ -1078,6 +1254,7 @@ export function InputPanel({
       <button
         type="button"
         className="advanced-toggle"
+        title="Open expert-level knobs that change training math assumptions."
         onClick={() => setAdvancedOpen((open) => !open)}
       >
         {advancedOpen ? 'Hide Advanced Parameters' : 'Show Advanced Parameters'}
@@ -1089,7 +1266,7 @@ export function InputPanel({
 
           <div className="field-grid field-grid-2">
             <label className="field">
-              <span>LoRA rank</span>
+              <HelpLabel text="LoRA rank" tooltip="LoRA decomposition rank for adapter matrices." />
               <input
                 type="number"
                 min={1}
@@ -1102,7 +1279,7 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <span>LoRA alpha</span>
+              <HelpLabel text="LoRA alpha" tooltip="LoRA scaling factor applied to adapter updates." />
               <input
                 type="number"
                 min={1}
@@ -1115,7 +1292,10 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <span>Learning rate</span>
+              <HelpLabel
+                text="Learning rate"
+                tooltip="Base optimizer step size used for update calculations."
+              />
               <input
                 type="number"
                 min={0}
@@ -1128,7 +1308,10 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <span>Warmup ratio</span>
+              <HelpLabel
+                text="Warmup ratio"
+                tooltip="Fraction of steps used for learning-rate warmup."
+              />
               <input
                 type="number"
                 min={0}
@@ -1143,7 +1326,10 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <span>Optimizer</span>
+              <HelpLabel
+                text="Optimizer"
+                tooltip="Optimizer implementation assumption for compute and memory overhead."
+              />
               <select
                 value={value.optimizer}
                 onChange={(event) => {
@@ -1159,7 +1345,10 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <span>LR scheduler</span>
+              <HelpLabel
+                text="LR scheduler"
+                tooltip="Learning-rate schedule family applied over training steps."
+              />
               <select
                 value={value.lr_scheduler}
                 onChange={(event) => {
@@ -1175,7 +1364,10 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <span>Precision</span>
+              <HelpLabel
+                text="Precision"
+                tooltip="Compute precision for training kernels and optimizer state assumptions."
+              />
               <select
                 value={value.precision}
                 onChange={(event) => {
@@ -1191,7 +1383,10 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <span>Unsloth version</span>
+              <HelpLabel
+                text="Unsloth version"
+                tooltip="Version hint for framework-specific overhead modeling."
+              />
               <input
                 type="text"
                 value={value.unsloth_version}
@@ -1202,7 +1397,10 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <span>Dataset rows (optional)</span>
+              <HelpLabel
+                text="Dataset rows (optional)"
+                tooltip="Optional row count used for consistency checks against token totals."
+              />
               <input
                 type="number"
                 min={1}
@@ -1222,7 +1420,10 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <span>Avg tokens / row</span>
+              <HelpLabel
+                text="Avg tokens / row"
+                tooltip="Average tokens per sample, used with row count for token sanity checks."
+              />
               <input
                 type="number"
                 min={1}
@@ -1238,7 +1439,10 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <span>Min VRAM GB (optional)</span>
+              <HelpLabel
+                text="Min VRAM GB (optional)"
+                tooltip="Hard minimum GPU memory required for candidate filtering."
+              />
               <input
                 type="number"
                 min={1}
@@ -1258,7 +1462,10 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <span>Reward model size (B)</span>
+              <HelpLabel
+                text="Reward model size (B)"
+                tooltip="Reward model parameter count in billions for RL-style training modes."
+              />
               <input
                 type="number"
                 min={0}
@@ -1278,7 +1485,10 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <span>GRPO generations</span>
+              <HelpLabel
+                text="GRPO generations"
+                tooltip="Number of sampled generations per prompt for GRPO."
+              />
               <input
                 type="number"
                 min={1}
@@ -1294,7 +1504,10 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <span>vLLM batch size</span>
+              <HelpLabel
+                text="vLLM batch size"
+                tooltip="Batch size assumption used for vLLM-assisted generation workloads."
+              />
               <input
                 type="number"
                 min={1}
@@ -1310,7 +1523,10 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <span>Number of runs</span>
+              <HelpLabel
+                text="Number of runs"
+                tooltip="Parallel or repeated training runs included in total cost output."
+              />
               <input
                 type="number"
                 min={1}
@@ -1324,7 +1540,12 @@ export function InputPanel({
           </div>
 
           <MultiSelectMatrix
-            label="LoRA target modules"
+            label={
+              <HelpLabel
+                text="LoRA target modules"
+                tooltip="Model submodules where LoRA adapters are attached."
+              />
+            }
             options={loraTargetOptions}
             selectedValues={value.lora_target_modules}
             onChange={(nextValues) => {
@@ -1336,7 +1557,10 @@ export function InputPanel({
           />
 
           <div className="toggle-grid">
-            <label className="switch-field">
+            <label
+              className="switch-field"
+              title="Trades compute for memory by recomputing activations during backpropagation."
+            >
               <input
                 type="checkbox"
                 checked={value.use_gradient_checkpointing}
@@ -1347,7 +1571,10 @@ export function InputPanel({
               <span>Gradient checkpointing</span>
             </label>
 
-            <label className="switch-field">
+            <label
+              className="switch-field"
+              title="Enables FlashAttention-style kernels when available."
+            >
               <input
                 type="checkbox"
                 checked={value.use_flash_attention}
@@ -1358,7 +1585,10 @@ export function InputPanel({
               <span>Flash attention</span>
             </label>
 
-            <label className="switch-field">
+            <label
+              className="switch-field"
+              title="Assumes Triton kernel implementations are used where available."
+            >
               <input
                 type="checkbox"
                 checked={value.use_triton_kernels}
@@ -1369,7 +1599,10 @@ export function InputPanel({
               <span>Triton kernels</span>
             </label>
 
-            <label className="switch-field">
+            <label
+              className="switch-field"
+              title="Enables rotary-position-embedding optimized kernels."
+            >
               <input
                 type="checkbox"
                 checked={value.use_rope_kernels}
@@ -1380,7 +1613,10 @@ export function InputPanel({
               <span>RoPE kernels</span>
             </label>
 
-            <label className="switch-field">
+            <label
+              className="switch-field"
+              title="Packs multiple short samples into longer sequences for higher utilization."
+            >
               <input
                 type="checkbox"
                 checked={value.use_packing}
@@ -1391,7 +1627,10 @@ export function InputPanel({
               <span>Use packing</span>
             </label>
 
-            <label className="switch-field">
+            <label
+              className="switch-field"
+              title="Raw packing flag passed to the backend request."
+            >
               <input
                 type="checkbox"
                 checked={value.packing}
@@ -1402,7 +1641,10 @@ export function InputPanel({
               <span>Packing enabled</span>
             </label>
 
-            <label className="switch-field">
+            <label
+              className="switch-field"
+              title="Forces full-weight finetuning assumptions regardless of method selection."
+            >
               <input
                 type="checkbox"
                 checked={value.full_finetuning}

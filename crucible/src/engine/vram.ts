@@ -4,6 +4,7 @@ import type {
   Framework,
   Optimizer,
   QuantizationBits,
+  QuantizationProfile,
   VRAMEstimateDetails,
 } from '../types/index'
 import { getModelConfigFromRequest, resolveModuleShape } from './models'
@@ -11,6 +12,7 @@ import { getModelConfigFromRequest, resolveModuleShape } from './models'
 const BYTES_IN_GIB = 1024 ** 3
 const DEFAULT_LORA_TARGETS: EstimateRequest['lora_target_modules'] = ['q', 'k', 'v', 'o']
 
+// Storage bytes per model parameter for each quantization setting.
 const WEIGHT_BYTES_PER_PARAM: Record<QuantizationBits, number> = {
   4: 0.5,
   8: 1,
@@ -18,6 +20,7 @@ const WEIGHT_BYTES_PER_PARAM: Record<QuantizationBits, number> = {
   32: 4,
 }
 
+// Extra memory tax for quantization metadata/scales/aux tensors.
 const QUANT_METADATA_MULTIPLIER: Record<QuantizationBits, number> = {
   4: 1.1,
   8: 1.02,
@@ -25,6 +28,26 @@ const QUANT_METADATA_MULTIPLIER: Record<QuantizationBits, number> = {
   32: 1.0,
 }
 
+const FOUR_BIT_QUANTIZATION_PROFILES: QuantizationProfile[] = [
+  'nf4',
+  'fp4',
+  'mxfp4',
+  'dynamic_4bit',
+]
+
+// These are planning multipliers, not hardware-level guarantees.
+// They model metadata/scaling overhead differences between common 4-bit profiles.
+const FOUR_BIT_PROFILE_METADATA_MULTIPLIER: Record<
+  Extract<QuantizationProfile, 'nf4' | 'fp4' | 'mxfp4' | 'dynamic_4bit'>,
+  number
+> = {
+  nf4: 1.1,
+  fp4: 1.12,
+  mxfp4: 1.08,
+  dynamic_4bit: 1.16,
+}
+
+// Optimizer state memory per trainable parameter.
 const OPTIMIZER_BYTES_PER_PARAM: Record<Optimizer, number> = {
   adamw: 8,
   adamw_8bit: 2,
@@ -33,6 +56,7 @@ const OPTIMIZER_BYTES_PER_PARAM: Record<Optimizer, number> = {
   muon: 4,
 }
 
+// Framework multipliers approximate runtime/allocator overhead beyond raw tensor sizes.
 const FRAMEWORK_OVERHEAD_MULTIPLIER: Record<Framework, number> = {
   Unsloth: 0.35,
   'HuggingFace+TRL': 1.0,
@@ -156,6 +180,7 @@ function findUnslothReference(params: EstimateRequest): UnslothReferencePoint | 
   )
 }
 
+// We keep fp16/bf16/fp8 gradients at 2 bytes/param in this planner.
 function gradientBytesPerParam(precision: EstimateRequest['precision']): number {
   if (precision === 'fp16' || precision === 'bf16' || precision === 'fp8') {
     return 2
@@ -163,15 +188,60 @@ function gradientBytesPerParam(precision: EstimateRequest['precision']): number 
   return 4
 }
 
+function expectedProfileForBits(bits: QuantizationBits): QuantizationProfile {
+  switch (bits) {
+    case 8:
+      return 'int8'
+    case 16:
+      return 'int16'
+    case 32:
+      return 'int32'
+    case 4:
+    default:
+      return 'nf4'
+  }
+}
+
+function normalizeQuantizationProfile(params: EstimateRequest, warnings: string[]): QuantizationProfile {
+  const requested = params.quantization_profile
+  const expected = expectedProfileForBits(params.quantization_bits)
+
+  if (params.quantization_bits === 4) {
+    if (requested && FOUR_BIT_QUANTIZATION_PROFILES.includes(requested)) {
+      return requested
+    }
+    if (requested && requested !== expected) {
+      warnings.push(
+        `Quantization profile "${requested}" is not a 4-bit profile; defaulting to ${expected}.`,
+      )
+    }
+    return expected
+  }
+
+  if (requested && requested !== expected) {
+    warnings.push(
+      `Quantization profile "${requested}" is incompatible with ${params.quantization_bits}-bit; using ${expected}.`,
+    )
+  }
+  return expected
+}
+
 export function estimateVRAM(params: EstimateRequest): VRAMEstimateDetails {
   const warnings: string[] = []
   const intermediates: Record<string, number> = {}
 
+  // Resolve full structural config (known model defaults + any request overrides).
   const model = getModelConfigFromRequest(params)
   const totalParams = asNonNegative(params.model_params_billions) * 1e9
   const weightBytesPerParam = WEIGHT_BYTES_PER_PARAM[params.quantization_bits]
   const modelWeightVRAMGB = (totalParams * weightBytesPerParam) / BYTES_IN_GIB
-  const quantMetadataMultiplier = QUANT_METADATA_MULTIPLIER[params.quantization_bits]
+  const normalizedQuantizationProfile = normalizeQuantizationProfile(params, warnings)
+  const quantMetadataMultiplier =
+    params.quantization_bits === 4
+      ? FOUR_BIT_PROFILE_METADATA_MULTIPLIER[
+          normalizedQuantizationProfile as keyof typeof FOUR_BIT_PROFILE_METADATA_MULTIPLIER
+        ]
+      : QUANT_METADATA_MULTIPLIER[params.quantization_bits]
   const modelVRAMGB = modelWeightVRAMGB * quantMetadataMultiplier
   const quantMetadataGB = Math.max(0, modelVRAMGB - modelWeightVRAMGB)
 
@@ -185,6 +255,7 @@ export function estimateVRAM(params: EstimateRequest): VRAMEstimateDetails {
 
   let loraParams = 0
   if (trainWithLora && loraRank > 0) {
+    // LoRA adapter parameter count depends on per-module matrix shapes and layer count.
     for (const moduleName of loraTargets) {
       const shape = resolveModuleShape(model, moduleName)
       const moduleParamsPerLayer = shape.in_dim * loraRank + loraRank * shape.out_dim
@@ -204,7 +275,16 @@ export function estimateVRAM(params: EstimateRequest): VRAMEstimateDetails {
   }
 
   const tokenUtilization = isPackingEnabled(params) ? 0.95 : 0.7
+  if (isPackingEnabled(params) && params.avg_tokens_per_row > 0 && params.max_seq_length > 0) {
+    const averageFillRatio = Math.min(1, params.avg_tokens_per_row / params.max_seq_length)
+    if (averageFillRatio > 0.85) {
+      warnings.push(
+        'Packing is enabled, but average sequence length is already near max sequence; VRAM savings from packing may be limited.',
+      )
+    }
+  }
   const effectiveSeq = asNonNegative(params.max_seq_length) * tokenUtilization
+  // Activation size tracks batch * sequence * hidden dimension (2 bytes activation dtype assumption).
   const activationBytesPerLayer =
     asNonNegative(params.batch_size, 1) * effectiveSeq * model.hidden_size * 2
 
@@ -213,6 +293,8 @@ export function estimateVRAM(params: EstimateRequest): VRAMEstimateDetails {
       ? (activationBytesPerLayer * Math.sqrt(model.num_layers)) / BYTES_IN_GIB
       : (activationBytesPerLayer * model.num_layers) / BYTES_IN_GIB
 
+  // Framework toggles model practical runtime savings from kernel/checkpoint features.
+  // These multipliers are calibration heuristics, not guarantees for every model/sequence mix.
   if (params.framework === 'Unsloth') {
     if (params.use_gradient_checkpointing) {
       activationVRAMGB *= 0.7
@@ -237,14 +319,22 @@ export function estimateVRAM(params: EstimateRequest): VRAMEstimateDetails {
   const conservativeVRAMGB = baseVRAMGB * 1.25
   const bufferGB = typicalVRAMGB - baseVRAMGB
 
+  // MoE compute can route fewer experts, but resident VRAM still pays for full expert weights.
   if (params.architecture === 'MoE' && params.moe_active_experts < params.moe_total_experts) {
     warnings.push(
       'MoE active experts affect compute estimates, but VRAM assumes full expert weights are resident.',
     )
   }
 
+  if (params.framework === 'Unsloth' && params.method === 'QLoRA' && params.architecture === 'MoE') {
+    warnings.push(
+      'Unsloth MoE + QLoRA support is evolving; 4-bit bitsandbytes paths can be unstable on some MoE setups. Treat this VRAM estimate as low-confidence.',
+    )
+  }
+
   const unslothReference = findUnslothReference(params)
   if (unslothReference) {
+    // Calibration warning: highlight when modeled output diverges from known point estimates.
     const diffRatio = Math.abs(typicalVRAMGB - unslothReference.vram_gb) / unslothReference.vram_gb
     intermediates.unsloth_reference_vram_gb = unslothReference.vram_gb
     intermediates.unsloth_reference_diff_ratio = diffRatio
@@ -260,6 +350,20 @@ export function estimateVRAM(params: EstimateRequest): VRAMEstimateDetails {
   intermediates.model_num_layers = model.num_layers
   intermediates.weight_bytes_per_param = weightBytesPerParam
   intermediates.quant_metadata_multiplier = quantMetadataMultiplier
+  intermediates.quantization_profile =
+    normalizedQuantizationProfile === 'nf4'
+      ? 1
+      : normalizedQuantizationProfile === 'fp4'
+        ? 2
+        : normalizedQuantizationProfile === 'mxfp4'
+          ? 3
+          : normalizedQuantizationProfile === 'dynamic_4bit'
+            ? 4
+            : normalizedQuantizationProfile === 'int8'
+              ? 8
+              : normalizedQuantizationProfile === 'int16'
+                ? 16
+                : 32
   intermediates.model_weight_vram_gb = modelWeightVRAMGB
   intermediates.model_vram_gb = modelVRAMGB
   intermediates.lora_rank = loraRank

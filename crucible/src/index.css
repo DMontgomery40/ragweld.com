@@ -299,10 +299,65 @@ button:disabled {
   gap: 0.35rem;
 }
 
-.field span {
+.field > span {
   color: var(--text-muted);
   font-size: 0.72rem;
   letter-spacing: 0.04em;
+}
+
+.field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+}
+
+.inline-tooltip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.05rem;
+  height: 1.05rem;
+  border: 1px solid #385064;
+  border-radius: 999px;
+  background: #111c24;
+  color: #9fd1ef;
+  cursor: help;
+}
+
+.inline-tooltip-mark {
+  font-size: 0.63rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.inline-tooltip-content {
+  position: absolute;
+  top: calc(100% + 0.36rem);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(18rem, 65vw);
+  border: 1px solid #2d3f4c;
+  border-radius: 6px;
+  background: rgba(10, 16, 22, 0.97);
+  color: #dce7ee;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.42);
+  padding: 0.46rem 0.52rem;
+  font-size: 0.67rem;
+  letter-spacing: 0.01em;
+  line-height: 1.4;
+  text-transform: none;
+  z-index: 70;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.12s ease, visibility 0.12s ease;
+}
+
+.inline-tooltip:hover .inline-tooltip-content,
+.inline-tooltip:focus-visible .inline-tooltip-content {
+  opacity: 1;
+  visibility: visible;
 }
 
 .inline-field-row {

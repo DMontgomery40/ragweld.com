@@ -10,6 +10,7 @@ export function makeEstimateRequest(overrides: Partial<EstimateRequest> = {}): E
 
     method: 'QLoRA',
     quantization_bits: 4,
+    quantization_profile: 'nf4',
     lora_rank: 16,
     lora_alpha: 16,
     lora_target_modules: ['q', 'k', 'v', 'o', 'gate', 'up', 'down'],

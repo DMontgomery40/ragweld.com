@@ -67,6 +67,53 @@ describe('estimateCostComparison', () => {
     expect(comparison.entries[0].total_cost_dollars).toBeCloseTo(2.8554, 3)
   })
 
+  it('uses the cheapest available price across selected tiers', () => {
+    const params = makeEstimateRequest({
+      pricing_tier: ['on_demand', 'spot'],
+    })
+    const training = estimateTraining(params)
+    const comparison = estimateCostComparison(
+      params,
+      [
+        makePricing({
+          provider: 'runpod',
+          gpu: 'H100',
+          cloud_instance_type: 'H100-1x',
+          hourly_price_cents: 300,
+          spot_price_cents: 120,
+        }),
+      ],
+      training,
+      43,
+    )
+
+    expect(comparison.entries[0].total_cost_dollars).toBeCloseTo(2.8554, 3)
+  })
+
+  it('keeps rows when any selected tier is available', () => {
+    const params = makeEstimateRequest({
+      pricing_tier: ['spot', 'reserved_1mo'],
+    })
+    const training = estimateTraining(params)
+    const comparison = estimateCostComparison(
+      params,
+      [
+        makePricing({
+          provider: 'runpod',
+          gpu: 'H100',
+          cloud_instance_type: 'H100-1x',
+          spot_price_cents: null,
+          reserved_1mo_price_cents: 250,
+        }),
+      ],
+      training,
+      43,
+    )
+
+    expect(comparison.entries).toHaveLength(1)
+    expect(comparison.entries[0].total_cost_dollars).toBeGreaterThan(0)
+  })
+
   it('filters out rows that do not match provider capability constraints', () => {
     const params = makeEstimateRequest({
       target_providers: ['runpod'],
@@ -117,5 +164,55 @@ describe('estimateCostComparison', () => {
     expect(comparison.entries[0].cloud_instance_type).toBe('H100-1x')
     expect(comparison.entries[0].num_gpus).toBe(1)
     expect(comparison.entries[0].source).toBe('shadeform')
+  })
+
+  it('filters out selected regions that are present but unavailable', () => {
+    const params = makeEstimateRequest({
+      target_regions: ['us-west'],
+      pricing_tier: ['spot'],
+      num_gpus: 1,
+    })
+    const training = estimateTraining(params)
+    const comparison = estimateCostComparison(
+      params,
+      [
+        makePricing({
+          provider: 'runpod',
+          gpu: 'H100',
+          cloud_instance_type: 'H100-1x',
+          num_gpus: 1,
+          availability: [{ region: 'us-west', available: false }],
+          spot_price_cents: 120,
+        }),
+      ],
+      training,
+      43,
+    )
+
+    expect(comparison.entries).toHaveLength(0)
+  })
+
+  it('keeps non-finite training-hour rows from appearing as zero-cost options', () => {
+    const params = makeEstimateRequest({
+      target_gpu: [],
+      pricing_tier: ['on_demand'],
+    })
+    const training = estimateTraining(params)
+    const comparison = estimateCostComparison(
+      params,
+      [
+        makePricing({
+          provider: 'runpod',
+          gpu: 'UNKNOWN_GPU',
+          cloud_instance_type: 'unknown-1x',
+          hourly_price_cents: 300,
+        }),
+      ],
+      training,
+      43,
+    )
+
+    expect(comparison.entries).toHaveLength(1)
+    expect(comparison.entries[0].total_cost_dollars).toBe(Number.POSITIVE_INFINITY)
   })
 })

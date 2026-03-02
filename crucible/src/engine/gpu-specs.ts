@@ -5,6 +5,8 @@ export interface GPUSpec {
   tflops: Partial<Record<Precision, number>>
 }
 
+// Hardware table used by estimator math.
+// TFLOPS values are theoretical upper bounds and are later discounted by MFU/speed factors.
 export const GPU_SPECS: Record<GPUType, GPUSpec> = {
   H100: {
     vram_gb: 80,
@@ -24,11 +26,11 @@ export const GPU_SPECS: Record<GPUType, GPUSpec> = {
   },
   L40S: {
     vram_gb: 48,
-    tflops: { bf16: 362, fp16: 362, fp32: 22.6 },
+    tflops: { bf16: 362, fp16: 362, fp8: 733, fp32: 91.6 },
   },
   L40: {
     vram_gb: 48,
-    tflops: { bf16: 181, fp16: 181, fp32: 22.6 },
+    tflops: { bf16: 181, fp16: 181, fp8: 362, fp32: 90.5 },
   },
   A6000: {
     vram_gb: 48,
@@ -47,11 +49,12 @@ export const GPU_SPECS: Record<GPUType, GPUSpec> = {
     tflops: { bf16: 419, fp16: 419, fp32: 105 },
   },
   B200: {
-    vram_gb: 180,
-    tflops: { bf16: 2250, fp16: 2250, fp8: 4500, fp32: 70 },
+    vram_gb: 192,
+    tflops: { bf16: 2250, fp16: 2250, fp8: 4500, fp32: 90 },
   },
 }
 
+// Provider catalogs use inconsistent naming; aliases map those names onto canonical GPUType keys.
 const GPU_ALIASES: Record<string, GPUType> = {
   H100: 'H100',
   H200: 'H200',
@@ -105,12 +108,14 @@ export function getGPUTFlops(gpu: GPUType | string, precision: Precision): numbe
     return byPrecision
   }
 
+  // bf16 frequently piggybacks fp16 tensor-core throughput on many SKUs.
   if (precision === 'bf16' && spec.tflops.fp16) {
     return spec.tflops.fp16
   }
 
-  if (precision === 'fp8' && spec.tflops.bf16) {
-    return spec.tflops.bf16 * 2
+  // Do not synthesize fp8 throughput from lower precisions. If fp8 is missing, treat as unsupported.
+  if (precision === 'fp8') {
+    return undefined
   }
 
   if (spec.tflops.fp16) {
