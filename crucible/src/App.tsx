@@ -1,5 +1,7 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
+import { CrucibleFooter } from './components/CrucibleFooter'
 import { InputPanel } from './components/InputPanel'
+import { MathCodeWorkbenchPage } from './components/MathCodeWorkbenchPage'
 import { ResultsPanel } from './components/ResultsPanel'
 import { useGPUPricing } from './hooks/useGPUPricing'
 import { useTrainingEstimate } from './hooks/useTrainingEstimate'
@@ -59,6 +61,8 @@ const DEFAULT_REQUEST: EstimateRequest = {
   num_runs: 1,
 }
 
+const MAIN_RAGWELD_URL = 'https://ragweld.com/'
+
 function formatTime(value: string | null): string {
   if (!value) {
     return 'n/a'
@@ -73,11 +77,22 @@ function formatTime(value: string | null): string {
   return `${pad(parsed.getHours())}:${pad(parsed.getMinutes())}:${pad(parsed.getSeconds())}`
 }
 
-function App() {
+function resolveRoute(pathname: string): 'workbench' | 'math-code' {
+  const normalized = pathname.replace(/\/+$/, '')
+  if (normalized.endsWith('/math-code')) {
+    return 'math-code'
+  }
+  return 'workbench'
+}
+
+function EstimatorWorkbench() {
   const { state, setState, queryString } = useURLState(DEFAULT_REQUEST)
   const [modelResolveLoading, setModelResolveLoading] = useState(false)
   const [modelResolveError, setModelResolveError] = useState<string | null>(null)
   const [modelResolveMessage, setModelResolveMessage] = useState<string | null>(null)
+  const routePrefix =
+    typeof window !== 'undefined' && window.location.pathname.startsWith('/crucible') ? '/crucible' : ''
+  const mathCodeHref = `${routePrefix}/math-code`
 
   const {
     data: estimate,
@@ -160,23 +175,33 @@ function App() {
       <header className="card app-header">
         <div className="brand-wrap">
           <p className="brand-kicker">ragweld engineering tools</p>
-          <h1>CRUCIBLE</h1>
+          <h1>crucible</h1>
           <p className="tagline">Know what your training costs before you burn the credits.</p>
         </div>
 
-        <div className="header-meta mono">
-          <span>Target GPUs: {state.target_gpu.length}</span>
-          <span>Pricing rows: {pricing.length}</span>
-          <span>Pricing refreshed: {formatTime(pricingFetchedAt)}</span>
-        </div>
+        <div className="header-right">
+          <a className="header-callout" href={MAIN_RAGWELD_URL} target="_blank" rel="noopener noreferrer">
+            and for when you need everything on prem and local, check out our mlops engineering surface and
+            workbench.
+          </a>
 
-        <div className="header-actions">
-          <button type="button" className="ghost-button" onClick={refetchPricing}>
-            Refresh Pricing
-          </button>
-          <button type="button" className="ghost-button" onClick={refetchEstimate}>
-            Recompute Now
-          </button>
+          <div className="header-meta mono">
+            <span>Target GPUs: {state.target_gpu.length}</span>
+            <span>Pricing rows: {pricing.length}</span>
+            <span>Pricing refreshed: {formatTime(pricingFetchedAt)}</span>
+          </div>
+
+          <div className="header-actions">
+            <a className="ghost-link-button" href={mathCodeHref}>
+              Math Code Workbench
+            </a>
+            <button type="button" className="ghost-button" onClick={refetchPricing}>
+              Refresh Pricing
+            </button>
+            <button type="button" className="ghost-button" onClick={refetchEstimate}>
+              Recompute Now
+            </button>
+          </div>
         </div>
       </header>
 
@@ -204,8 +229,25 @@ function App() {
           onRetryEstimate={refetchEstimate}
         />
       </main>
+
+      <CrucibleFooter />
     </div>
   )
+}
+
+function App() {
+  const route = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return 'workbench'
+    }
+    return resolveRoute(window.location.pathname)
+  }, [])
+
+  if (route === 'math-code') {
+    return <MathCodeWorkbenchPage />
+  }
+
+  return <EstimatorWorkbench />
 }
 
 export default App
