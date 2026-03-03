@@ -474,6 +474,11 @@ export function InputPanel({
 }: InputPanelProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [modelReference, setModelReference] = useState('')
+  const [sectionOpen, setSectionOpen] = useState({ model: true, dataset: true, hardware: true })
+
+  const toggleSection = useCallback((key: 'model' | 'dataset' | 'hardware') => {
+    setSectionOpen((prev) => ({ ...prev, [key]: !prev[key] }))
+  }, [])
 
   const patchField = useCallback(
     <K extends keyof EstimateRequest>(key: K, next: EstimateRequest[K]) => {
@@ -738,7 +743,14 @@ export function InputPanel({
       </div>
 
       <fieldset className="panel-section">
-        <legend>Model & Method</legend>
+        <legend
+          className="section-toggle-legend"
+          data-open={String(sectionOpen.model)}
+          onClick={() => toggleSection('model')}
+        >
+          Model & Method
+        </legend>
+        <div className="section-body" data-open={String(sectionOpen.model)}>
         <div className="field">
           <HelpLabel
             text="Resolve from Hugging Face URL / repo id"
@@ -996,10 +1008,18 @@ export function InputPanel({
             </label>
           </div>
         )}
+        </div>
       </fieldset>
 
       <fieldset className="panel-section">
-        <legend>Dataset & Training</legend>
+        <legend
+          className="section-toggle-legend"
+          data-open={String(sectionOpen.dataset)}
+          onClick={() => toggleSection('dataset')}
+        >
+          Dataset & Training
+        </legend>
+        <div className="section-body" data-open={String(sectionOpen.dataset)}>
         <div className="field-grid field-grid-2">
           <label className="field">
             <HelpLabel
@@ -1103,11 +1123,18 @@ export function InputPanel({
             </select>
           </label>
         </div>
+        </div>
       </fieldset>
 
       <fieldset className="panel-section">
-        <legend>Hardware & Pricing</legend>
-
+        <legend
+          className="section-toggle-legend"
+          data-open={String(sectionOpen.hardware)}
+          onClick={() => toggleSection('hardware')}
+        >
+          Hardware & Pricing
+        </legend>
+        <div className="section-body" data-open={String(sectionOpen.hardware)}>
         <div className="field-grid field-grid-2">
           <label className="field">
             <HelpLabel
@@ -1249,6 +1276,7 @@ export function InputPanel({
           helperText="Leave blank to include all instance types."
           searchPlaceholder="Filter instance types"
         />
+        </div>
       </fieldset>
 
       <button

@@ -1,12 +1,3 @@
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts'
 import type { VRAMBreakdown as VRAMBreakdownValues, VRAMEstimateBands } from '../types'
 
 interface VRAMBreakdownProps {
@@ -40,12 +31,7 @@ function formatGB(value: number): string {
 }
 
 export function VRAMBreakdown({ bands, breakdown }: VRAMBreakdownProps) {
-  const chartData = [
-    {
-      name: 'VRAM',
-      ...breakdown,
-    },
-  ]
+  const total = SEGMENTS.reduce((sum, seg) => sum + breakdown[seg.key], 0)
 
   return (
     <section className="card chart-card">
@@ -57,43 +43,33 @@ export function VRAMBreakdown({ bands, breakdown }: VRAMBreakdownProps) {
         </span>
       </div>
 
-      <div className="chart-wrap vram-chart">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="4 4" stroke="#202a2f" />
-            <XAxis hide />
-            <YAxis dataKey="name" stroke="#748089" />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: '#0d1418',
-                border: '1px solid #23313a',
-                borderRadius: '6px',
-                color: '#d7e0e6',
-              }}
-              formatter={(value, name) => {
-                const numericValue =
-                  typeof value === 'number' ? value : Number(value ?? 0)
-
-                return [formatGB(numericValue), name]
-              }}
-            />
-            {SEGMENTS.map((segment) => (
-              <Bar
-                key={segment.key}
-                dataKey={segment.key}
-                name={segment.label}
-                stackId="vram"
-                fill={segment.color}
-              />
-            ))}
-          </BarChart>
-        </ResponsiveContainer>
+      <div className="vram-bar-container">
+        {SEGMENTS.map((segment) => {
+          const value = breakdown[segment.key]
+          if (value <= 0) return null
+          const pct = total > 0 ? (value / total) * 100 : 0
+          return (
+            <div
+              key={segment.key}
+              className="vram-bar-segment"
+              style={{ width: `${pct}%`, backgroundColor: segment.color }}
+            >
+              <div className="vram-bar-tooltip">
+                <div className="vram-bar-tooltip-title">{segment.label}</div>
+                <div>{formatGB(value)} ({pct.toFixed(1)}%)</div>
+              </div>
+            </div>
+          )
+        })}
       </div>
 
       <div className="metric-grid">
         {SEGMENTS.map((segment) => (
           <div key={segment.key} className="metric-row">
-            <span className="metric-label">{segment.label}</span>
+            <span className="metric-label">
+              <span className="metric-color-dot" style={{ backgroundColor: segment.color }} />
+              {segment.label}
+            </span>
             <span className="metric-value">{formatGB(breakdown[segment.key])}</span>
           </div>
         ))}
