@@ -41,7 +41,7 @@ describe('estimateCostComparison', () => {
     expect(rtx4090).toBeDefined()
     expect(h100?.fits_in_vram).toBe(true)
     expect(rtx4090?.fits_in_vram).toBe(false)
-    expect(h100?.total_cost_dollars).toBeCloseTo(7.1385, 3)
+    expect(h100?.total_cost_dollars).toBeCloseTo(5.41, 2)
   })
 
   it('uses selected spot tier when available', () => {
@@ -64,7 +64,7 @@ describe('estimateCostComparison', () => {
       43,
     )
 
-    expect(comparison.entries[0].total_cost_dollars).toBeCloseTo(2.8554, 3)
+    expect(comparison.entries[0].total_cost_dollars).toBeCloseTo(2.16, 2)
   })
 
   it('uses the cheapest available price across selected tiers', () => {
@@ -87,7 +87,7 @@ describe('estimateCostComparison', () => {
       43,
     )
 
-    expect(comparison.entries[0].total_cost_dollars).toBeCloseTo(2.8554, 3)
+    expect(comparison.entries[0].total_cost_dollars).toBeCloseTo(2.16, 2)
   })
 
   it('keeps rows when any selected tier is available', () => {

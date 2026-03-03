@@ -18,6 +18,7 @@ const QUANTIZATION_PROFILE_VALUES = new Set([
   'fp4',
   'mxfp4',
   'dynamic_4bit',
+  'dynamic_2_0',
   'int8',
   'int16',
   'int32',
@@ -110,7 +111,13 @@ function normalizeQuantizationProfile(
   }
 
   if (bits === 4) {
-    if (value === 'nf4' || value === 'fp4' || value === 'mxfp4' || value === 'dynamic_4bit') {
+    if (
+      value === 'nf4' ||
+      value === 'fp4' ||
+      value === 'mxfp4' ||
+      value === 'dynamic_4bit' ||
+      value === 'dynamic_2_0'
+    ) {
       return value
     }
     return 'nf4'

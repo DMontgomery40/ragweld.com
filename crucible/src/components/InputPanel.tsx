@@ -58,13 +58,14 @@ interface MultiSelectMatrixProps {
 
 const METHOD_OPTIONS: FineTuneMethod[] = ['Full Fine-Tune', 'LoRA', 'QLoRA']
 const ARCHITECTURE_OPTIONS: Architecture[] = ['Dense', 'MoE']
-const TRAINING_TYPE_OPTIONS: TrainingType[] = ['SFT', 'GRPO', 'DPO', 'PPO', 'ORPO', 'SimPO']
+const TRAINING_TYPE_OPTIONS: TrainingType[] = ['SFT', 'GRPO', 'GSPO', 'DPO', 'PPO', 'ORPO', 'SimPO']
 const QUANTIZATION_OPTIONS: QuantizationBits[] = [4, 8, 16, 32]
 const FOUR_BIT_QUANTIZATION_PROFILES: QuantizationProfile[] = [
   'nf4',
   'fp4',
   'mxfp4',
   'dynamic_4bit',
+  'dynamic_2_0',
 ]
 const NON_FOUR_BIT_PROFILE_BY_BITS: Record<Exclude<QuantizationBits, 4>, QuantizationProfile> = {
   8: 'int8',
@@ -88,6 +89,7 @@ const OPTIMIZER_OPTIONS: Optimizer[] = [
 ]
 const LR_SCHEDULER_OPTIONS: LRScheduler[] = ['cosine', 'linear', 'constant']
 const PRECISION_OPTIONS: Precision[] = ['fp32', 'fp16', 'bf16', 'fp8']
+const QAT_SCHEME_OPTIONS: EstimateRequest['qat_scheme'][] = ['fp8-int4', 'fp8-fp8', 'int8-int4', 'int4']
 const PRICING_TIER_OPTIONS: PricingTier[] = ['on_demand', 'spot', 'reserved_1mo', 'reserved_3mo']
 const GPU_FALLBACK_OPTIONS: GPUType[] = [
   'H100',
@@ -254,6 +256,8 @@ function formatQuantizationProfileLabel(profile: QuantizationProfile): string {
       return 'MXFP4 (Blackwell-class)'
     case 'dynamic_4bit':
       return 'Dynamic 4-bit'
+    case 'dynamic_2_0':
+      return 'Dynamic 2.0 (GGUF)'
     case 'int8':
       return 'INT8'
     case 'int16':
@@ -262,6 +266,21 @@ function formatQuantizationProfileLabel(profile: QuantizationProfile): string {
       return 'INT32'
     default:
       return profile
+  }
+}
+
+function formatQATSchemeLabel(scheme: EstimateRequest['qat_scheme']): string {
+  switch (scheme) {
+    case 'fp8-int4':
+      return 'FP8 -> INT4'
+    case 'fp8-fp8':
+      return 'FP8 -> FP8'
+    case 'int8-int4':
+      return 'INT8 -> INT4'
+    case 'int4':
+      return 'INT4'
+    default:
+      return scheme
   }
 }
 
@@ -974,6 +993,38 @@ export function InputPanel({
 
           <label className="field">
             <HelpLabel
+              text="Use QAT"
+              tooltip="Quantization-aware training trains through the quantization path. Unsloth notes QAT has no extra overhead during inference and uses the same disk/memory as normal quantization."
+            />
+            <input
+              type="checkbox"
+              checked={value.use_qat}
+              onChange={(event) => {
+                patchField('use_qat', event.target.checked)
+              }}
+            />
+            <span className="field-hint">Optional. Most useful when targeting 4-bit deployments.</span>
+          </label>
+
+          <label className="field">
+            <HelpLabel text="QAT scheme" tooltip="Scheme selection for Unsloth QAT (e.g., FP8 -> INT4)." />
+            <select
+              value={value.qat_scheme}
+              disabled={!value.use_qat}
+              onChange={(event) => {
+                patchField('qat_scheme', event.target.value as EstimateRequest['qat_scheme'])
+              }}
+            >
+              {QAT_SCHEME_OPTIONS.map((scheme) => (
+                <option key={scheme} value={scheme}>
+                  {formatQATSchemeLabel(scheme)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="field">
+            <HelpLabel
               text="Framework"
               tooltip="Applies framework-specific throughput and runtime overhead assumptions."
             />
@@ -1137,7 +1188,10 @@ export function InputPanel({
             <select
               value={value.training_type}
               onChange={(event) => {
-                patchField('training_type', event.target.value as TrainingType)
+                const nextType = event.target.value as TrainingType
+                const nextImportance =
+                  nextType === 'GSPO' ? 'sequence' : nextType === 'GRPO' ? 'token' : value.importance_sampling_level
+                onChange({ training_type: nextType, importance_sampling_level: nextImportance })
               }}
             >
               {TRAINING_TYPE_OPTIONS.map((option) => (
@@ -1457,6 +1511,26 @@ export function InputPanel({
 
             <label className="field">
               <HelpLabel
+                text="Custom speed multiplier"
+                tooltip="Extra multiplier applied on top of framework/kernel assumptions (useful for benchmarking your own stack)."
+              />
+              <input
+                type="number"
+                min={0.1}
+                step={0.05}
+                value={value.custom_speed_multiplier}
+                onChange={(event) => {
+                  const parsed = Number(event.target.value)
+                  patchField(
+                    'custom_speed_multiplier',
+                    Number.isFinite(parsed) ? Math.max(0.1, parsed) : value.custom_speed_multiplier,
+                  )
+                }}
+              />
+            </label>
+
+            <label className="field">
+              <HelpLabel
                 text="Dataset rows (optional)"
                 tooltip="Optional row count used for consistency checks against token totals."
               />
@@ -1539,6 +1613,47 @@ export function InputPanel({
 
                   const parsed = Number(raw)
                   patchField('reward_model_size', Number.isFinite(parsed) ? Math.max(0, parsed) : null)
+                }}
+              />
+            </label>
+
+            <label className="field">
+              <HelpLabel
+                text="Importance sampling"
+                tooltip="GRPO defaults to token-level importance sampling. GSPO uses sequence-level importance sampling."
+              />
+              <select
+                value={value.importance_sampling_level}
+                disabled={value.training_type === 'GSPO'}
+                onChange={(event) => {
+                  patchField(
+                    'importance_sampling_level',
+                    event.target.value as EstimateRequest['importance_sampling_level'],
+                  )
+                }}
+              >
+                <option value="token">Token</option>
+                <option value="sequence">Sequence</option>
+              </select>
+            </label>
+
+            <label className="field">
+              <HelpLabel
+                text="Reference model (%)"
+                tooltip="Approximate fraction of reference-model forward passes used for KL regularization (0-100)."
+              />
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={value.reference_model_pct}
+                onChange={(event) => {
+                  const parsed = Number(event.target.value)
+                  patchField(
+                    'reference_model_pct',
+                    Number.isFinite(parsed) ? Math.min(100, Math.max(0, parsed)) : value.reference_model_pct,
+                  )
                 }}
               />
             </label>
@@ -1670,6 +1785,35 @@ export function InputPanel({
                 }}
               />
               <span>RoPE kernels</span>
+            </label>
+
+            <label
+              className="switch-field"
+              title="Assumes fused + chunked cross-entropy loss kernels are available for long-context training."
+            >
+              <input
+                type="checkbox"
+                checked={value.use_fused_chunked_ce_loss}
+                onChange={(event) => {
+                  patchField('use_fused_chunked_ce_loss', event.target.checked)
+                }}
+              />
+              <span>Fused chunked CE</span>
+            </label>
+
+            <label
+              className="switch-field"
+              title="Assumes Unsloth Split-LoRA / faster MoE kernels are used when training MoE models."
+            >
+              <input
+                type="checkbox"
+                checked={value.use_faster_moe_kernels}
+                disabled={value.architecture !== 'MoE'}
+                onChange={(event) => {
+                  patchField('use_faster_moe_kernels', event.target.checked)
+                }}
+              />
+              <span>Faster MoE kernels</span>
             </label>
 
             <label

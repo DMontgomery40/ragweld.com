@@ -11,6 +11,8 @@ export function makeEstimateRequest(overrides: Partial<EstimateRequest> = {}): E
     method: 'QLoRA',
     quantization_bits: 4,
     quantization_profile: 'nf4',
+    use_qat: false,
+    qat_scheme: 'int4',
     lora_rank: 16,
     lora_alpha: 16,
     lora_target_modules: ['q', 'k', 'v', 'o', 'gate', 'up', 'down'],
@@ -36,7 +38,10 @@ export function makeEstimateRequest(overrides: Partial<EstimateRequest> = {}): E
     use_flash_attention: true,
     use_triton_kernels: true,
     use_rope_kernels: true,
+    use_fused_chunked_ce_loss: true,
+    use_faster_moe_kernels: true,
     use_packing: true,
+    custom_speed_multiplier: 1,
 
     target_gpu: ['H100', 'A100_80G'],
     target_providers: [],
@@ -49,9 +54,11 @@ export function makeEstimateRequest(overrides: Partial<EstimateRequest> = {}): E
     min_vram_gb: null,
 
     training_type: 'SFT',
+    importance_sampling_level: 'token',
     grpo_num_generations: 8,
     reward_model_size: null,
     vllm_batch_size: 8,
+    reference_model_pct: 100,
     num_runs: 1,
     ...overrides,
   }

@@ -33,18 +33,20 @@ const FOUR_BIT_QUANTIZATION_PROFILES: QuantizationProfile[] = [
   'fp4',
   'mxfp4',
   'dynamic_4bit',
+  'dynamic_2_0',
 ]
 
 // These are planning multipliers, not hardware-level guarantees.
 // They model metadata/scaling overhead differences between common 4-bit profiles.
 const FOUR_BIT_PROFILE_METADATA_MULTIPLIER: Record<
-  Extract<QuantizationProfile, 'nf4' | 'fp4' | 'mxfp4' | 'dynamic_4bit'>,
+  Extract<QuantizationProfile, 'nf4' | 'fp4' | 'mxfp4' | 'dynamic_4bit' | 'dynamic_2_0'>,
   number
 > = {
   nf4: 1.1,
   fp4: 1.12,
   mxfp4: 1.08,
   dynamic_4bit: 1.16,
+  dynamic_2_0: 1.15,
 }
 
 // Optimizer state memory per trainable parameter.
@@ -305,13 +307,50 @@ export function estimateVRAM(params: EstimateRequest): VRAMEstimateDetails {
     if (params.use_triton_kernels) {
       activationVRAMGB *= 0.95
     }
+    if (params.use_fused_chunked_ce_loss && params.max_seq_length >= 32768) {
+      activationVRAMGB *= 0.4
+    }
+    if (params.architecture === 'MoE' && params.use_faster_moe_kernels) {
+      activationVRAMGB *= 0.65
+    }
+  }
+
+  const isGrpo = params.training_type === 'GRPO' || params.training_type === 'GSPO'
+  const generations = isGrpo ? Math.max(1, Math.round(asNonNegative(params.grpo_num_generations, 1))) : 0
+  const vocabSize = model.vocab_size
+  const contextLength = Math.max(1, Math.round(asNonNegative(params.max_seq_length, 1)))
+
+  // Unsloth GRPO kernels avoid materializing full logits tensors; model this as an 8x reduction.
+  const rlLogitsReduction = params.framework === 'Unsloth' ? 8 : 1
+  const rlLogitsBytes = isGrpo ? 2 * 2 * generations * contextLength * vocabSize : 0
+  const rlLogitsVRAMGB = rlLogitsBytes / rlLogitsReduction / BYTES_IN_GIB
+
+  // vLLM KV cache (approx): 2 * 2 bytes * layers * seq_len * kv_dim * batch.
+  const headDim = model.num_attention_heads > 0 ? model.hidden_size / model.num_attention_heads : 0
+  const kvDim = model.num_kv_heads * headDim
+  const kvCacheBytes =
+    isGrpo ? 2 * 2 * model.num_layers * contextLength * kvDim * Math.max(1, params.vllm_batch_size) : 0
+  const kvCacheVRAMGB = kvCacheBytes / BYTES_IN_GIB
+
+  if (isGrpo) {
+    if (rlLogitsVRAMGB > 8) {
+      warnings.push(
+        `GRPO/GSPO logits memory estimate is large (${rlLogitsVRAMGB.toFixed(1)} GB). Logits scale with vocab_size * seq_len * generations; consider reducing generations or sequence length.`,
+      )
+    }
+    if (kvCacheVRAMGB > 8) {
+      warnings.push(
+        `vLLM KV cache estimate is large (${kvCacheVRAMGB.toFixed(1)} GB). KV cache scales with layers * kv_dim * seq_len * vLLM batch size.`,
+      )
+    }
   }
 
   const frameworkOverheadMultiplier = FRAMEWORK_OVERHEAD_MULTIPLIER[params.framework]
   const frameworkRuntimeOverheadGB = FRAMEWORK_RUNTIME_OVERHEAD_GB[params.framework]
-  const nonWeightBeforeFrameworkGB = loraVRAMGB + optimizerVRAMGB + gradientVRAMGB + activationVRAMGB
-  const nonWeightAfterFrameworkGB =
-    nonWeightBeforeFrameworkGB * frameworkOverheadMultiplier + frameworkRuntimeOverheadGB
+  const nonWeightBeforeFrameworkGB =
+    loraVRAMGB + optimizerVRAMGB + gradientVRAMGB + activationVRAMGB + rlLogitsVRAMGB + kvCacheVRAMGB
+  const frameworkOverheadGB = nonWeightBeforeFrameworkGB * frameworkOverheadMultiplier + frameworkRuntimeOverheadGB
+  const nonWeightAfterFrameworkGB = nonWeightBeforeFrameworkGB + frameworkOverheadGB
 
   const baseVRAMGB = modelVRAMGB + nonWeightAfterFrameworkGB
   const tightVRAMGB = baseVRAMGB * 1.05
@@ -359,6 +398,8 @@ export function estimateVRAM(params: EstimateRequest): VRAMEstimateDetails {
           ? 3
           : normalizedQuantizationProfile === 'dynamic_4bit'
             ? 4
+            : normalizedQuantizationProfile === 'dynamic_2_0'
+              ? 5
             : normalizedQuantizationProfile === 'int8'
               ? 8
               : normalizedQuantizationProfile === 'int16'
@@ -375,9 +416,15 @@ export function estimateVRAM(params: EstimateRequest): VRAMEstimateDetails {
   intermediates.token_utilization = tokenUtilization
   intermediates.effective_seq = effectiveSeq
   intermediates.activation_bytes_per_layer = activationBytesPerLayer
+  intermediates.rl_logits_reduction = rlLogitsReduction
+  intermediates.rl_logits_bytes = rlLogitsBytes
+  intermediates.rl_logits_vram_gb = rlLogitsVRAMGB
+  intermediates.kv_cache_bytes = kvCacheBytes
+  intermediates.kv_cache_vram_gb = kvCacheVRAMGB
   intermediates.framework_overhead_multiplier = frameworkOverheadMultiplier
   intermediates.framework_runtime_overhead_gb = frameworkRuntimeOverheadGB
   intermediates.non_weight_vram_before_framework_gb = nonWeightBeforeFrameworkGB
+  intermediates.framework_overhead_gb = frameworkOverheadGB
   intermediates.non_weight_vram_after_framework_gb = nonWeightAfterFrameworkGB
   intermediates.base_vram_gb = baseVRAMGB
   intermediates.tight_multiplier = 1.05
@@ -397,7 +444,9 @@ export function estimateVRAM(params: EstimateRequest): VRAMEstimateDetails {
       optimizer_states: optimizerVRAMGB,
       gradients: gradientVRAMGB,
       activations: activationVRAMGB,
-      non_weight_after_framework: nonWeightAfterFrameworkGB,
+      rl_logits: rlLogitsVRAMGB,
+      kv_cache: kvCacheVRAMGB,
+      non_weight_after_framework: frameworkOverheadGB,
       buffer: bufferGB,
     },
     intermediates,

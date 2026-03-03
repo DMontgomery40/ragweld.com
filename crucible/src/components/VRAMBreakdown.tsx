@@ -18,6 +18,8 @@ const SEGMENTS: SegmentConfig[] = [
   { key: 'optimizer_states', label: 'Optimizer', color: '#22c55e' },
   { key: 'gradients', label: 'Gradients', color: '#38bdf8' },
   { key: 'activations', label: 'Activations', color: '#0891b2' },
+  { key: 'rl_logits', label: 'RL logits', color: '#a855f7' },
+  { key: 'kv_cache', label: 'KV cache', color: '#6366f1' },
   {
     key: 'non_weight_after_framework',
     label: 'Framework overhead',

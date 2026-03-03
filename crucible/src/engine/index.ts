@@ -3,7 +3,7 @@ import { estimateCostComparison } from './cost'
 import { estimateTraining } from './training'
 import { estimateVRAM } from './vram'
 
-const COMPUTATION_VERSION = '1.0.0'
+const COMPUTATION_VERSION = '1.1.0'
 
 function latestFetchedAt(pricing: ProviderPricing[]): string {
   const latestTimestamp = pricing.reduce((maxTimestamp, entry) => {

@@ -22,7 +22,8 @@ const TRAINING_TYPE_FLOP_MULTIPLIER: Record<TrainingType, number> = {
   SFT: 1.0,
   DPO: 1.15,
   ORPO: 1.2,
-  GRPO: 1.8,
+  GRPO: 1.0,
+  GSPO: 1.0,
   PPO: 2.0,
   SimPO: 1.1,
 }
@@ -44,19 +45,24 @@ function speedMultiplier(params: EstimateRequest): number {
   let multiplier = 1.0
   if (params.framework === 'Unsloth') {
     multiplier *= 2.0
-    // Treat "rope kernels" and "triton kernels" as two toggles that can unlock
-    // the same fast-path in Unsloth builds (rather than stacking them).
-    if (params.use_rope_kernels || params.use_triton_kernels) {
-      multiplier *= 1.5
-    }
-  } else {
-    // For non-Unsloth stacks, model kernel improvements as smaller multipliers.
-    if (params.use_triton_kernels) {
-      multiplier *= 1.1
-    }
-    if (params.use_flash_attention) {
-      multiplier *= 1.15
-    }
+  }
+  if (params.use_flash_attention) {
+    multiplier *= 1.2
+  }
+  if (params.use_triton_kernels) {
+    multiplier *=
+      params.framework === 'Unsloth' && params.architecture === 'MoE' && params.use_faster_moe_kernels
+        ? 1.35
+        : 1.1
+  }
+  if (params.use_rope_kernels) {
+    multiplier *= 1.5
+  }
+  if (params.architecture === 'MoE' && params.framework === 'Unsloth' && params.use_faster_moe_kernels) {
+    multiplier *= 2.0
+  }
+  if (params.custom_speed_multiplier && params.custom_speed_multiplier > 0) {
+    multiplier *= params.custom_speed_multiplier
   }
   return multiplier
 }
@@ -103,7 +109,34 @@ export function estimateTraining(params: EstimateRequest): TrainingEstimate {
     asNonNegative(params.dataset_rows ?? 0) * asNonNegative(params.avg_tokens_per_row)
   const datasetTokens = params.dataset_tokens > 0 ? params.dataset_tokens : inferredDatasetTokens
   const epochs = asNonNegative(params.num_epochs, 1)
-  const totalTokens = asNonNegative(datasetTokens) * epochs
+  const baseTokens = asNonNegative(datasetTokens) * epochs
+
+  const isGrpo = params.training_type === 'GRPO' || params.training_type === 'GSPO'
+  const generations = isGrpo ? Math.max(1, Math.round(asNonNegative(params.grpo_num_generations, 1))) : 0
+  const referencePct = Math.min(100, Math.max(0, asNonNegative(params.reference_model_pct, 100)))
+
+  let totalTokens = baseTokens
+  let forwardOnlyTokens = 0
+
+  if (isGrpo) {
+    const inferredRows =
+      params.dataset_rows ??
+      (params.avg_tokens_per_row > 0 ? Math.round(datasetTokens / params.avg_tokens_per_row) : 0)
+    if (!inferredRows || inferredRows <= 0) {
+      warnings.push(
+        'GRPO/GSPO assumes dataset_rows (or avg_tokens_per_row) is set so we can model prompt count. Falling back to dataset_tokens for token math.',
+      )
+    } else {
+      const prompts = Math.max(1, inferredRows)
+      const seqLen = Math.max(1, Math.round(asNonNegative(params.max_seq_length, 1)))
+      totalTokens = prompts * generations * seqLen * epochs
+      // Forward-only passes: generation + (optional) reference model KL.
+      forwardOnlyTokens = totalTokens * (1 + referencePct / 100)
+      warnings.push(
+        `GRPO/GSPO tokens estimated as prompts (${prompts}) * generations (${generations}) * seq_len (${seqLen}) * epochs (${epochs}).`,
+      )
+    }
+  }
 
   const utilization = tokenUtilization(params)
   const effectiveSeq = asNonNegative(params.max_seq_length) * utilization
@@ -124,8 +157,25 @@ export function estimateTraining(params: EstimateRequest): TrainingEstimate {
 
   // Dense-transformer planning rule of thumb: ~6 * params * tokens for training FLOPs.
   const modelParams = asNonNegative(params.model_params_billions) * 1e9
-  const baseTotalFLOPs = 6 * modelParams * totalTokens
+  const trainingFLOPs = 6 * modelParams * totalTokens
+  const forwardOnlyFLOPs = 2 * modelParams * forwardOnlyTokens
+  const baseTotalFLOPs = trainingFLOPs + forwardOnlyFLOPs
   const loraComputeDiscount = params.method === 'LoRA' || params.method === 'QLoRA' ? 0.9 : 1.0
+
+  let moeComputeMultiplier = 1.0
+  if (params.architecture === 'MoE' && params.moe_total_experts > 0 && params.moe_active_experts > 0) {
+    moeComputeMultiplier = params.moe_active_experts / params.moe_total_experts
+    if (moeComputeMultiplier < 1) {
+      warnings.push(
+        `MoE compute scaled by active/total experts (${params.moe_active_experts}/${params.moe_total_experts} = ${moeComputeMultiplier.toFixed(2)}).`,
+      )
+    }
+  }
+
+  const qatComputeMultiplier = params.use_qat ? 1.05 : 1.0
+  if (params.use_qat) {
+    warnings.push('QAT compute overhead modeled as +5% (heuristic).')
+  }
 
   let attentionPenalty = 1.0
   if (params.max_seq_length >= 32768) {
@@ -142,7 +192,8 @@ export function estimateTraining(params: EstimateRequest): TrainingEstimate {
     )
   }
 
-  const totalFLOPs = baseTotalFLOPs * loraComputeDiscount * attentionPenalty * rlMultiplier
+  const totalFLOPs =
+    baseTotalFLOPs * loraComputeDiscount * attentionPenalty * rlMultiplier * moeComputeMultiplier * qatComputeMultiplier
   const frameworkMFU = MFU_BY_FRAMEWORK[params.framework]
   const frameworkSpeedMultiplier = speedMultiplier(params)
 
@@ -168,9 +219,14 @@ export function estimateTraining(params: EstimateRequest): TrainingEstimate {
   intermediates.effective_seq = effectiveSeq
   intermediates.effective_batch_tokens = effectiveBatchTokens
   intermediates.base_total_flops = baseTotalFLOPs
+  intermediates.training_flops = trainingFLOPs
+  intermediates.forward_only_tokens = forwardOnlyTokens
+  intermediates.forward_only_flops = forwardOnlyFLOPs
   intermediates.lora_compute_discount = loraComputeDiscount
   intermediates.attention_penalty = attentionPenalty
   intermediates.training_type_multiplier = rlMultiplier
+  intermediates.moe_compute_multiplier = moeComputeMultiplier
+  intermediates.qat_compute_multiplier = qatComputeMultiplier
   intermediates.framework_mfu = frameworkMFU
   intermediates.framework_speed_multiplier = frameworkSpeedMultiplier
   intermediates.total_flops = totalFLOPs
@@ -187,6 +243,10 @@ export function estimateTraining(params: EstimateRequest): TrainingEstimate {
       mfu: frameworkMFU,
       speed_multiplier: frameworkSpeedMultiplier,
       attention_penalty: attentionPenalty,
+      moe_compute_multiplier: moeComputeMultiplier,
+      qat_compute_multiplier: qatComputeMultiplier,
+      custom_speed_multiplier: params.custom_speed_multiplier,
+      reference_model_pct: referencePct,
     },
     intermediates,
     warnings,

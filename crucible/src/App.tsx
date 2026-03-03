@@ -18,6 +18,8 @@ const DEFAULT_REQUEST: EstimateRequest = {
   method: 'QLoRA',
   quantization_bits: 4,
   quantization_profile: 'nf4',
+  use_qat: false,
+  qat_scheme: 'int4',
   lora_rank: 32,
   lora_alpha: 64,
   lora_target_modules: ['q', 'k', 'v', 'o', 'gate', 'up', 'down'],
@@ -43,7 +45,10 @@ const DEFAULT_REQUEST: EstimateRequest = {
   use_flash_attention: true,
   use_triton_kernels: true,
   use_rope_kernels: true,
+  use_fused_chunked_ce_loss: true,
+  use_faster_moe_kernels: true,
   use_packing: true,
+  custom_speed_multiplier: 1,
 
   target_gpu: ['B200', 'H200', 'H100', 'A100_80G', 'L40S'],
   target_providers: [],
@@ -56,9 +61,11 @@ const DEFAULT_REQUEST: EstimateRequest = {
   min_vram_gb: null,
 
   training_type: 'SFT',
+  importance_sampling_level: 'token',
   grpo_num_generations: 4,
   reward_model_size: null,
   vllm_batch_size: 8,
+  reference_model_pct: 100,
   num_runs: 1,
 }
 

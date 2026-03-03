@@ -14,10 +14,10 @@ describe('estimateTraining', () => {
     expect(result.assumptions.token_utilization).toBe(0.95)
     expect(result.assumptions.lora_compute_discount).toBe(0.9)
     expect(result.assumptions.mfu).toBe(0.45)
-    expect(result.assumptions.speed_multiplier).toBe(3)
+    expect(result.assumptions.speed_multiplier).toBeCloseTo(3.96, 2)
 
-    expect(result.estimated_hours_by_gpu.H100).toBeCloseTo(2.38, 2)
-    expect(result.estimated_hours_by_gpu.A100_80G).toBeCloseTo(7.54, 2)
+    expect(result.estimated_hours_by_gpu.H100).toBeCloseTo(1.8, 2)
+    expect(result.estimated_hours_by_gpu.A100_80G).toBeCloseTo(5.71, 2)
   })
 
   it('applies long-context attention penalty warning', () => {

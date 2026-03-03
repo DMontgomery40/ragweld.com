@@ -6,10 +6,14 @@ export type QuantizationProfile =
   | 'fp4'
   | 'mxfp4'
   | 'dynamic_4bit'
+  | 'dynamic_2_0'
   | 'int8'
   | 'int16'
   | 'int32'
-export type TrainingType = 'SFT' | 'GRPO' | 'DPO' | 'PPO' | 'ORPO' | 'SimPO'
+export type TrainingType = 'SFT' | 'GRPO' | 'GSPO' | 'DPO' | 'PPO' | 'ORPO' | 'SimPO'
+
+export type QATScheme = 'fp8-int4' | 'fp8-fp8' | 'int8-int4' | 'int4'
+export type ImportanceSamplingLevel = 'token' | 'sequence'
 export type Optimizer = 'adamw' | 'adamw_8bit' | 'sgd' | 'paged_adamw_8bit' | 'muon'
 export type LRScheduler = 'cosine' | 'linear' | 'constant'
 export type Precision = 'fp32' | 'fp16' | 'bf16' | 'fp8'
@@ -77,6 +81,8 @@ export interface EstimateRequest {
   method: FineTuneMethod
   quantization_bits: QuantizationBits
   quantization_profile: QuantizationProfile
+  use_qat: boolean
+  qat_scheme: QATScheme
   lora_rank: number
   lora_alpha: number
   lora_target_modules: LoRATargetModule[]
@@ -102,7 +108,10 @@ export interface EstimateRequest {
   use_flash_attention: boolean
   use_triton_kernels: boolean
   use_rope_kernels: boolean
+  use_fused_chunked_ce_loss: boolean
+  use_faster_moe_kernels: boolean
   use_packing: boolean
+  custom_speed_multiplier: number
 
   target_gpu: GPUType[]
   target_providers: string[]
@@ -115,9 +124,11 @@ export interface EstimateRequest {
   min_vram_gb: number | null
 
   training_type: TrainingType
+  importance_sampling_level: ImportanceSamplingLevel
   grpo_num_generations: number
   reward_model_size: number | null
   vllm_batch_size: number
+  reference_model_pct: number
   num_runs: number
 }
 
@@ -154,6 +165,8 @@ export interface VRAMBreakdown {
   optimizer_states: number
   gradients: number
   activations: number
+  rl_logits: number
+  kv_cache: number
   non_weight_after_framework: number
   buffer: number
 }
@@ -177,6 +190,10 @@ export interface TrainingEstimateAssumptions {
   mfu: number
   speed_multiplier: number
   attention_penalty: number
+  moe_compute_multiplier?: number
+  qat_compute_multiplier?: number
+  custom_speed_multiplier?: number
+  reference_model_pct?: number
 }
 
 export interface TrainingEstimate {
