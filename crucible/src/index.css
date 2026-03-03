@@ -146,7 +146,7 @@ button:disabled {
 
 .app-header {
   display: grid;
-  grid-template-columns: 1fr minmax(320px, 0.95fr);
+  grid-template-columns: minmax(0, 1fr) auto minmax(320px, 0.95fr);
   gap: 1rem;
   padding: 1.1rem;
   border-top: 1px solid var(--accent-soft);
@@ -175,6 +175,30 @@ button:disabled {
 .tagline {
   color: #cbd5e1;
   font-size: 0.86rem;
+}
+
+.header-center-note {
+  align-self: center;
+  justify-self: center;
+  margin: 0;
+  padding: 0.28rem 0.62rem;
+  border: 1px solid rgba(100, 116, 139, 0.4);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.5);
+  color: #a8b8c7;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.header-center-note a {
+  color: #cbd5e1;
+  text-decoration: none;
+}
+
+.header-center-note a:hover {
+  color: #ffffff;
+  text-decoration: underline;
 }
 
 .header-right {
@@ -916,14 +940,59 @@ button:disabled {
 
 .share-actions {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 0.55rem;
 }
 
-.share-actions button {
+.share-actions button,
+.share-action-link {
   background: #111a20;
   border-color: #2f3f49;
   font-size: 0.72rem;
+}
+
+.share-action-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #2f3f49;
+  border-radius: 4px;
+  color: #d8e2ea;
+  padding: 0.5rem 0.8rem;
+  text-decoration: none;
+  transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease;
+}
+
+.share-action-link:hover {
+  border-color: #4f6472;
+  background: #152028;
+  color: #ffffff;
+}
+
+.share-hint {
+  margin-top: 0.55rem;
+  color: #9fb0bc;
+  font-size: 0.73rem;
+}
+
+.share-links {
+  margin-top: 0.45rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  color: #8ea3b2;
+  font-size: 0.72rem;
+}
+
+.share-links a {
+  color: #b7c5d0;
+  text-decoration: none;
+}
+
+.share-links a:hover {
+  color: #ffffff;
+  text-decoration: underline;
 }
 
 .share-status {
@@ -1284,7 +1353,15 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .header-right,
+  .header-right {
+    justify-self: start;
+  }
+
+  .header-center-note {
+    justify-self: start;
+    text-align: left;
+  }
+
   .header-meta,
   .header-actions {
     justify-content: flex-start;

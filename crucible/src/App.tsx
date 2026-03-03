@@ -63,6 +63,7 @@ const DEFAULT_REQUEST: EstimateRequest = {
 }
 
 const MAIN_RAGWELD_URL = 'https://ragweld.com/'
+const SHADEFORM_URL = 'https://www.shadeform.ai/'
 
 function formatTime(value: string | null): string {
   if (!value) {
@@ -179,6 +180,14 @@ function EstimatorWorkbench() {
           <h1>crucible</h1>
           <p className="tagline">Know what your training costs before you burn the credits.</p>
         </div>
+
+        <p className="header-center-note">
+          API for live GPU pricing provided by{' '}
+          <a href={SHADEFORM_URL} target="_blank" rel="noopener noreferrer">
+            Shadeform
+          </a>
+          .
+        </p>
 
         <div className="header-right">
           <a className="header-callout" href={MAIN_RAGWELD_URL} target="_blank" rel="noopener noreferrer">

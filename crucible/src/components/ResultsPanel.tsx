@@ -147,7 +147,7 @@ export function ResultsPanel({
           <CostComparison entries={estimate.cost_comparison} />
           <GPUAvailability pricing={pricing} comparisons={estimate.cost_comparison} />
           <MathExplainer estimate={estimate} />
-          <ShareExport request={request} estimate={estimate} queryString={queryString} />
+          <ShareExport request={request} estimate={estimate} queryString={queryString} pricing={pricing} />
         </>
       ) : (
         <div className="card empty-state">
@@ -157,7 +157,7 @@ export function ResultsPanel({
             300ms debounce and streams results here.
           </p>
           <GPUAvailability pricing={pricing} comparisons={[]} />
-          <ShareExport request={request} estimate={null} queryString={queryString} />
+          <ShareExport request={request} estimate={null} queryString={queryString} pricing={pricing} />
         </div>
       )}
     </section>
