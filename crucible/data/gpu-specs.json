@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "last_updated": "2026-03-01",
+  "last_updated": "2026-03-03",
   "unit_notes": {
     "memory_bandwidth": "GB/s",
     "throughput": "TFLOPS",
@@ -159,18 +159,33 @@
     },
     {
       "id": "B200",
-      "display_name": "NVIDIA B200 192GB",
+      "display_name": "NVIDIA B200 180GB",
       "vendor": "NVIDIA",
       "architecture": "Blackwell",
-      "vram_gb": 192,
+      "vram_gb": 180,
       "memory_bandwidth_gbps": 8000,
       "tflops": {
-        "fp32": 90,
+        "fp32": 75,
         "fp16": 2250,
         "bf16": 2250,
         "fp8": 4500
       },
-      "source_confidence": "estimated"
+      "source_confidence": "medium"
+    },
+    {
+      "id": "B300",
+      "display_name": "NVIDIA B300 288GB",
+      "vendor": "NVIDIA",
+      "architecture": "Blackwell Ultra",
+      "vram_gb": 288,
+      "memory_bandwidth_gbps": 8000,
+      "tflops": {
+        "fp32": 75,
+        "fp16": 2250,
+        "bf16": 2250,
+        "fp8": 4500
+      },
+      "source_confidence": "medium"
     }
   ],
   "sources": [

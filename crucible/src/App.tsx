@@ -109,6 +109,7 @@ function EstimatorWorkbench() {
     loading: pricingLoading,
     error: pricingError,
     fetchedAt: pricingFetchedAt,
+    pricingMeta,
     refetch: refetchPricing,
   } = useGPUPricing({ refreshMs: 180_000 })
 
@@ -198,14 +199,27 @@ function EstimatorWorkbench() {
           <div className="header-meta mono">
             <span>Target GPUs: {state.target_gpu.length}</span>
             <span>Pricing rows: {pricing.length}</span>
-            <span>Pricing refreshed: {formatTime(pricingFetchedAt)}</span>
+            <span>
+              Pricing: {pricingMeta?.source ?? 'unknown'}
+              {pricingMeta?.cached ? ' (cached)' : ''}
+            </span>
+            <span>Fetched: {formatTime(pricingMeta?.fetched_at ?? pricingFetchedAt)}</span>
+            {pricingMeta?.fallback_reason ? (
+              <span title={pricingMeta.fallback_reason}>Fallback: yes</span>
+            ) : (
+              <span>Fallback: no</span>
+            )}
           </div>
 
           <div className="header-actions">
             <a className="ghost-link-button" href={mathCodeHref}>
               Math Code Workbench
             </a>
-            <button type="button" className="ghost-button" onClick={refetchPricing}>
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => refetchPricing({ forceRefresh: true })}
+            >
               Refresh Pricing
             </button>
             <button type="button" className="ghost-button" onClick={refetchEstimate}>

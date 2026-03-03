@@ -151,15 +151,23 @@ function rowSupportsTier(
     return row.hourly_price_cents > 0
   }
   if (tier === 'spot') {
-    return row.spot_price_cents !== null && row.spot_price_cents !== undefined
+    return typeof row.spot_price_cents === 'number' && Number.isFinite(row.spot_price_cents) && row.spot_price_cents > 0
   }
   if (tier === 'reserved_1mo') {
-    return row.reserved_1mo_price_cents !== null && row.reserved_1mo_price_cents !== undefined
+    return (
+      typeof row.reserved_1mo_price_cents === 'number' &&
+      Number.isFinite(row.reserved_1mo_price_cents) &&
+      row.reserved_1mo_price_cents > 0
+    )
   }
-  return row.reserved_3mo_price_cents !== null && row.reserved_3mo_price_cents !== undefined
+  return (
+    typeof row.reserved_3mo_price_cents === 'number' &&
+    Number.isFinite(row.reserved_3mo_price_cents) &&
+    row.reserved_3mo_price_cents > 0
+  )
 }
 
-function matchesRequestPricingRow(
+function rowMatchesRequestFilters(
   request: EstimateRequest,
   row: {
     provider: string
@@ -168,14 +176,8 @@ function matchesRequestPricingRow(
     cloud_instance_type: string
     interconnect?: string
     availability: Array<{ region: string; available?: boolean }>
-    hourly_price_cents: number
-    spot_price_cents?: number | null
-    reserved_1mo_price_cents?: number | null
-    reserved_3mo_price_cents?: number | null
   },
 ): boolean {
-  const selectedTiers = request.pricing_tier.length > 0 ? request.pricing_tier : ['on_demand']
-
   if (request.target_providers.length > 0) {
     const providerSet = new Set(request.target_providers.map((provider) => normalizeLower(provider)))
     if (!providerSet.has(normalizeLower(row.provider))) {
@@ -240,8 +242,23 @@ function matchesRequestPricingRow(
     }
   }
 
-  // If multiple tiers are selected, keep rows that satisfy at least one selected tier.
-  return selectedTiers.some((tier) => rowSupportsTier(row, tier))
+  return true
+}
+
+function summarizeTierSupport(
+  pricing: Array<{
+    hourly_price_cents: number
+    spot_price_cents?: number | null
+    reserved_1mo_price_cents?: number | null
+    reserved_3mo_price_cents?: number | null
+  }>,
+) {
+  return {
+    on_demand: pricing.filter((row) => rowSupportsTier(row, 'on_demand')).length,
+    spot: pricing.filter((row) => rowSupportsTier(row, 'spot')).length,
+    reserved_1mo: pricing.filter((row) => rowSupportsTier(row, 'reserved_1mo')).length,
+    reserved_3mo: pricing.filter((row) => rowSupportsTier(row, 'reserved_3mo')).length,
+  }
 }
 
 function summarizeCapabilities(
@@ -339,33 +356,52 @@ export const handler: Handler = async (event) => {
     })
   }
 
-  const matchingPricingRows = pricing.pricing.filter((row) => matchesRequestPricingRow(normalizedRequest, row))
-  if (matchingPricingRows.length === 0) {
-    const selectedProviders = new Set(
-      normalizedRequest.target_providers.map((provider) => normalizeLower(provider)),
-    )
-    const providerScopedRows =
-      selectedProviders.size === 0
-        ? pricing.pricing
-        : pricing.pricing.filter((row) => selectedProviders.has(normalizeLower(row.provider)))
-    const capabilityScope = providerScopedRows.length > 0 ? providerScopedRows : pricing.pricing
+  const rowsMatchingFilters = pricing.pricing.filter((row) =>
+    rowMatchesRequestFilters(normalizedRequest, row),
+  )
 
+  if (rowsMatchingFilters.length === 0) {
     return errorResponse(
       422,
       'UNSUPPORTED_PROVIDER_PARAMS',
-      'Selected provider parameters are not currently supported by available pricing rows.',
+      'No pricing entries match the selected provider capabilities.',
       responseHeaders,
       {
         selected: {
-          providers: normalizedRequest.target_providers,
-          gpus: normalizedRequest.target_gpu,
+          target_providers: normalizedRequest.target_providers,
+          target_gpu: normalizedRequest.target_gpu,
+          target_regions: normalizedRequest.target_regions,
+          target_interconnects: normalizedRequest.target_interconnects,
+          target_instance_types: normalizedRequest.target_instance_types,
           num_gpus: normalizedRequest.num_gpus,
           pricing_tier: normalizedRequest.pricing_tier,
-          regions: normalizedRequest.target_regions,
-          interconnects: normalizedRequest.target_interconnects,
-          instance_types: normalizedRequest.target_instance_types,
         },
-        supported: summarizeCapabilities(capabilityScope),
+        available_capabilities: summarizeCapabilities(pricing.pricing),
+      },
+    )
+  }
+
+  const selectedTiers = normalizedRequest.pricing_tier.length > 0 ? normalizedRequest.pricing_tier : ['on_demand']
+  const rowsMatchingTierSupport = rowsMatchingFilters.filter((row) =>
+    selectedTiers.some((tier) => rowSupportsTier(row, tier)),
+  )
+
+  if (rowsMatchingTierSupport.length === 0) {
+    return errorResponse(
+      422,
+      'UNSUPPORTED_PRICING_TIERS',
+      `No pricing entries match selected pricing tiers: ${selectedTiers.join(', ')}.`,
+      responseHeaders,
+      {
+        selected_pricing_tiers: selectedTiers,
+        matching_rows_before_tier_filter: rowsMatchingFilters.length,
+        available_tier_counts: summarizeTierSupport(rowsMatchingFilters),
+        pricing_meta: {
+          source: pricing.source,
+          fetched_at: pricing.fetchedAt,
+          cached: pricing.cached,
+          fallback_reason: pricing.fallbackReason ?? null,
+        },
       },
     )
   }

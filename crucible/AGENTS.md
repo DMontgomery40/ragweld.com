@@ -34,3 +34,7 @@ Avoid manual edits in generated directories:
 - UI or logic changes: run `npm run build` and `npm test`.
 - Lint-sensitive changes: run `npm run lint`.
 - If the change affects root integration, also run from repo root: `npm run build:crucible`.
+- End-to-end validation for Crucible must be executed against production (`https://ragweld.com/crucible/`) because runtime behavior depends on live Netlify Functions.
+- Do not treat local/static-only rendering as sufficient verification; most of the GUI and data flows rely on function-backed endpoints.
+- After implementing changes, agents are responsible for executing the deploy-and-verify loop themselves; do not hand deployment/testing back to the user.
+- Use available agent tooling (`netlify` CLI/API + Playwright MCP; codemode/macOS operator tools when needed) to deploy to production and validate the live result.

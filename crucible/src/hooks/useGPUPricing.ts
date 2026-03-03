@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ProviderPricing } from '../types'
 
 interface UseGPUPricingOptions {
@@ -10,7 +10,17 @@ interface UseGPUPricingResult {
   loading: boolean
   error: string | null
   fetchedAt: string | null
-  refetch: () => void
+  pricingMeta: PricingMeta | null
+  refetch: (options?: { forceRefresh?: boolean }) => void
+}
+
+export interface PricingMeta {
+  count?: number
+  source?: string
+  fetched_at?: string
+  cached?: boolean
+  fallback_reason?: string | null
+  filters?: Record<string, unknown>
 }
 
 const PRICES_ENDPOINT = '/crucible/api/v1/prices'
@@ -41,6 +51,19 @@ function extractPricing(payload: unknown): ProviderPricing[] {
   return []
 }
 
+function extractMeta(payload: unknown): PricingMeta | null {
+  if (!payload || typeof payload !== 'object') {
+    return null
+  }
+
+  const record = payload as Record<string, unknown>
+  if (!record.meta || typeof record.meta !== 'object') {
+    return null
+  }
+
+  return record.meta as PricingMeta
+}
+
 function extractErrorMessage(payload: unknown): string {
   if (!payload || typeof payload !== 'object') {
     return 'Unable to load pricing'
@@ -57,11 +80,13 @@ function extractErrorMessage(payload: unknown): string {
 export function useGPUPricing(options: UseGPUPricingOptions = {}): UseGPUPricingResult {
   const refreshMs = options.refreshMs ?? 180_000
   const [revision, setRevision] = useState(0)
+  const forceRefreshNextRef = useRef(false)
 
   const [data, setData] = useState<ProviderPricing[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fetchedAt, setFetchedAt] = useState<string | null>(null)
+  const [pricingMeta, setPricingMeta] = useState<PricingMeta | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -71,7 +96,14 @@ export function useGPUPricing(options: UseGPUPricingOptions = {}): UseGPUPricing
       setError(null)
 
       try {
-        const response = await fetch(PRICES_ENDPOINT, {
+        const shouldForceRefresh = forceRefreshNextRef.current
+        forceRefreshNextRef.current = false
+
+        const endpoint = shouldForceRefresh
+          ? `${PRICES_ENDPOINT}?force_refresh=true`
+          : PRICES_ENDPOINT
+
+        const response = await fetch(endpoint, {
           method: 'GET',
           headers: {
             Accept: 'application/json',
@@ -86,8 +118,10 @@ export function useGPUPricing(options: UseGPUPricingOptions = {}): UseGPUPricing
         }
 
         const prices = extractPricing(payload)
+        const meta = extractMeta(payload)
         setData(prices)
-        setFetchedAt(new Date().toISOString())
+        setPricingMeta(meta)
+        setFetchedAt(meta?.fetched_at ?? new Date().toISOString())
       } catch (caught) {
         if (caught instanceof DOMException && caught.name === 'AbortError') {
           return
@@ -110,7 +144,10 @@ export function useGPUPricing(options: UseGPUPricingOptions = {}): UseGPUPricing
     }
   }, [refreshMs, revision])
 
-  const refetch = useCallback(() => {
+  const refetch = useCallback((options?: { forceRefresh?: boolean }) => {
+    if (options?.forceRefresh) {
+      forceRefreshNextRef.current = true
+    }
     setRevision((current) => current + 1)
   }, [])
 
@@ -119,6 +156,7 @@ export function useGPUPricing(options: UseGPUPricingOptions = {}): UseGPUPricing
     loading,
     error,
     fetchedAt,
+    pricingMeta,
     refetch,
   }
 }

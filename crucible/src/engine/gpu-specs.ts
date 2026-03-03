@@ -49,8 +49,14 @@ export const GPU_SPECS: Record<GPUType, GPUSpec> = {
     tflops: { bf16: 419, fp16: 419, fp32: 105 },
   },
   B200: {
-    vram_gb: 192,
-    tflops: { bf16: 2250, fp16: 2250, fp8: 4500, fp32: 90 },
+    // NVIDIA DGX B200 / AWS p6-b200: 1,440 GB total GPU memory across 8 GPUs => 180 GB per GPU.
+    vram_gb: 180,
+    tflops: { bf16: 2250, fp16: 2250, fp8: 4500, fp32: 75 },
+  },
+  B300: {
+    // NVIDIA DGX B300: commonly listed as 8x 288 GB HBM3e per GPU.
+    vram_gb: 288,
+    tflops: { bf16: 2250, fp16: 2250, fp8: 4500, fp32: 75 },
   },
 }
 
@@ -71,6 +77,13 @@ const GPU_ALIASES: Record<string, GPUType> = {
   RTX_5090: 'RTX_5090',
   RTX5090: 'RTX_5090',
   B200: 'B200',
+  GB200: 'B200',
+  B200_SXM: 'B200',
+  B200_SXM6: 'B200',
+  B300: 'B300',
+  GB300: 'B300',
+  B300_SXM: 'B300',
+  B300_SXM6: 'B300',
 }
 
 function normalizeGPUName(gpu: string): string {

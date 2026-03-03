@@ -30,7 +30,22 @@ function extractErrorMessage(payload: unknown): string {
   }
 
   const maybeError = payload as Partial<ErrorResponse>
-  return maybeError.error ?? 'Estimate request failed'
+  const baseMessage = maybeError.error ?? 'Estimate request failed'
+  const codeSuffix = maybeError.code ? ` (${maybeError.code})` : ''
+
+  if (maybeError.code === 'UNSUPPORTED_PRICING_TIERS' && maybeError.details && typeof maybeError.details === 'object') {
+    const details = maybeError.details as { selected_pricing_tiers?: unknown }
+    if (Array.isArray(details.selected_pricing_tiers) && details.selected_pricing_tiers.length > 0) {
+      const tiers = details.selected_pricing_tiers
+        .map((tier) => (typeof tier === 'string' ? tier.replaceAll('_', ' ') : ''))
+        .filter((tier) => tier.length > 0)
+      if (tiers.length > 0) {
+        return `${baseMessage}${codeSuffix} Selected: ${tiers.join(', ')}.`
+      }
+    }
+  }
+
+  return `${baseMessage}${codeSuffix}`
 }
 
 export function useTrainingEstimate(

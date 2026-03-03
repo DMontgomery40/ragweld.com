@@ -10,11 +10,12 @@ import {
   YAxis,
   ZAxis,
 } from 'recharts'
-import type { CostComparisonEntry, PricingTier } from '../types'
+import type { CostComparisonEntry, EstimateRequest, PricingTier } from '../types'
 
 interface CostComparisonProps {
   entries: CostComparisonEntry[]
   pricingTiers: PricingTier[]
+  request: EstimateRequest
 }
 
 const integerNumberFormatter = new Intl.NumberFormat('en-US', {
@@ -129,10 +130,15 @@ function rowClass(status: EntryStatus): string {
   return 'row-ok'
 }
 
-export function CostComparison({ entries, pricingTiers }: CostComparisonProps) {
+export function CostComparison({ entries, pricingTiers, request }: CostComparisonProps) {
   const [showAll, setShowAll] = useState(false)
   const [showTable, setShowTable] = useState(false)
   const [hoveredEntry, setHoveredEntry] = useState<string | null>(null)
+
+  const nodeCount = Math.max(1, request.num_nodes)
+  const gpusPerNode = Math.max(1, request.num_gpus)
+  const totalGpus = nodeCount * gpusPerNode
+  const runs = Math.max(1, request.num_runs)
 
   const reservedTier = useMemo(() => hasNonOnDemandTier(pricingTiers), [pricingTiers])
 
@@ -222,6 +228,11 @@ export function CostComparison({ entries, pricingTiers }: CostComparisonProps) {
           {hiddenCount > 0 ? ` (${hiddenCount} hidden)` : ''}
         </span>
       </div>
+
+      <p className="mono" style={{ marginTop: 0 }}>
+        Assumes {nodeCount} node(s) × {gpusPerNode} GPU/node ({totalGpus} GPUs total); costs include all nodes and {runs} run(s).
+        Hourly rates shown are per node.
+      </p>
 
       <div className="cost-filter-bar">
         <div className="cost-color-legend">

@@ -9,7 +9,7 @@ export type QuantizationProfile =
   | 'int8'
   | 'int16'
   | 'int32'
-export type TrainingType = 'SFT' | 'GRPO' | 'DPO' | 'PPO' | 'ORPO'
+export type TrainingType = 'SFT' | 'GRPO' | 'DPO' | 'PPO' | 'ORPO' | 'SimPO'
 export type Optimizer = 'adamw' | 'adamw_8bit' | 'sgd' | 'paged_adamw_8bit' | 'muon'
 export type LRScheduler = 'cosine' | 'linear' | 'constant'
 export type Precision = 'fp32' | 'fp16' | 'bf16' | 'fp8'
@@ -33,6 +33,7 @@ export type GPUType =
   | 'RTX_3090'
   | 'RTX_5090'
   | 'B200'
+  | 'B300'
 
 export interface ModelConfig {
   id: string

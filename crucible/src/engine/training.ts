@@ -24,6 +24,7 @@ const TRAINING_TYPE_FLOP_MULTIPLIER: Record<TrainingType, number> = {
   ORPO: 1.2,
   GRPO: 1.8,
   PPO: 2.0,
+  SimPO: 1.1,
 }
 
 function asNonNegative(value: number, fallback = 0): number {
@@ -43,8 +44,18 @@ function speedMultiplier(params: EstimateRequest): number {
   let multiplier = 1.0
   if (params.framework === 'Unsloth') {
     multiplier *= 2.0
-    if (params.use_rope_kernels) {
+    // Treat "rope kernels" and "triton kernels" as two toggles that can unlock
+    // the same fast-path in Unsloth builds (rather than stacking them).
+    if (params.use_rope_kernels || params.use_triton_kernels) {
       multiplier *= 1.5
+    }
+  } else {
+    // For non-Unsloth stacks, model kernel improvements as smaller multipliers.
+    if (params.use_triton_kernels) {
+      multiplier *= 1.1
+    }
+    if (params.use_flash_attention) {
+      multiplier *= 1.15
     }
   }
   return multiplier
@@ -101,6 +112,7 @@ export function estimateTraining(params: EstimateRequest): TrainingEstimate {
     asNonNegative(params.batch_size, 1) *
     asNonNegative(params.gradient_accumulation_steps, 1) *
     Math.max(1, asNonNegative(params.num_gpus, 1)) *
+    Math.max(1, asNonNegative(params.num_nodes, 1)) *
     effectiveSeq
 
   let totalSteps = 0

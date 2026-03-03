@@ -58,7 +58,7 @@ interface MultiSelectMatrixProps {
 
 const METHOD_OPTIONS: FineTuneMethod[] = ['Full Fine-Tune', 'LoRA', 'QLoRA']
 const ARCHITECTURE_OPTIONS: Architecture[] = ['Dense', 'MoE']
-const TRAINING_TYPE_OPTIONS: TrainingType[] = ['SFT', 'GRPO', 'DPO', 'PPO', 'ORPO']
+const TRAINING_TYPE_OPTIONS: TrainingType[] = ['SFT', 'GRPO', 'DPO', 'PPO', 'ORPO', 'SimPO']
 const QUANTIZATION_OPTIONS: QuantizationBits[] = [4, 8, 16, 32]
 const FOUR_BIT_QUANTIZATION_PROFILES: QuantizationProfile[] = [
   'nf4',
@@ -201,6 +201,30 @@ function formatPricingTierLabel(tier: PricingTier): string {
   return tier.replaceAll('_', ' ')
 }
 
+function hasTierPrice(row: ProviderPricing, tier: PricingTier): boolean {
+  if (tier === 'on_demand') {
+    return row.hourly_price_cents > 0
+  }
+
+  if (tier === 'spot') {
+    return typeof row.spot_price_cents === 'number' && Number.isFinite(row.spot_price_cents) && row.spot_price_cents > 0
+  }
+
+  if (tier === 'reserved_1mo') {
+    return (
+      typeof row.reserved_1mo_price_cents === 'number' &&
+      Number.isFinite(row.reserved_1mo_price_cents) &&
+      row.reserved_1mo_price_cents > 0
+    )
+  }
+
+  return (
+    typeof row.reserved_3mo_price_cents === 'number' &&
+    Number.isFinite(row.reserved_3mo_price_cents) &&
+    row.reserved_3mo_price_cents > 0
+  )
+}
+
 function normalizeGpuOption(value: string): string {
   const resolved = resolveGPUType(value)
   return normalizeLower(resolved ?? value)
@@ -239,19 +263,6 @@ function formatQuantizationProfileLabel(profile: QuantizationProfile): string {
     default:
       return profile
   }
-}
-
-function hasTierPrice(row: ProviderPricing, tier: PricingTier): boolean {
-  if (tier === 'on_demand') {
-    return row.hourly_price_cents > 0
-  }
-  if (tier === 'spot') {
-    return row.spot_price_cents !== null && row.spot_price_cents !== undefined
-  }
-  if (tier === 'reserved_1mo') {
-    return row.reserved_1mo_price_cents !== null && row.reserved_1mo_price_cents !== undefined
-  }
-  return row.reserved_3mo_price_cents !== null && row.reserved_3mo_price_cents !== undefined
 }
 
 interface HelpLabelProps {
@@ -527,6 +538,38 @@ export function InputPanel({
     return providerGpuRows.filter((row) => row.num_gpus === value.num_gpus)
   }, [providerGpuRows, value.num_gpus])
 
+  const tierScopeRows = useMemo(() => {
+    if (providerGpuCountRows.length > 0) {
+      return providerGpuCountRows
+    }
+    if (providerGpuRows.length > 0) {
+      return providerGpuRows
+    }
+    if (providerRows.length > 0) {
+      return providerRows
+    }
+    return pricing
+  }, [pricing, providerGpuCountRows, providerGpuRows, providerRows])
+
+  const pricingTierCoverage = useMemo(() => {
+    return PRICING_TIER_OPTIONS.reduce<Record<PricingTier, number>>(
+      (acc, tier) => {
+        acc[tier] = tierScopeRows.filter((row) => hasTierPrice(row, tier)).length
+        return acc
+      },
+      {
+        on_demand: 0,
+        spot: 0,
+        reserved_1mo: 0,
+        reserved_3mo: 0,
+      },
+    )
+  }, [tierScopeRows])
+
+  const unsupportedSelectedPricingTiers = useMemo(() => {
+    return value.pricing_tier.filter((tier) => pricingTierCoverage[tier] === 0)
+  }, [pricingTierCoverage, value.pricing_tier])
+
   const availableProviders = useMemo(() => {
     if (pricing.length === 0) {
       return PROVIDER_FALLBACK_OPTIONS
@@ -554,14 +597,6 @@ export function InputPanel({
     }
     return Array.from(new Set(sourceRows.map((row) => row.num_gpus))).sort((left, right) => left - right)
   }, [providerGpuRows, providerRows])
-
-  const availablePricingTiers = useMemo(() => {
-    const sourceRows = providerGpuCountRows.length > 0 ? providerGpuCountRows : providerGpuRows
-    if (sourceRows.length === 0) {
-      return PRICING_TIER_OPTIONS
-    }
-    return PRICING_TIER_OPTIONS.filter((tier) => sourceRows.some((row) => hasTierPrice(row, tier)))
-  }, [providerGpuCountRows, providerGpuRows])
 
   const availableRegions = useMemo(() => {
     const sourceRows = providerGpuCountRows.length > 0 ? providerGpuCountRows : providerGpuRows
@@ -608,10 +643,9 @@ export function InputPanel({
   const pricingTierOptions = useMemo<MultiSelectOption[]>(() => {
     return PRICING_TIER_OPTIONS.map((tier) => ({
       value: tier,
-      label: formatPricingTierLabel(tier),
-      disabled: !availablePricingTiers.includes(tier),
+      label: `${formatPricingTierLabel(tier)} (${pricingTierCoverage[tier]})`,
     }))
-  }, [availablePricingTiers])
+  }, [pricingTierCoverage])
 
   const providerOptions = useMemo<MultiSelectOption[]>(() => {
     return availableProviders.map((provider) => ({
@@ -663,7 +697,6 @@ export function InputPanel({
   useEffect(() => {
     const providerSet = new Set(availableProviders.map((provider) => normalizeLower(provider)))
     const gpuSet = new Set(availableGpuFamilies.map((gpu) => normalizeGpuOption(gpu)))
-    const tierSet = new Set(availablePricingTiers)
     const regionSet = new Set(availableRegions.map((region) => normalizeLower(region)))
     const interconnectSet = new Set(
       availableInterconnects.map((interconnect) => normalizeLower(interconnect)),
@@ -676,7 +709,6 @@ export function InputPanel({
       providerSet.has(normalizeLower(provider)),
     )
     const nextGpus = value.target_gpu.filter((gpu) => gpuSet.has(normalizeGpuOption(gpu)))
-    const nextTiers = value.pricing_tier.filter((tier) => tierSet.has(tier))
     const nextRegions = value.target_regions.filter((region) => regionSet.has(normalizeLower(region)))
     const nextInterconnects = value.target_interconnects.filter((interconnect) =>
       interconnectSet.has(normalizeLower(interconnect)),
@@ -695,11 +727,6 @@ export function InputPanel({
     }
     if (nextGpus.length !== value.target_gpu.length) {
       patch.target_gpu = nextGpus as EstimateRequest['target_gpu']
-    }
-    if (nextTiers.length !== value.pricing_tier.length) {
-      patch.pricing_tier = (nextTiers.length > 0
-        ? nextTiers
-        : [availablePricingTiers[0] ?? 'on_demand']) as EstimateRequest['pricing_tier']
     }
     if (nextRegions.length !== value.target_regions.length) {
       patch.target_regions = nextRegions
@@ -722,12 +749,10 @@ export function InputPanel({
     availableGpuFamilies,
     availableInstanceTypes,
     availableInterconnects,
-    availablePricingTiers,
     availableProviders,
     availableRegions,
     onChange,
     value.num_gpus,
-    value.pricing_tier,
     value.target_gpu,
     value.target_instance_types,
     value.target_interconnects,
@@ -1198,7 +1223,13 @@ export function InputPanel({
             patchArrayField('pricing_tier', nextValues)
           }}
           allowEmpty={false}
-          helperText="At least one tier must stay selected."
+          helperText={
+            unsupportedSelectedPricingTiers.length > 0
+              ? `Selected tier(s) currently have no published prices: ${unsupportedSelectedPricingTiers
+                  .map((tier) => formatPricingTierLabel(tier))
+                  .join(', ')}. Estimates will return an explicit API error until filters or pricing source change.`
+              : 'At least one tier must stay selected.'
+          }
           searchPlaceholder="Filter pricing tiers"
         />
 

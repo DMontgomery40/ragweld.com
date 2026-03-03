@@ -1,6 +1,7 @@
 import type { HandlerEvent, HandlerResponse } from '@netlify/functions'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { resolveGPUType } from '../../crucible/src/engine/gpu-specs'
 import type { ErrorResponse, ProviderPricing } from '../../crucible/src/types/index'
 
 type EndpointKey = 'estimate' | 'prices' | 'models' | 'health' | 'resolve_model' | 'default'
@@ -88,6 +89,10 @@ function toStringValue(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null
 }
 
+function normalizeLower(value: string): string {
+  return value.trim().toLowerCase()
+}
+
 function toNumberValue(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value
@@ -117,6 +122,27 @@ function toBooleanValue(value: unknown): boolean | null {
   return null
 }
 
+function hasPositivePrice(value: number | null | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+}
+
+function normalizeGpuKey(value: unknown): string {
+  const raw = toStringValue(value)
+  if (!raw) {
+    return ''
+  }
+  const resolved = resolveGPUType(raw)
+  return normalizeLower(resolved ?? raw)
+}
+
+function normalizeInstanceTypeKey(value: unknown): string {
+  const raw = toStringValue(value)
+  if (!raw) {
+    return ''
+  }
+  return normalizeLower(raw).replace(/[^a-z0-9]/g, '')
+}
+
 function maybeCents(value: unknown): number | null {
   const parsed = toNumberValue(value)
   if (parsed === null || parsed < 0) {
@@ -126,6 +152,139 @@ function maybeCents(value: unknown): number | null {
     return Math.round(parsed)
   }
   return Math.round(parsed * 100)
+}
+
+function buildPricingBaseKey(row: ProviderPricing): string {
+  return `${normalizeLower(row.provider)}|${normalizeGpuKey(row.gpu)}|${Math.max(1, row.num_gpus)}`
+}
+
+function buildInstanceCandidateKeys(row: ProviderPricing): string[] {
+  return [normalizeInstanceTypeKey(row.cloud_instance_type), normalizeInstanceTypeKey(row.shade_instance_type)].filter(
+    (value, index, values) => value.length > 0 && values.indexOf(value) === index,
+  )
+}
+
+function selectClosestByHourlyPrice(
+  source: ProviderPricing,
+  candidates: ProviderPricing[],
+): ProviderPricing | null {
+  if (candidates.length === 0) {
+    return null
+  }
+  if (candidates.length === 1) {
+    return candidates[0]
+  }
+
+  let closest = candidates[0]
+  let bestDelta = Math.abs(closest.hourly_price_cents - source.hourly_price_cents)
+  for (const candidate of candidates.slice(1)) {
+    const delta = Math.abs(candidate.hourly_price_cents - source.hourly_price_cents)
+    if (delta < bestDelta) {
+      closest = candidate
+      bestDelta = delta
+    }
+  }
+  return closest
+}
+
+function enrichShadeformPricingWithStatic(
+  shadeformRows: ProviderPricing[],
+  staticRows: ProviderPricing[],
+): {
+  pricing: ProviderPricing[]
+  rowsNeedingTierData: number
+  rowsEnriched: number
+  rowsStillMissingTierData: number
+} {
+  const staticByBaseKey = new Map<string, ProviderPricing[]>()
+  const staticByExactKey = new Map<string, ProviderPricing[]>()
+
+  for (const staticRow of staticRows) {
+    const baseKey = buildPricingBaseKey(staticRow)
+    if (!baseKey.includes('||')) {
+      const baseBucket = staticByBaseKey.get(baseKey) ?? []
+      baseBucket.push(staticRow)
+      staticByBaseKey.set(baseKey, baseBucket)
+    }
+
+    for (const instanceKey of buildInstanceCandidateKeys(staticRow)) {
+      const exactKey = `${baseKey}|${instanceKey}`
+      const exactBucket = staticByExactKey.get(exactKey) ?? []
+      exactBucket.push(staticRow)
+      staticByExactKey.set(exactKey, exactBucket)
+    }
+  }
+
+  let rowsNeedingTierData = 0
+  let rowsEnriched = 0
+  let rowsStillMissingTierData = 0
+
+  const pricing = shadeformRows.map((shadeformRow) => {
+    const needsAnyTierData =
+      !hasPositivePrice(shadeformRow.spot_price_cents) ||
+      !hasPositivePrice(shadeformRow.reserved_1mo_price_cents) ||
+      !hasPositivePrice(shadeformRow.reserved_3mo_price_cents)
+
+    if (!needsAnyTierData) {
+      return shadeformRow
+    }
+
+    rowsNeedingTierData += 1
+    const baseKey = buildPricingBaseKey(shadeformRow)
+    let staticMatch: ProviderPricing | null = null
+
+    for (const instanceKey of buildInstanceCandidateKeys(shadeformRow)) {
+      const exactCandidates = staticByExactKey.get(`${baseKey}|${instanceKey}`) ?? []
+      staticMatch = selectClosestByHourlyPrice(shadeformRow, exactCandidates)
+      if (staticMatch) {
+        break
+      }
+    }
+
+    if (!staticMatch) {
+      staticMatch = selectClosestByHourlyPrice(shadeformRow, staticByBaseKey.get(baseKey) ?? [])
+    }
+
+    let nextRow = shadeformRow
+    let changed = false
+    if (staticMatch) {
+      nextRow = { ...shadeformRow }
+      if (!hasPositivePrice(nextRow.spot_price_cents) && hasPositivePrice(staticMatch.spot_price_cents)) {
+        nextRow.spot_price_cents = staticMatch.spot_price_cents
+        changed = true
+      }
+      if (
+        !hasPositivePrice(nextRow.reserved_1mo_price_cents) &&
+        hasPositivePrice(staticMatch.reserved_1mo_price_cents)
+      ) {
+        nextRow.reserved_1mo_price_cents = staticMatch.reserved_1mo_price_cents
+        changed = true
+      }
+      if (
+        !hasPositivePrice(nextRow.reserved_3mo_price_cents) &&
+        hasPositivePrice(staticMatch.reserved_3mo_price_cents)
+      ) {
+        nextRow.reserved_3mo_price_cents = staticMatch.reserved_3mo_price_cents
+        changed = true
+      }
+    }
+
+    if (changed) {
+      rowsEnriched += 1
+    }
+
+    const stillMissingTierData =
+      !hasPositivePrice(nextRow.spot_price_cents) ||
+      !hasPositivePrice(nextRow.reserved_1mo_price_cents) ||
+      !hasPositivePrice(nextRow.reserved_3mo_price_cents)
+    if (stillMissingTierData) {
+      rowsStillMissingTierData += 1
+    }
+
+    return nextRow
+  })
+
+  return { pricing, rowsNeedingTierData, rowsEnriched, rowsStillMissingTierData }
 }
 
 function dollarsToCents(value: unknown): number | null {
@@ -635,11 +794,31 @@ export async function getPricingPayload(forceRefresh = false): Promise<PricingPa
 
   try {
     const shadeformPricing = await fetchShadeformPricing()
+    let mergedPricing = shadeformPricing
+    let fallbackReason: string | undefined
+
+    try {
+      const staticPricing = await fetchStaticPricing()
+      const enrichment = enrichShadeformPricingWithStatic(shadeformPricing, staticPricing)
+      mergedPricing = enrichment.pricing
+
+      if (enrichment.rowsNeedingTierData > 0) {
+        fallbackReason =
+          `Shadeform omitted spot/reserved tier prices for ${enrichment.rowsNeedingTierData} rows; ` +
+          `static catalog filled ${enrichment.rowsEnriched}, still missing ${enrichment.rowsStillMissingTierData}.`
+      }
+    } catch (enrichmentError) {
+      const reason =
+        enrichmentError instanceof Error ? enrichmentError.message : 'Static tier enrichment step failed.'
+      fallbackReason = `Shadeform pricing loaded, but static tier-enrichment failed: ${reason}`
+    }
+
     const fetchedAt = new Date().toISOString()
     const payload: Omit<PricingPayload, 'cached'> = {
-      pricing: shadeformPricing,
+      pricing: mergedPricing,
       fetchedAt,
       source: 'shadeform',
+      fallbackReason,
     }
     pricingCache = {
       expiresAt: now + FIFTEEN_MINUTES_MS,

@@ -47,7 +47,8 @@ export const handler: Handler = async (event) => {
   }
 
   try {
-    const pricing = await getPricingPayload()
+    const forceRefresh = parseBooleanQuery(event.queryStringParameters?.force_refresh)
+    const pricing = await getPricingPayload(forceRefresh === true)
     const gpuType = event.queryStringParameters?.gpu_type?.trim()
     const provider = event.queryStringParameters?.provider?.trim()
     const availableOnly = parseBooleanQuery(event.queryStringParameters?.available_only)
@@ -72,6 +73,7 @@ export const handler: Handler = async (event) => {
             gpu_type: gpuType ?? null,
             provider: provider ?? null,
             available_only: availableOnly ?? false,
+            force_refresh: forceRefresh ?? false,
           },
         },
       },

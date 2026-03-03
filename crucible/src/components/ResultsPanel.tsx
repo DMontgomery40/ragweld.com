@@ -144,7 +144,7 @@ export function ResultsPanel({
           )}
 
           <VRAMBreakdown bands={estimate.vram_estimate_bands_gb} breakdown={estimate.vram_breakdown} />
-          <CostComparison entries={estimate.cost_comparison} pricingTiers={request.pricing_tier} />
+          <CostComparison entries={estimate.cost_comparison} pricingTiers={request.pricing_tier} request={request} />
           <GPUAvailability pricing={pricing} comparisons={estimate.cost_comparison} />
           <MathExplainer estimate={estimate} />
           <ShareExport request={request} estimate={estimate} queryString={queryString} pricing={pricing} />

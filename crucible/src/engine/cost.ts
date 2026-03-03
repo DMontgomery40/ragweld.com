@@ -32,22 +32,29 @@ function normalizeTierSelection(tiers: PricingTier[]): PricingTier[] {
 function hasTierPrice(pricingEntry: ProviderPricing, tier: PricingTier): boolean {
   switch (tier) {
     case 'spot':
-      return pricingEntry.spot_price_cents !== null && pricingEntry.spot_price_cents !== undefined
+      return (
+        typeof pricingEntry.spot_price_cents === 'number' &&
+        Number.isFinite(pricingEntry.spot_price_cents) &&
+        pricingEntry.spot_price_cents > 0
+      )
     case 'reserved_1mo':
       return (
-        pricingEntry.reserved_1mo_price_cents !== null &&
-        pricingEntry.reserved_1mo_price_cents !== undefined
+        typeof pricingEntry.reserved_1mo_price_cents === 'number' &&
+        Number.isFinite(pricingEntry.reserved_1mo_price_cents) &&
+        pricingEntry.reserved_1mo_price_cents > 0
       )
     case 'reserved_3mo':
       return (
-        pricingEntry.reserved_3mo_price_cents !== null &&
-        pricingEntry.reserved_3mo_price_cents !== undefined
+        typeof pricingEntry.reserved_3mo_price_cents === 'number' &&
+        Number.isFinite(pricingEntry.reserved_3mo_price_cents) &&
+        pricingEntry.reserved_3mo_price_cents > 0
       )
     case 'on_demand':
     default:
       return (
-        pricingEntry.hourly_price_cents !== null &&
-        pricingEntry.hourly_price_cents !== undefined
+        typeof pricingEntry.hourly_price_cents === 'number' &&
+        Number.isFinite(pricingEntry.hourly_price_cents) &&
+        pricingEntry.hourly_price_cents > 0
       )
   }
 }
@@ -58,6 +65,7 @@ function costFromHourlyRate(
   hourlyPriceCents: number | null | undefined,
   hours: number,
   runs: number,
+  nodes: number,
 ): number | null {
   if (hourlyPriceCents === null || hourlyPriceCents === undefined) {
     return null
@@ -65,7 +73,7 @@ function costFromHourlyRate(
   if (!Number.isFinite(hours)) {
     return null
   }
-  return (hourlyPriceCents / 100) * hours * runs
+  return (hourlyPriceCents / 100) * hours * runs * Math.max(1, nodes)
 }
 
 type TierCostMap = Record<PricingTier, number | null>
@@ -222,6 +230,7 @@ export function estimateCostComparison(
   const intermediates: Record<string, number> = {}
 
   const runs = Math.max(1, asNonNegative(params.num_runs, 1))
+  const nodes = Math.max(1, asNonNegative(params.num_nodes, 1))
   const selectedTiers = normalizeTierSelection(params.pricing_tier)
   const minRequiredVRAM = Math.max(0, asNonNegative(params.min_vram_gb ?? requiredVRAMPerGPU))
   const requestedGPUCount = Math.max(1, asNonNegative(params.num_gpus, 1))
@@ -289,10 +298,10 @@ export function estimateCostComparison(
   const entries: CostComparisonEntry[] = filteredPricing.map((pricingEntry) => {
     const estimatedHours = deriveEntryHours(params, training, pricingEntry)
     const tierCosts: TierCostMap = {
-      on_demand: costFromHourlyRate(pricingEntry.hourly_price_cents, estimatedHours, runs),
-      spot: costFromHourlyRate(pricingEntry.spot_price_cents, estimatedHours, runs),
-      reserved_1mo: costFromHourlyRate(pricingEntry.reserved_1mo_price_cents, estimatedHours, runs),
-      reserved_3mo: costFromHourlyRate(pricingEntry.reserved_3mo_price_cents, estimatedHours, runs),
+      on_demand: costFromHourlyRate(pricingEntry.hourly_price_cents, estimatedHours, runs, nodes),
+      spot: costFromHourlyRate(pricingEntry.spot_price_cents, estimatedHours, runs, nodes),
+      reserved_1mo: costFromHourlyRate(pricingEntry.reserved_1mo_price_cents, estimatedHours, runs, nodes),
+      reserved_3mo: costFromHourlyRate(pricingEntry.reserved_3mo_price_cents, estimatedHours, runs, nodes),
     }
     const selectedTierCost = pickBestSelectedTierCost(selectedTiers, tierCosts)
 
@@ -349,6 +358,7 @@ export function estimateCostComparison(
   )
   intermediates.selected_pricing_tier_count = selectedTiers.length
   intermediates.requested_num_gpus = requestedGPUCount
+  intermediates.requested_num_nodes = nodes
   intermediates.required_vram_per_gpu = minRequiredVRAM
   intermediates.num_pricing_entries = filteredPricing.length
   intermediates.num_runs = runs
