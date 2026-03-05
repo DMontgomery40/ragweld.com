@@ -44,4 +44,29 @@ describe('estimateTraining', () => {
     expect(result.total_tokens).toBe(200_000)
     expect(result.intermediates.dataset_tokens_used).toBe(100_000)
   })
+
+  it('keeps MoE compute conservative instead of collapsing to active-expert ratios', () => {
+    const result = estimateTraining(
+      makeEstimateRequest({
+        model_name: 'qwen3.5-35b-a3b',
+        model_params_billions: 35.95,
+        architecture: 'MoE',
+        moe_total_experts: 256,
+        moe_active_experts: 8,
+        target_gpu: ['B200'],
+        num_gpus: 4,
+      }),
+    )
+
+    expect(result.assumptions.moe_compute_multiplier).toBe(1)
+    expect(
+      result.warnings.some((warning) =>
+        warning.includes('MoE compute kept conservative (no active-expert discount)'),
+      ),
+    ).toBe(true)
+    expect(
+      result.warnings.some((warning) => warning.includes('MoE throughput capped at 1.00x peak utilization')),
+    ).toBe(true)
+    expect(result.estimated_hours_by_gpu.B200).toBeGreaterThan(0.15)
+  })
 })

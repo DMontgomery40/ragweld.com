@@ -62,7 +62,7 @@ export function ResultsPanel({
 }: ResultsPanelProps) {
   const bestOption =
     estimate?.cost_comparison
-      .filter((entry) => entry.fits_in_vram)
+      .filter((entry) => entry.fits_in_vram && entry.available)
       .sort((left, right) => left.total_cost_dollars - right.total_cost_dollars)[0] ?? null
 
   return (

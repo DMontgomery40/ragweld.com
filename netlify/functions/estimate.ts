@@ -419,7 +419,7 @@ export const handler: Handler = async (event) => {
       throw new Error('computeEstimate export is missing from crucible/src/engine/index.ts.')
     }
 
-    const estimate = module.computeEstimate(normalizedRequest, pricing.pricing)
+    const estimate = module.computeEstimate(normalizedRequest, rowsMatchingTierSupport)
     return jsonResponse(
       200,
       {

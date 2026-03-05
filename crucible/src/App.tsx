@@ -57,7 +57,7 @@ const DEFAULT_REQUEST: EstimateRequest = {
   target_instance_types: [],
   num_gpus: 4,
   num_nodes: 1,
-  pricing_tier: ['on_demand', 'spot'],
+  pricing_tier: ['on_demand'],
   min_vram_gb: null,
 
   training_type: 'SFT',

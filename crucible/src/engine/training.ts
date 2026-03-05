@@ -27,6 +27,7 @@ const TRAINING_TYPE_FLOP_MULTIPLIER: Record<TrainingType, number> = {
   PPO: 2.0,
   SimPO: 1.1,
 }
+const MAX_MOE_EFFECTIVE_UTILIZATION = 1.0
 
 function asNonNegative(value: number, fallback = 0): number {
   if (!Number.isFinite(value)) {
@@ -50,16 +51,13 @@ function speedMultiplier(params: EstimateRequest): number {
     multiplier *= 1.2
   }
   if (params.use_triton_kernels) {
-    multiplier *=
-      params.framework === 'Unsloth' && params.architecture === 'MoE' && params.use_faster_moe_kernels
-        ? 1.35
-        : 1.1
+    multiplier *= 1.1
   }
   if (params.use_rope_kernels) {
     multiplier *= 1.5
   }
   if (params.architecture === 'MoE' && params.framework === 'Unsloth' && params.use_faster_moe_kernels) {
-    multiplier *= 2.0
+    multiplier *= 1.1
   }
   if (params.custom_speed_multiplier && params.custom_speed_multiplier > 0) {
     multiplier *= params.custom_speed_multiplier
@@ -84,7 +82,12 @@ function estimateHours(
   }
   const mfu = MFU_BY_FRAMEWORK[params.framework]
   const speed = speedMultiplier(params)
-  const practicalFlopsPerSecPerGPU = tflops * 1e12 * mfu * speed
+  const requestedUtilization = mfu * speed
+  const effectiveUtilization =
+    params.architecture === 'MoE'
+      ? Math.min(MAX_MOE_EFFECTIVE_UTILIZATION, requestedUtilization)
+      : requestedUtilization
+  const practicalFlopsPerSecPerGPU = tflops * 1e12 * effectiveUtilization
   const gpuCount = Math.max(1, asNonNegative(numGPUsOverride ?? params.num_gpus, 1))
   const nodeCount = Math.max(1, asNonNegative(params.num_nodes, 1))
   const trainingSeconds = totalFLOPs / (practicalFlopsPerSecPerGPU * gpuCount * nodeCount)
@@ -162,14 +165,18 @@ export function estimateTraining(params: EstimateRequest): TrainingEstimate {
   const baseTotalFLOPs = trainingFLOPs + forwardOnlyFLOPs
   const loraComputeDiscount = params.method === 'LoRA' || params.method === 'QLoRA' ? 0.9 : 1.0
 
-  let moeComputeMultiplier = 1.0
-  if (params.architecture === 'MoE' && params.moe_total_experts > 0 && params.moe_active_experts > 0) {
-    moeComputeMultiplier = params.moe_active_experts / params.moe_total_experts
-    if (moeComputeMultiplier < 1) {
-      warnings.push(
-        `MoE compute scaled by active/total experts (${params.moe_active_experts}/${params.moe_total_experts} = ${moeComputeMultiplier.toFixed(2)}).`,
-      )
-    }
+  // Routing-only MoE discounts can produce severe underestimates in real deployments.
+  // Keep MoE compute conservative until we have architecture-aware calibration data.
+  const moeComputeMultiplier = 1.0
+  if (
+    params.architecture === 'MoE' &&
+    params.moe_total_experts > 0 &&
+    params.moe_active_experts > 0 &&
+    params.moe_active_experts < params.moe_total_experts
+  ) {
+    warnings.push(
+      `MoE compute kept conservative (no active-expert discount) despite routing ${params.moe_active_experts}/${params.moe_total_experts}.`,
+    )
   }
 
   const qatComputeMultiplier = params.use_qat ? 1.05 : 1.0
@@ -196,6 +203,17 @@ export function estimateTraining(params: EstimateRequest): TrainingEstimate {
     baseTotalFLOPs * loraComputeDiscount * attentionPenalty * rlMultiplier * moeComputeMultiplier * qatComputeMultiplier
   const frameworkMFU = MFU_BY_FRAMEWORK[params.framework]
   const frameworkSpeedMultiplier = speedMultiplier(params)
+  const requestedEffectiveUtilization = frameworkMFU * frameworkSpeedMultiplier
+  const cappedEffectiveUtilization =
+    params.architecture === 'MoE'
+      ? Math.min(MAX_MOE_EFFECTIVE_UTILIZATION, requestedEffectiveUtilization)
+      : requestedEffectiveUtilization
+
+  if (params.architecture === 'MoE' && requestedEffectiveUtilization > MAX_MOE_EFFECTIVE_UTILIZATION) {
+    warnings.push(
+      `MoE throughput capped at ${MAX_MOE_EFFECTIVE_UTILIZATION.toFixed(2)}x peak utilization (requested ${requestedEffectiveUtilization.toFixed(2)}x).`,
+    )
+  }
 
   const estimatedHoursByGPU: Record<string, number> = {}
   const dedupedGPUs = new Set(params.target_gpu.map(normalizeTargetGPU))
@@ -229,6 +247,8 @@ export function estimateTraining(params: EstimateRequest): TrainingEstimate {
   intermediates.qat_compute_multiplier = qatComputeMultiplier
   intermediates.framework_mfu = frameworkMFU
   intermediates.framework_speed_multiplier = frameworkSpeedMultiplier
+  intermediates.requested_effective_utilization = requestedEffectiveUtilization
+  intermediates.capped_effective_utilization = cappedEffectiveUtilization
   intermediates.total_flops = totalFLOPs
 
   return {
