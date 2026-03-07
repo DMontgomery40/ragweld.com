@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "last_updated": "2026-03-06",
+  "last_updated": "2026-03-07",
   "source_catalog": "https://huggingface.co + https://raw.githubusercontent.com/DMontgomery40/ragweld/main/web/public/models.json",
   "model_count": 60,
   "notes": [
@@ -53,7 +53,7 @@
         }
       },
       "config_source": "https://huggingface.co/BAAI/bge-small-en-v1.5/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06"
+      "config_refreshed_at": "2026-03-07"
     },
     {
       "id": "nomic-ai-nomic-embed-text-v1",
@@ -99,7 +99,7 @@
         }
       },
       "config_source": "https://huggingface.co/nomic-ai/nomic-embed-text-v1/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06"
+      "config_refreshed_at": "2026-03-07"
     },
     {
       "id": "nomic-ai-nomic-embed-text-v1.5",
@@ -145,7 +145,7 @@
         }
       },
       "config_source": "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06"
+      "config_refreshed_at": "2026-03-07"
     },
     {
       "id": "intfloat-e5-large-v2",
@@ -191,7 +191,7 @@
         }
       },
       "config_source": "https://huggingface.co/intfloat/e5-large-v2/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06"
+      "config_refreshed_at": "2026-03-07"
     },
     {
       "id": "mixedbread-ai-mxbai-embed-large-v1",
@@ -237,7 +237,7 @@
         }
       },
       "config_source": "https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06"
+      "config_refreshed_at": "2026-03-07"
     },
     {
       "id": "qwen2.5-0.5b-instruct",
@@ -284,7 +284,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Qwen2.5-0.5B-Instruct/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Qwen2.5-0.5B-Instruct"
     },
     {
@@ -331,7 +331,7 @@
         }
       },
       "config_source": "https://huggingface.co/jinaai/jina-reranker-v3/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06"
+      "config_refreshed_at": "2026-03-07"
     },
     {
       "id": "qwen3-0.6b",
@@ -378,7 +378,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Qwen3-0.6B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Qwen3-0.6B"
     },
     {
@@ -425,7 +425,7 @@
         }
       },
       "config_source": "https://huggingface.co/BAAI/bge-reranker-v2-m3/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06"
+      "config_refreshed_at": "2026-03-07"
     },
     {
       "id": "baai-bge-m3",
@@ -471,7 +471,7 @@
         }
       },
       "config_source": "https://huggingface.co/BAAI/bge-m3/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06"
+      "config_refreshed_at": "2026-03-07"
     },
     {
       "id": "gemma-3-1b-it",
@@ -518,7 +518,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/gemma-3-1b-it/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/gemma-3-1b-it"
     },
     {
@@ -566,7 +566,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Llama-3.2-1B-Instruct/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Llama-3.2-1B-Instruct"
     },
     {
@@ -613,7 +613,7 @@
         }
       },
       "config_source": "https://huggingface.co/mixedbread-ai/mxbai-rerank-large-v2/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06"
+      "config_refreshed_at": "2026-03-07"
     },
     {
       "id": "qwen2.5-1.5b-instruct",
@@ -660,7 +660,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Qwen2.5-1.5B-Instruct/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Qwen2.5-1.5B-Instruct"
     },
     {
@@ -708,7 +708,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Qwen3-1.7B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Qwen3-1.7B"
     },
     {
@@ -756,7 +756,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-1.5B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/DeepSeek-R1-Distill-Qwen-1.5B"
     },
     {
@@ -804,7 +804,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/gemma-2-2b-it/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/gemma-2-2b-it"
     },
     {
@@ -852,7 +852,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Qwen2.5-3B-Instruct/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Qwen2.5-3B-Instruct"
     },
     {
@@ -900,7 +900,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Llama-3.2-3B-Instruct/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Llama-3.2-3B-Instruct"
     },
     {
@@ -948,7 +948,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Qwen3-4B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Qwen3-4B"
     },
     {
@@ -996,7 +996,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Phi-3-mini-4k-instruct/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Phi-3-mini-4k-instruct"
     },
     {
@@ -1044,7 +1044,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Phi-4-mini-instruct/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Phi-4-mini-instruct"
     },
     {
@@ -1092,7 +1092,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/gemma-3-4b-it/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/gemma-3-4b-it"
     },
     {
@@ -1140,7 +1140,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/mistral-7b-instruct-v0.3/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/mistral-7b-instruct-v0.3"
     },
     {
@@ -1187,7 +1187,7 @@
         }
       },
       "config_source": "https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06"
+      "config_refreshed_at": "2026-03-07"
     },
     {
       "id": "qwen3-8b",
@@ -1234,7 +1234,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Qwen3-8B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Qwen3-8B"
     },
     {
@@ -1282,7 +1282,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-7B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/DeepSeek-R1-Distill-Qwen-7B"
     },
     {
@@ -1330,7 +1330,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Qwen2.5-7B-Instruct/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Qwen2.5-7B-Instruct"
     },
     {
@@ -1377,7 +1377,7 @@
         }
       },
       "config_source": "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06"
+      "config_refreshed_at": "2026-03-07"
     },
     {
       "id": "deepseek-r1-distill-llama-8b",
@@ -1424,7 +1424,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Llama-8B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/DeepSeek-R1-Distill-Llama-8B"
     },
     {
@@ -1472,7 +1472,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/llama-3-8b/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/llama-3-8b"
     },
     {
@@ -1520,7 +1520,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/llama-3-8b-Instruct/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/llama-3-8b-Instruct"
     },
     {
@@ -1568,7 +1568,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Llama-3.1-8B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Llama-3.1-8B"
     },
     {
@@ -1616,7 +1616,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Llama-3.1-8B-Instruct/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Llama-3.1-8B-Instruct"
     },
     {
@@ -1664,7 +1664,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/gemma-2-9b-it/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/gemma-2-9b-it"
     },
     {
@@ -1712,7 +1712,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/gemma-3-12b-it/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/gemma-3-12b-it"
     },
     {
@@ -1759,7 +1759,7 @@
         }
       },
       "config_source": "https://huggingface.co/Qwen/Qwen2.5-14B-Instruct/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06"
+      "config_refreshed_at": "2026-03-07"
     },
     {
       "id": "qwen3-14b",
@@ -1806,7 +1806,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Qwen3-14B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Qwen3-14B"
     },
     {
@@ -1854,7 +1854,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/phi-4/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/phi-4"
     },
     {
@@ -1902,7 +1902,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-14B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/DeepSeek-R1-Distill-Qwen-14B"
     },
     {
@@ -1950,7 +1950,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Qwen2.5-14B-Instruct/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Qwen2.5-14B-Instruct"
     },
     {
@@ -1998,7 +1998,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Qwen3-235B-A22B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "active_params_billions": 22,
       "moe_total_experts": 128,
       "moe_active_experts": 8,
@@ -2049,7 +2049,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Mistral-Small-3.1-24B-Instruct-2503/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Mistral-Small-3.1-24B-Instruct-2503"
     },
     {
@@ -2097,7 +2097,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Mistral-Small-3.2-24B-Instruct-2506/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Mistral-Small-3.2-24B-Instruct-2506"
     },
     {
@@ -2145,7 +2145,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/gemma-2-27b-it/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/gemma-2-27b-it"
     },
     {
@@ -2193,7 +2193,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Qwen3.5-27B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "module_shape_note": "Attention projection dimensions are approximated from exposed config fields.",
       "hf_repo_id": "unsloth/Qwen3.5-27B"
     },
@@ -2242,7 +2242,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/gemma-3-27b-it/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/gemma-3-27b-it"
     },
     {
@@ -2290,7 +2290,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Qwen3-32B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Qwen3-32B"
     },
     {
@@ -2338,7 +2338,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-32B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/DeepSeek-R1-Distill-Qwen-32B"
     },
     {
@@ -2386,7 +2386,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Qwen2.5-32B-Instruct/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Qwen2.5-32B-Instruct"
     },
     {
@@ -2434,7 +2434,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Qwen3.5-35B-A3B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "active_params_billions": 3,
       "moe_total_experts": 256,
       "moe_active_experts": 8,
@@ -2486,7 +2486,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/DeepSeek-V3-0324/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "active_params_billions": 37,
       "moe_total_experts": 256,
       "moe_active_experts": 8,
@@ -2538,7 +2538,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Mixtral-8x7B-Instruct-v0.1/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "active_params_billions": 12.9,
       "moe_total_experts": 8,
       "moe_active_experts": 2,
@@ -2589,7 +2589,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Llama-70B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/DeepSeek-R1-Distill-Llama-70B"
     },
     {
@@ -2637,7 +2637,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Llama-3.1-70B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Llama-3.1-70B"
     },
     {
@@ -2685,7 +2685,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Llama-3.3-70B-Instruct/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Llama-3.3-70B-Instruct"
     },
     {
@@ -2733,7 +2733,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Qwen2.5-72B-Instruct/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "hf_repo_id": "unsloth/Qwen2.5-72B-Instruct"
     },
     {
@@ -2781,7 +2781,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Llama-4-Scout-17B-16E-Instruct/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "active_params_billions": 17,
       "moe_total_experts": 16,
       "moe_active_experts": 1,
@@ -2832,7 +2832,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Qwen3.5-122B-A10B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "active_params_billions": 10,
       "moe_total_experts": 256,
       "moe_active_experts": 8,
@@ -2884,7 +2884,7 @@
         }
       },
       "config_source": "https://huggingface.co/unsloth/Qwen3.5-397B-A17B/raw/main/config.json",
-      "config_refreshed_at": "2026-03-06",
+      "config_refreshed_at": "2026-03-07",
       "active_params_billions": 17,
       "moe_total_experts": 512,
       "moe_active_experts": 10,
