@@ -67,7 +67,13 @@ export const handler: Handler = async (event) => {
           count: filteredRows.length,
           source: pricing.source,
           fetched_at: pricing.fetchedAt,
+          stale_after: pricing.staleAfter,
+          is_stale: pricing.isStale,
           cached: pricing.cached,
+          cache_ttl_ms: pricing.cacheTtlMs,
+          snapshot_updated_at: pricing.snapshotUpdatedAt,
+          data_age_ms: pricing.dataAgeMs,
+          snapshot_age_ms: pricing.snapshotAgeMs,
           fallback_reason: pricing.fallbackReason ?? null,
           filters: {
             gpu_type: gpuType ?? null,
@@ -88,4 +94,3 @@ export const handler: Handler = async (event) => {
     })
   }
 }
-

@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
+import { INPUT_PANEL_HELP, type CrucibleHelpCard } from '../help/inputPanelHelp'
 import { resolveGPUType } from '../engine/gpu-specs'
 import type {
   Architecture,
   EstimateRequest,
+  EstimateResponse,
   FineTuneMethod,
   Framework,
   GPUType,
@@ -15,11 +17,13 @@ import type {
   QuantizationBits,
   QuantizationProfile,
   TrainingType,
+  WorkflowMode,
 } from '../types'
 
 interface InputPanelProps {
   value: EstimateRequest
   onChange: (patch: Partial<EstimateRequest>) => void
+  estimate: EstimateResponse | null
   pricing: ProviderPricing[]
   pricingLoading: boolean
   onResolveModel: (input: string) => Promise<void>
@@ -80,6 +84,7 @@ const FRAMEWORK_OPTIONS: Framework[] = [
   'torchtune',
   'Custom',
 ]
+const WORKFLOW_MODE_OPTIONS: WorkflowMode[] = ['guided', 'custom_pipeline']
 const OPTIMIZER_OPTIONS: Optimizer[] = [
   'adamw',
   'adamw_8bit',
@@ -269,6 +274,32 @@ function formatQuantizationProfileLabel(profile: QuantizationProfile): string {
   }
 }
 
+function formatSupportTierLabel(tier: EstimateResponse['support_tier'] | undefined): string {
+  switch (tier) {
+    case 'documented':
+      return 'Documented'
+    case 'inferred':
+      return 'Inferred'
+    case 'custom':
+      return 'Custom'
+    default:
+      return 'Unknown'
+  }
+}
+
+function formatUnknownValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.join(', ')
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'true' : 'false'
+  }
+  if (value === null || value === undefined || value === '') {
+    return 'none'
+  }
+  return String(value)
+}
+
 function formatQATSchemeLabel(scheme: EstimateRequest['qat_scheme']): string {
   switch (scheme) {
     case 'fp8-int4':
@@ -284,21 +315,156 @@ function formatQATSchemeLabel(scheme: EstimateRequest['qat_scheme']): string {
   }
 }
 
+function formatWorkflowModeLabel(mode: WorkflowMode): string {
+  return mode === 'guided' ? 'Guided / documented path' : 'Custom pipeline'
+}
+
 interface HelpLabelProps {
   text: string
-  tooltip: string
+  tooltip: CrucibleHelpCard | TooltipSpec | string
+}
+
+interface TooltipBadge {
+  text: string
+  className?: 'info' | 'warn' | 'warning' | 'err' | 'reindex' | 'ok' | 'success' | 'security'
+}
+
+interface TooltipLink {
+  href: string
+  text: string
+}
+
+interface TooltipSection {
+  title: string
+  bullets: string[]
+}
+
+interface TooltipSpec {
+  title?: string
+  body?: string
+  bodyHtml?: string
+  badges?: TooltipBadge[]
+  links?: TooltipLink[]
+  sections?: TooltipSection[]
+}
+
+function stopTooltipToggle(event: MouseEvent<HTMLElement>) {
+  if (event.target instanceof Element && event.target.closest('a')) {
+    return
+  }
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+function isCrucibleHelpCard(value: TooltipSpec | CrucibleHelpCard | string): value is CrucibleHelpCard {
+  return typeof value === 'object' && value !== null && 'id' in value && 'short' in value
+}
+
+function cardToTooltipSpec(card: CrucibleHelpCard): TooltipSpec {
+  return {
+    title: card.title,
+    body: card.short,
+    badges: card.badges?.map((badge) => ({
+      text: badge.text,
+      className: badge.tone,
+    })),
+    sections: card.sections?.map((section) => ({
+      title: section.title,
+      bullets: section.bullets,
+    })),
+    links: card.sources?.map((source) => ({
+      text: source.title,
+      href: source.href,
+    })),
+  }
+}
+
+function normalizeTooltip(text: string, tooltip: CrucibleHelpCard | TooltipSpec | string): TooltipSpec {
+  if (typeof tooltip === 'string') {
+    return {
+      title: text,
+      body: tooltip,
+    }
+  }
+
+  if (isCrucibleHelpCard(tooltip)) {
+    return cardToTooltipSpec(tooltip)
+  }
+
+  return {
+    title: tooltip.title ?? text,
+    body: tooltip.body,
+    bodyHtml: tooltip.bodyHtml,
+    badges: tooltip.badges,
+    sections: tooltip.sections,
+    links: tooltip.links,
+  }
+}
+
+function TooltipMark({ label, tooltip }: { label: string; tooltip: CrucibleHelpCard | TooltipSpec | string }) {
+  const spec = normalizeTooltip(label, tooltip)
+
+  return (
+    <span
+      className="inline-tooltip"
+      tabIndex={0}
+      aria-label={`${label} help`}
+      onMouseDown={stopTooltipToggle}
+      onClick={stopTooltipToggle}
+    >
+      <span className="inline-tooltip-mark">?</span>
+      <span className="inline-tooltip-content tooltip-content" role="tooltip">
+        <span className="tt-title">{spec.title}</span>
+        {spec.badges && spec.badges.length > 0 ? (
+          <span className="tt-badges">
+            {spec.badges.map((badge) => (
+              <span key={`${badge.className ?? 'default'}-${badge.text}`} className={`tt-badge ${badge.className ?? ''}`}>
+                {badge.text}
+              </span>
+            ))}
+          </span>
+        ) : null}
+        {spec.bodyHtml ? (
+          <span className="tt-body" dangerouslySetInnerHTML={{ __html: spec.bodyHtml }} />
+        ) : (
+          <span className="tt-body">{spec.body}</span>
+        )}
+        {spec.sections && spec.sections.length > 0 ? (
+          <span className="tt-sections">
+            {spec.sections.map((section) => (
+              <span key={section.title} className="tt-section">
+                <span className="tt-section-title">{section.title}</span>
+                <ul className="tt-list">
+                  {section.bullets.map((bullet) => (
+                    <li key={bullet}>{bullet}</li>
+                  ))}
+                </ul>
+              </span>
+            ))}
+          </span>
+        ) : null}
+        {spec.links && spec.links.length > 0 ? (
+          <span className="tt-links-block">
+            <span className="tt-links-title">Sources</span>
+            <span className="tt-links">
+            {spec.links.map((link) => (
+              <a key={link.href} href={link.href} target="_blank" rel="noopener noreferrer">
+                {link.text}
+              </a>
+            ))}
+            </span>
+          </span>
+        ) : null}
+      </span>
+    </span>
+  )
 }
 
 function HelpLabel({ text, tooltip }: HelpLabelProps) {
   return (
     <span className="field-label">
       <span>{text}</span>
-      <span className="inline-tooltip" tabIndex={0} aria-label={`${text} help`}>
-        <span className="inline-tooltip-mark">?</span>
-        <span className="inline-tooltip-content" role="tooltip">
-          {tooltip}
-        </span>
-      </span>
+      <TooltipMark label={text} tooltip={tooltip} />
     </span>
   )
 }
@@ -495,6 +661,7 @@ function MultiSelectMatrix({
 export function InputPanel({
   value,
   onChange,
+  estimate,
   pricing,
   pricingLoading,
   onResolveModel,
@@ -554,8 +721,8 @@ export function InputPanel({
   }, [providerRows, value.target_gpu])
 
   const providerGpuCountRows = useMemo(() => {
-    return providerGpuRows.filter((row) => row.num_gpus === value.num_gpus)
-  }, [providerGpuRows, value.num_gpus])
+    return providerGpuRows.filter((row) => row.num_gpus * value.num_nodes === value.num_gpus)
+  }, [providerGpuRows, value.num_gpus, value.num_nodes])
 
   const tierScopeRows = useMemo(() => {
     if (providerGpuCountRows.length > 0) {
@@ -612,10 +779,12 @@ export function InputPanel({
   const availableGpuCounts = useMemo(() => {
     const sourceRows = providerGpuRows.length > 0 ? providerGpuRows : providerRows
     if (sourceRows.length === 0) {
-      return [1, 2, 4, 8]
+      return [1, 2, 4, 8].map((count) => count * value.num_nodes)
     }
-    return Array.from(new Set(sourceRows.map((row) => row.num_gpus))).sort((left, right) => left - right)
-  }, [providerGpuRows, providerRows])
+    return Array.from(new Set(sourceRows.map((row) => row.num_gpus * value.num_nodes))).sort(
+      (left, right) => left - right,
+    )
+  }, [providerGpuRows, providerRows, value.num_nodes])
 
   const availableRegions = useMemo(() => {
     const sourceRows = providerGpuCountRows.length > 0 ? providerGpuCountRows : providerGpuRows
@@ -713,7 +882,77 @@ export function InputPanel({
     return selected?.id ?? 'custom'
   }, [value.model_name])
 
+  const normalizationsByField = useMemo(() => {
+    const next = new Map<string, EstimateResponse['normalizations']>()
+    for (const event of estimate?.normalizations ?? []) {
+      const existing = next.get(event.field) ?? []
+      existing.push(event)
+      next.set(event.field, existing)
+    }
+    return next
+  }, [estimate?.normalizations])
+
+  const workflowSupportSummary = useMemo(() => {
+    return estimate?.support_reasons[0]?.reason ?? null
+  }, [estimate?.support_reasons])
+
+  const selectionAdjustmentMessages = useMemo(() => {
+    if (pricingLoading || pricing.length === 0) {
+      return []
+    }
+
+    const messages: string[] = []
+
+    const providerSet = new Set(availableProviders.map((provider) => normalizeLower(provider)))
+    const gpuSet = new Set(availableGpuFamilies.map((gpu) => normalizeGpuOption(gpu)))
+    const regionSet = new Set(availableRegions.map((region) => normalizeLower(region)))
+    const interconnectSet = new Set(availableInterconnects.map((interconnect) => normalizeLower(interconnect)))
+    const instanceTypeSet = new Set(availableInstanceTypes.map((instanceType) => normalizeLower(instanceType)))
+
+    if (value.target_providers.some((provider) => !providerSet.has(normalizeLower(provider)))) {
+      messages.push('Provider filters will be pruned because some selected providers are no longer present in the current pricing feed.')
+    }
+    if (value.target_gpu.some((gpu) => !gpuSet.has(normalizeGpuOption(gpu)))) {
+      messages.push('GPU filters will be pruned because some selected GPU families are no longer present in the current pricing feed.')
+    }
+    if (value.target_regions.some((region) => !regionSet.has(normalizeLower(region)))) {
+      messages.push('Region filters will be pruned because some selected regions are no longer available for the current provider/GPU scope.')
+    }
+    if (value.target_interconnects.some((interconnect) => !interconnectSet.has(normalizeLower(interconnect)))) {
+      messages.push('Interconnect filters will be pruned because some selected modes are no longer available for the current provider/GPU scope.')
+    }
+    if (value.target_instance_types.some((instanceType) => !instanceTypeSet.has(normalizeLower(instanceType)))) {
+      messages.push('Instance filters will be pruned because some selected instances are no longer available for the current provider/GPU scope.')
+    }
+    if (!availableGpuCounts.includes(value.num_gpus)) {
+      messages.push(
+        `Total GPU count will be normalized to ${availableGpuCounts[0] ?? value.num_gpus} to match the currently visible provider rows.`,
+      )
+    }
+
+    return messages
+  }, [
+    availableGpuCounts,
+    availableGpuFamilies,
+    availableInstanceTypes,
+    availableInterconnects,
+    availableProviders,
+    availableRegions,
+    pricing.length,
+    pricingLoading,
+    value.num_gpus,
+    value.target_gpu,
+    value.target_instance_types,
+    value.target_interconnects,
+    value.target_providers,
+    value.target_regions,
+  ])
+
   useEffect(() => {
+    if (pricingLoading || pricing.length === 0) {
+      return
+    }
+
     const providerSet = new Set(availableProviders.map((provider) => normalizeLower(provider)))
     const gpuSet = new Set(availableGpuFamilies.map((gpu) => normalizeGpuOption(gpu)))
     const regionSet = new Set(availableRegions.map((region) => normalizeLower(region)))
@@ -771,6 +1010,8 @@ export function InputPanel({
     availableProviders,
     availableRegions,
     onChange,
+    pricing.length,
+    pricingLoading,
     value.num_gpus,
     value.target_gpu,
     value.target_instance_types,
@@ -786,6 +1027,29 @@ export function InputPanel({
         <span className="section-meta">Debounced live estimate (300ms)</span>
       </div>
 
+      {(estimate?.normalizations.length ?? 0) > 0 || selectionAdjustmentMessages.length > 0 ? (
+        <div className="input-note-card">
+          <h3>Effective Behavior</h3>
+          {(estimate?.normalizations.length ?? 0) > 0 ? (
+            <ul className="warnings-list compact-list">
+              {estimate?.normalizations.map((event) => (
+                <li key={`${event.rule_id}:${event.field}`}>
+                  <strong>{event.field}</strong>: {formatUnknownValue(event.input)} to{' '}
+                  {formatUnknownValue(event.normalized_to)}. {event.reason}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {selectionAdjustmentMessages.length > 0 ? (
+            <ul className="warnings-list compact-list">
+              {selectionAdjustmentMessages.map((message, index) => (
+                <li key={`${message}-${index}`}>{message}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+
       <fieldset className="panel-section">
         <legend
           className="section-toggle-legend"
@@ -796,10 +1060,7 @@ export function InputPanel({
         </legend>
         <div className="section-body" data-open={String(sectionOpen.model)}>
         <div className="field">
-          <HelpLabel
-            text="Resolve from Hugging Face URL / repo id"
-            tooltip="Paste a Hugging Face URL or repo id to auto-fill model parameters."
-          />
+          <HelpLabel text="Resolve from Hugging Face URL / repo id" tooltip={INPUT_PANEL_HELP.model.resolveReference} />
           <div className="inline-field-row">
             <input
               type="text"
@@ -827,10 +1088,7 @@ export function InputPanel({
         </div>
         <div className="field-grid field-grid-2">
           <label className="field">
-            <HelpLabel
-              text="Model preset"
-              tooltip="Loads curated defaults for known models. Use Custom to keep manual values."
-            />
+            <HelpLabel text="Model preset" tooltip={INPUT_PANEL_HELP.model.modelPreset} />
             <select
               value={selectedModelPreset}
               onChange={(event) => {
@@ -846,7 +1104,10 @@ export function InputPanel({
 
                 onChange({
                   model_name: selected.id,
+                  model_hf_repo_id: '',
+                  auto_resolve_model_metadata: true,
                   model_params_billions: selected.params,
+                  model_active_params_billions: null,
                   architecture: selected.architecture,
                   moe_total_experts: selected.moeTotal,
                   moe_active_experts: selected.moeActive,
@@ -871,46 +1132,72 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <HelpLabel text="Model id" tooltip="Model identifier used in requests and exports." />
+            <HelpLabel text="Model id" tooltip={INPUT_PANEL_HELP.model.modelId} />
             <input
               type="text"
               value={value.model_name}
               onChange={(event) => {
-                patchField('model_name', event.target.value)
+                onChange({
+                  model_name: event.target.value,
+                  model_hf_repo_id: '',
+                  auto_resolve_model_metadata: true,
+                })
               }}
               placeholder="qwen3-32b or custom"
             />
-            <span className="field-hint">Use Resolve above to auto-fill parameters from Hugging Face.</span>
+            <span className="field-hint">
+              Direct Hugging Face repo ids are auto-resolved during estimate. Resolve above is optional if you
+              want the form fields filled immediately.
+            </span>
           </label>
 
           <label className="field">
-            <HelpLabel
-              text="Model params (B)"
-              tooltip="Total parameters in billions. This directly drives VRAM and compute estimates."
-            />
+            <HelpLabel text="Model params (B)" tooltip={INPUT_PANEL_HELP.model.modelParams} />
             <input
               type="number"
               min={0.1}
               step={0.1}
               value={value.model_params_billions}
               onChange={(event) => {
-                patchField(
-                  'model_params_billions',
-                  Math.max(0.1, parseNumber(event.target.value, value.model_params_billions)),
-                )
+                onChange({
+                  model_params_billions: Math.max(0.1, parseNumber(event.target.value, value.model_params_billions)),
+                  auto_resolve_model_metadata: false,
+                })
               }}
             />
           </label>
 
           <label className="field">
-            <HelpLabel
-              text="Architecture"
-              tooltip="Dense uses all parameters each step. MoE activates only a subset of experts."
+            <HelpLabel text="Active params (B)" tooltip={INPUT_PANEL_HELP.model.activeParams} />
+            <input
+              type="number"
+              min={0}
+              step={0.1}
+              value={value.model_active_params_billions ?? ''}
+              onChange={(event) => {
+                const rawValue = event.target.value.trim()
+                onChange({
+                  model_active_params_billions:
+                    rawValue.length === 0 ? null : Math.max(0, parseNumber(rawValue, value.model_params_billions)),
+                  auto_resolve_model_metadata: false,
+                })
+              }}
+              placeholder={value.architecture === 'MoE' ? 'e.g. 32' : 'optional'}
             />
+            <span className="field-hint">
+              Leave blank for dense models. For MoE, this should be the activated parameter count when known.
+            </span>
+          </label>
+
+          <label className="field">
+            <HelpLabel text="Architecture" tooltip={INPUT_PANEL_HELP.model.architecture} />
             <select
               value={value.architecture}
               onChange={(event) => {
-                patchField('architecture', event.target.value as Architecture)
+                onChange({
+                  architecture: event.target.value as Architecture,
+                  auto_resolve_model_metadata: false,
+                })
               }}
             >
               {ARCHITECTURE_OPTIONS.map((option) => (
@@ -922,10 +1209,7 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <HelpLabel
-              text="Method"
-              tooltip="Training strategy: full fine-tune updates base weights, LoRA and QLoRA update adapters."
-            />
+            <HelpLabel text="Method" tooltip={INPUT_PANEL_HELP.model.method} />
             <select
               value={value.method}
               onChange={(event) => {
@@ -942,13 +1226,15 @@ export function InputPanel({
                 </option>
               ))}
             </select>
+            {normalizationsByField.get('method')?.map((event) => (
+              <span key={`${event.rule_id}:${event.field}`} className="field-hint field-hint-warn">
+                Effective method: {formatUnknownValue(event.normalized_to)}. {event.reason}
+              </span>
+            ))}
           </label>
 
           <label className="field">
-            <HelpLabel
-              text="Quantization (bit)"
-              tooltip="Weight precision assumption used in memory and throughput calculations."
-            />
+            <HelpLabel text="Quantization (bit)" tooltip={INPUT_PANEL_HELP.model.quantizationBits} />
             <select
               value={value.quantization_bits}
               onChange={(event) => {
@@ -969,13 +1255,15 @@ export function InputPanel({
                 </option>
               ))}
             </select>
+            {normalizationsByField.get('quantization_bits')?.map((event) => (
+              <span key={`${event.rule_id}:${event.field}`} className="field-hint field-hint-warn">
+                Effective quantization: {formatUnknownValue(event.normalized_to)}. {event.reason}
+              </span>
+            ))}
           </label>
 
           <label className="field">
-            <HelpLabel
-              text="Quantization profile"
-              tooltip="Selects profile-specific overhead assumptions for the chosen bit width."
-            />
+            <HelpLabel text="Quantization profile" tooltip={INPUT_PANEL_HELP.model.quantizationProfile} />
             <select
               value={value.quantization_profile}
               onChange={(event) => {
@@ -989,13 +1277,15 @@ export function InputPanel({
               ))}
             </select>
             <span className="field-hint">4-bit profiles model NF4/FP4-era differences; other bit-widths use fixed integer profiles.</span>
+            {normalizationsByField.get('quantization_profile')?.map((event) => (
+              <span key={`${event.rule_id}:${event.field}`} className="field-hint field-hint-warn">
+                Effective profile: {formatUnknownValue(event.normalized_to)}. {event.reason}
+              </span>
+            ))}
           </label>
 
           <label className="field">
-            <HelpLabel
-              text="Use QAT"
-              tooltip="Quantization-aware training trains through the quantization path. Unsloth notes QAT has no extra overhead during inference and uses the same disk/memory as normal quantization."
-            />
+            <HelpLabel text="Use QAT" tooltip={INPUT_PANEL_HELP.model.useQat} />
             <input
               type="checkbox"
               checked={value.use_qat}
@@ -1007,7 +1297,7 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <HelpLabel text="QAT scheme" tooltip="Scheme selection for Unsloth QAT (e.g., FP8 -> INT4)." />
+            <HelpLabel text="QAT scheme" tooltip={INPUT_PANEL_HELP.model.qatScheme} />
             <select
               value={value.qat_scheme}
               disabled={!value.use_qat}
@@ -1024,10 +1314,7 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <HelpLabel
-              text="Framework"
-              tooltip="Applies framework-specific throughput and runtime overhead assumptions."
-            />
+            <HelpLabel text="Framework" tooltip={INPUT_PANEL_HELP.model.framework} />
             <select
               value={value.framework}
               onChange={(event) => {
@@ -1041,44 +1328,63 @@ export function InputPanel({
               ))}
             </select>
           </label>
+
+          <label className="field">
+            <HelpLabel text="Workflow mode" tooltip={INPUT_PANEL_HELP.model.workflowMode} />
+            <select
+              value={value.workflow_mode}
+              onChange={(event) => {
+                patchField('workflow_mode', event.target.value as WorkflowMode)
+              }}
+            >
+              {WORKFLOW_MODE_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {formatWorkflowModeLabel(option)}
+                </option>
+              ))}
+            </select>
+            <span className="field-hint">
+              Use Guided for notebook/local/Docker-style paths. Use Custom pipeline when you are hand-rolling infra, distributed setup, or provider integration.
+            </span>
+            {estimate ? (
+              <span className="field-hint field-hint-warn">
+                Current support: {formatSupportTierLabel(estimate.support_tier)}.{' '}
+                {workflowSupportSummary ?? 'Workflow affects provider ranking and support confidence, not raw provider membership.'}
+              </span>
+            ) : null}
+          </label>
         </div>
 
         {value.architecture === 'MoE' && (
           <div className="field-grid field-grid-2 conditional-grid">
             <label className="field">
-              <HelpLabel
-                text="Total experts"
-                tooltip="Total number of experts in the MoE model."
-              />
+              <HelpLabel text="Total experts" tooltip={INPUT_PANEL_HELP.model.totalExperts} />
               <input
                 type="number"
                 min={1}
                 step={1}
                 value={value.moe_total_experts}
                 onChange={(event) => {
-                  patchField(
-                    'moe_total_experts',
-                    parsePositiveInteger(event.target.value, value.moe_total_experts),
-                  )
+                  onChange({
+                    moe_total_experts: parsePositiveInteger(event.target.value, value.moe_total_experts),
+                    auto_resolve_model_metadata: false,
+                  })
                 }}
               />
             </label>
 
             <label className="field">
-              <HelpLabel
-                text="Active experts"
-                tooltip="Experts used per token during routing. Must be less than or equal to total experts."
-              />
+              <HelpLabel text="Active experts" tooltip={INPUT_PANEL_HELP.model.activeExperts} />
               <input
                 type="number"
                 min={1}
                 step={1}
                 value={value.moe_active_experts}
                 onChange={(event) => {
-                  patchField(
-                    'moe_active_experts',
-                    parsePositiveInteger(event.target.value, value.moe_active_experts),
-                  )
+                  onChange({
+                    moe_active_experts: parsePositiveInteger(event.target.value, value.moe_active_experts),
+                    auto_resolve_model_metadata: false,
+                  })
                 }}
               />
             </label>
@@ -1098,10 +1404,7 @@ export function InputPanel({
         <div className="section-body" data-open={String(sectionOpen.dataset)}>
         <div className="field-grid field-grid-2">
           <label className="field">
-            <HelpLabel
-              text="Dataset tokens"
-              tooltip="Total training tokens processed per epoch."
-            />
+            <HelpLabel text="Dataset tokens" tooltip={INPUT_PANEL_HELP.dataset.datasetTokens} />
             <input
               type="number"
               min={1}
@@ -1114,7 +1417,7 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <HelpLabel text="Epochs" tooltip="How many full passes over the dataset to run." />
+            <HelpLabel text="Epochs" tooltip={INPUT_PANEL_HELP.dataset.epochs} />
             <input
               type="number"
               min={1}
@@ -1127,10 +1430,7 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <HelpLabel
-              text="Batch size"
-              tooltip="Micro-batch size per step before gradient accumulation."
-            />
+            <HelpLabel text="Batch size" tooltip={INPUT_PANEL_HELP.dataset.batchSize} />
             <input
               type="number"
               min={1}
@@ -1143,10 +1443,7 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <HelpLabel
-              text="Grad accumulation"
-              tooltip="Number of micro-steps to accumulate before an optimizer step."
-            />
+            <HelpLabel text="Grad accumulation" tooltip={INPUT_PANEL_HELP.dataset.gradAccumulation} />
             <input
               type="number"
               min={1}
@@ -1162,10 +1459,7 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <HelpLabel
-              text="Max seq length"
-              tooltip="Maximum sequence length used during training."
-            />
+            <HelpLabel text="Max seq length" tooltip={INPUT_PANEL_HELP.dataset.maxSeqLength} />
             <input
               type="number"
               min={128}
@@ -1181,10 +1475,7 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <HelpLabel
-              text="Training type"
-              tooltip="Objective class that changes compute and memory assumptions."
-            />
+            <HelpLabel text="Training type" tooltip={INPUT_PANEL_HELP.dataset.trainingType} />
             <select
               value={value.training_type}
               onChange={(event) => {
@@ -1216,10 +1507,7 @@ export function InputPanel({
         <div className="section-body" data-open={String(sectionOpen.hardware)}>
         <div className="field-grid field-grid-2">
           <label className="field">
-            <HelpLabel
-              text="GPUs per run"
-              tooltip="Number of GPUs used in each training run."
-            />
+            <HelpLabel text="GPUs per run" tooltip={INPUT_PANEL_HELP.hardware.gpusPerRun} />
             <select
               value={value.num_gpus}
               onChange={(event) => {
@@ -1235,7 +1523,7 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <HelpLabel text="Nodes" tooltip="Number of machines used for distributed training." />
+            <HelpLabel text="Nodes" tooltip={INPUT_PANEL_HELP.hardware.nodes} />
             <input
               type="number"
               min={1}
@@ -1250,10 +1538,7 @@ export function InputPanel({
 
         <MultiSelectMatrix
           label={
-            <HelpLabel
-              text="Target GPU families"
-              tooltip="Filter estimates to specific GPU families. Leave empty to include all."
-            />
+            <HelpLabel text="Target GPU families" tooltip={INPUT_PANEL_HELP.hardware.targetGpuFamilies} />
           }
           options={gpuFamilyOptions}
           selectedValues={value.target_gpu}
@@ -1266,10 +1551,7 @@ export function InputPanel({
 
         <MultiSelectMatrix
           label={
-            <HelpLabel
-              text="Pricing tiers"
-              tooltip="Billing tiers to include in cost comparisons."
-            />
+            <HelpLabel text="Pricing tiers" tooltip={INPUT_PANEL_HELP.hardware.pricingTiers} />
           }
           options={pricingTierOptions}
           selectedValues={value.pricing_tier}
@@ -1289,10 +1571,7 @@ export function InputPanel({
 
         <MultiSelectMatrix
           label={
-            <HelpLabel
-              text="Cloud providers (blank = all)"
-              tooltip="Restrict calculations to selected providers. Leave empty to include all."
-            />
+            <HelpLabel text="Cloud providers (blank = all)" tooltip={INPUT_PANEL_HELP.hardware.cloudProviders} />
           }
           options={providerOptions}
           selectedValues={value.target_providers}
@@ -1305,10 +1584,7 @@ export function InputPanel({
 
         <MultiSelectMatrix
           label={
-            <HelpLabel
-              text="Regions (optional)"
-              tooltip="Limit to selected cloud regions. Leave empty to allow any region."
-            />
+            <HelpLabel text="Regions (optional)" tooltip={INPUT_PANEL_HELP.hardware.regions} />
           }
           options={regionOptions}
           selectedValues={value.target_regions}
@@ -1326,10 +1602,7 @@ export function InputPanel({
 
         <MultiSelectMatrix
           label={
-            <HelpLabel
-              text="Interconnect (optional)"
-              tooltip="Restrict to specific interconnect types such as NVLink or PCIe."
-            />
+            <HelpLabel text="Interconnect (optional)" tooltip={INPUT_PANEL_HELP.hardware.interconnect} />
           }
           options={interconnectOptions}
           selectedValues={value.target_interconnects}
@@ -1347,10 +1620,7 @@ export function InputPanel({
 
         <MultiSelectMatrix
           label={
-            <HelpLabel
-              text="Instance types (optional)"
-              tooltip="Filter to specific cloud instance SKUs."
-            />
+            <HelpLabel text="Instance types (optional)" tooltip={INPUT_PANEL_HELP.hardware.instanceTypes} />
           }
           options={instanceTypeOptions}
           selectedValues={value.target_instance_types}
@@ -1364,14 +1634,19 @@ export function InputPanel({
         </div>
       </fieldset>
 
-      <button
-        type="button"
-        className="advanced-toggle"
-        title="Open expert-level knobs that change training math assumptions."
-        onClick={() => setAdvancedOpen((open) => !open)}
-      >
-        {advancedOpen ? 'Hide Advanced Parameters' : 'Show Advanced Parameters'}
-      </button>
+      <div className="advanced-toggle-row">
+        <button
+          type="button"
+          className="advanced-toggle"
+          onClick={() => setAdvancedOpen((open) => !open)}
+        >
+          {advancedOpen ? 'Hide Advanced Parameters' : 'Show Advanced Parameters'}
+        </button>
+        <TooltipMark
+          label="Advanced parameters"
+          tooltip={INPUT_PANEL_HELP.advanced.toggle}
+        />
+      </div>
 
       {advancedOpen && (
         <fieldset className="panel-section advanced-section">
@@ -1379,7 +1654,7 @@ export function InputPanel({
 
           <div className="field-grid field-grid-2">
             <label className="field">
-              <HelpLabel text="LoRA rank" tooltip="LoRA decomposition rank for adapter matrices." />
+              <HelpLabel text="LoRA rank" tooltip={INPUT_PANEL_HELP.advanced.loraRank} />
               <input
                 type="number"
                 min={1}
@@ -1392,7 +1667,7 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <HelpLabel text="LoRA alpha" tooltip="LoRA scaling factor applied to adapter updates." />
+              <HelpLabel text="LoRA alpha" tooltip={INPUT_PANEL_HELP.advanced.loraAlpha} />
               <input
                 type="number"
                 min={1}
@@ -1405,10 +1680,7 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <HelpLabel
-                text="Learning rate"
-                tooltip="Base optimizer step size used for update calculations."
-              />
+              <HelpLabel text="Learning rate" tooltip={INPUT_PANEL_HELP.advanced.learningRate} />
               <input
                 type="number"
                 min={0}
@@ -1421,10 +1693,7 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <HelpLabel
-                text="Warmup ratio"
-                tooltip="Fraction of steps used for learning-rate warmup."
-              />
+              <HelpLabel text="Warmup ratio" tooltip={INPUT_PANEL_HELP.advanced.warmupRatio} />
               <input
                 type="number"
                 min={0}
@@ -1439,10 +1708,7 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <HelpLabel
-                text="Optimizer"
-                tooltip="Optimizer implementation assumption for compute and memory overhead."
-              />
+              <HelpLabel text="Optimizer" tooltip={INPUT_PANEL_HELP.advanced.optimizer} />
               <select
                 value={value.optimizer}
                 onChange={(event) => {
@@ -1458,10 +1724,7 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <HelpLabel
-                text="LR scheduler"
-                tooltip="Learning-rate schedule family applied over training steps."
-              />
+              <HelpLabel text="LR scheduler" tooltip={INPUT_PANEL_HELP.advanced.lrScheduler} />
               <select
                 value={value.lr_scheduler}
                 onChange={(event) => {
@@ -1477,10 +1740,7 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <HelpLabel
-                text="Precision"
-                tooltip="Compute precision for training kernels and optimizer state assumptions."
-              />
+              <HelpLabel text="Precision" tooltip={INPUT_PANEL_HELP.advanced.precision} />
               <select
                 value={value.precision}
                 onChange={(event) => {
@@ -1496,10 +1756,7 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <HelpLabel
-                text="Unsloth version"
-                tooltip="Version hint for framework-specific overhead modeling."
-              />
+              <HelpLabel text="Unsloth version" tooltip={INPUT_PANEL_HELP.advanced.unslothVersion} />
               <input
                 type="text"
                 value={value.unsloth_version}
@@ -1510,10 +1767,7 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <HelpLabel
-                text="Custom speed multiplier"
-                tooltip="Extra multiplier applied on top of framework/kernel assumptions (useful for benchmarking your own stack)."
-              />
+              <HelpLabel text="Custom speed multiplier" tooltip={INPUT_PANEL_HELP.advanced.customSpeedMultiplier} />
               <input
                 type="number"
                 min={0.1}
@@ -1530,10 +1784,7 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <HelpLabel
-                text="Dataset rows (optional)"
-                tooltip="Optional row count used for consistency checks against token totals."
-              />
+              <HelpLabel text="Dataset rows (optional)" tooltip={INPUT_PANEL_HELP.advanced.datasetRows} />
               <input
                 type="number"
                 min={1}
@@ -1553,10 +1804,7 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <HelpLabel
-                text="Avg tokens / row"
-                tooltip="Average tokens per sample, used with row count for token sanity checks."
-              />
+              <HelpLabel text="Avg tokens / row" tooltip={INPUT_PANEL_HELP.advanced.avgTokensPerRow} />
               <input
                 type="number"
                 min={1}
@@ -1572,10 +1820,7 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <HelpLabel
-                text="Min VRAM GB (optional)"
-                tooltip="Hard minimum GPU memory required for candidate filtering."
-              />
+              <HelpLabel text="Min VRAM GB (optional)" tooltip={INPUT_PANEL_HELP.advanced.minVramGb} />
               <input
                 type="number"
                 min={1}
@@ -1595,10 +1840,7 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <HelpLabel
-                text="Reward model size (B)"
-                tooltip="Reward model parameter count in billions for RL-style training modes."
-              />
+              <HelpLabel text="Reward model size (B)" tooltip={INPUT_PANEL_HELP.advanced.rewardModelSize} />
               <input
                 type="number"
                 min={0}
@@ -1618,10 +1860,7 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <HelpLabel
-                text="Importance sampling"
-                tooltip="GRPO defaults to token-level importance sampling. GSPO uses sequence-level importance sampling."
-              />
+              <HelpLabel text="Importance sampling" tooltip={INPUT_PANEL_HELP.advanced.importanceSampling} />
               <select
                 value={value.importance_sampling_level}
                 disabled={value.training_type === 'GSPO'}
@@ -1638,10 +1877,7 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <HelpLabel
-                text="Reference model (%)"
-                tooltip="Approximate fraction of reference-model forward passes used for KL regularization (0-100)."
-              />
+              <HelpLabel text="Reference model (%)" tooltip={INPUT_PANEL_HELP.advanced.referenceModelPct} />
               <input
                 type="number"
                 min={0}
@@ -1659,10 +1895,7 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <HelpLabel
-                text="GRPO generations"
-                tooltip="Number of sampled generations per prompt for GRPO."
-              />
+              <HelpLabel text="GRPO generations" tooltip={INPUT_PANEL_HELP.advanced.grpoGenerations} />
               <input
                 type="number"
                 min={1}
@@ -1678,10 +1911,7 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <HelpLabel
-                text="vLLM batch size"
-                tooltip="Batch size assumption used for vLLM-assisted generation workloads."
-              />
+              <HelpLabel text="vLLM batch size" tooltip={INPUT_PANEL_HELP.advanced.vllmBatchSize} />
               <input
                 type="number"
                 min={1}
@@ -1697,10 +1927,7 @@ export function InputPanel({
             </label>
 
             <label className="field">
-              <HelpLabel
-                text="Number of runs"
-                tooltip="Parallel or repeated training runs included in total cost output."
-              />
+              <HelpLabel text="Number of runs" tooltip={INPUT_PANEL_HELP.advanced.numRuns} />
               <input
                 type="number"
                 min={1}
@@ -1715,10 +1942,7 @@ export function InputPanel({
 
           <MultiSelectMatrix
             label={
-              <HelpLabel
-                text="LoRA target modules"
-                tooltip="Model submodules where LoRA adapters are attached."
-              />
+              <HelpLabel text="LoRA target modules" tooltip={INPUT_PANEL_HELP.advanced.loraTargetModules} />
             }
             options={loraTargetOptions}
             selectedValues={value.lora_target_modules}
@@ -1731,10 +1955,7 @@ export function InputPanel({
           />
 
           <div className="toggle-grid">
-            <label
-              className="switch-field"
-              title="Trades compute for memory by recomputing activations during backpropagation."
-            >
+            <label className="switch-field">
               <input
                 type="checkbox"
                 checked={value.use_gradient_checkpointing}
@@ -1742,13 +1963,16 @@ export function InputPanel({
                   patchField('use_gradient_checkpointing', event.target.checked)
                 }}
               />
-              <span>Gradient checkpointing</span>
+              <span className="switch-field-copy">
+                <span>Gradient checkpointing</span>
+                <TooltipMark
+                  label="Gradient checkpointing"
+                  tooltip={INPUT_PANEL_HELP.advanced.gradientCheckpointing}
+                />
+              </span>
             </label>
 
-            <label
-              className="switch-field"
-              title="Enables FlashAttention-style kernels when available."
-            >
+            <label className="switch-field">
               <input
                 type="checkbox"
                 checked={value.use_flash_attention}
@@ -1756,13 +1980,16 @@ export function InputPanel({
                   patchField('use_flash_attention', event.target.checked)
                 }}
               />
-              <span>Flash attention</span>
+              <span className="switch-field-copy">
+                <span>Flash attention</span>
+                <TooltipMark
+                  label="Flash attention"
+                  tooltip={INPUT_PANEL_HELP.advanced.flashAttention}
+                />
+              </span>
             </label>
 
-            <label
-              className="switch-field"
-              title="Assumes Triton kernel implementations are used where available."
-            >
+            <label className="switch-field">
               <input
                 type="checkbox"
                 checked={value.use_triton_kernels}
@@ -1770,13 +1997,16 @@ export function InputPanel({
                   patchField('use_triton_kernels', event.target.checked)
                 }}
               />
-              <span>Triton kernels</span>
+              <span className="switch-field-copy">
+                <span>Triton kernels</span>
+                <TooltipMark
+                  label="Triton kernels"
+                  tooltip={INPUT_PANEL_HELP.advanced.tritonKernels}
+                />
+              </span>
             </label>
 
-            <label
-              className="switch-field"
-              title="Enables rotary-position-embedding optimized kernels."
-            >
+            <label className="switch-field">
               <input
                 type="checkbox"
                 checked={value.use_rope_kernels}
@@ -1784,13 +2014,16 @@ export function InputPanel({
                   patchField('use_rope_kernels', event.target.checked)
                 }}
               />
-              <span>RoPE kernels</span>
+              <span className="switch-field-copy">
+                <span>RoPE kernels</span>
+                <TooltipMark
+                  label="RoPE kernels"
+                  tooltip={INPUT_PANEL_HELP.advanced.ropeKernels}
+                />
+              </span>
             </label>
 
-            <label
-              className="switch-field"
-              title="Assumes fused + chunked cross-entropy loss kernels are available for long-context training."
-            >
+            <label className="switch-field">
               <input
                 type="checkbox"
                 checked={value.use_fused_chunked_ce_loss}
@@ -1798,13 +2031,16 @@ export function InputPanel({
                   patchField('use_fused_chunked_ce_loss', event.target.checked)
                 }}
               />
-              <span>Fused chunked CE</span>
+              <span className="switch-field-copy">
+                <span>Fused chunked CE</span>
+                <TooltipMark
+                  label="Fused chunked CE"
+                  tooltip={INPUT_PANEL_HELP.advanced.fusedChunkedCe}
+                />
+              </span>
             </label>
 
-            <label
-              className="switch-field"
-              title="Assumes Unsloth Split-LoRA / faster MoE kernels are used when training MoE models."
-            >
+            <label className="switch-field">
               <input
                 type="checkbox"
                 checked={value.use_faster_moe_kernels}
@@ -1813,41 +2049,36 @@ export function InputPanel({
                   patchField('use_faster_moe_kernels', event.target.checked)
                 }}
               />
-              <span>Faster MoE kernels</span>
+              <span className="switch-field-copy">
+                <span>Faster MoE kernels</span>
+                <TooltipMark
+                  label="Faster MoE kernels"
+                  tooltip={INPUT_PANEL_HELP.advanced.fasterMoeKernels}
+                />
+              </span>
             </label>
 
-            <label
-              className="switch-field"
-              title="Packs multiple short samples into longer sequences for higher utilization."
-            >
+            <label className="switch-field">
               <input
                 type="checkbox"
-                checked={value.use_packing}
+                checked={value.use_packing || value.packing}
                 onChange={(event) => {
-                  patchField('use_packing', event.target.checked)
+                  onChange({
+                    use_packing: event.target.checked,
+                    packing: event.target.checked,
+                  })
                 }}
               />
-              <span>Use packing</span>
+              <span className="switch-field-copy">
+                <span>Sequence packing</span>
+                <TooltipMark
+                  label="Sequence packing"
+                  tooltip={INPUT_PANEL_HELP.advanced.sequencePacking}
+                />
+              </span>
             </label>
 
-            <label
-              className="switch-field"
-              title="Raw packing flag passed to the backend request."
-            >
-              <input
-                type="checkbox"
-                checked={value.packing}
-                onChange={(event) => {
-                  patchField('packing', event.target.checked)
-                }}
-              />
-              <span>Packing enabled</span>
-            </label>
-
-            <label
-              className="switch-field"
-              title="Forces full-weight finetuning assumptions regardless of method selection."
-            >
+            <label className="switch-field">
               <input
                 type="checkbox"
                 checked={value.full_finetuning}
@@ -1855,9 +2086,23 @@ export function InputPanel({
                   patchField('full_finetuning', event.target.checked)
                 }}
               />
-              <span>Full finetuning mode</span>
+              <span className="switch-field-copy">
+                <span>Full finetuning mode</span>
+                <TooltipMark
+                  label="Full finetuning mode"
+                  tooltip={INPUT_PANEL_HELP.advanced.fullFinetuningMode}
+                />
+              </span>
             </label>
           </div>
+          <span className="field-hint">
+            Packing now drives both `use_packing` and `packing` so the control cannot become inert.
+          </span>
+          {normalizationsByField.get('full_finetuning')?.map((event) => (
+            <span key={`${event.rule_id}:${event.field}`} className="field-hint field-hint-warn">
+              Effective full-finetuning flag: {formatUnknownValue(event.normalized_to)}. {event.reason}
+            </span>
+          ))}
         </fieldset>
       )}
     </section>

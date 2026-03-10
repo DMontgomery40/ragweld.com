@@ -10,7 +10,10 @@ import type { EstimateRequest, ResolvedModelPayload } from './types'
 
 const DEFAULT_REQUEST: EstimateRequest = {
   model_name: 'qwen3-32b',
+  model_hf_repo_id: '',
+  auto_resolve_model_metadata: true,
   model_params_billions: 29.72,
+  model_active_params_billions: null,
   architecture: 'Dense',
   moe_total_experts: 1,
   moe_active_experts: 1,
@@ -41,6 +44,7 @@ const DEFAULT_REQUEST: EstimateRequest = {
   packing: true,
 
   framework: 'Unsloth',
+  workflow_mode: 'custom_pipeline',
   unsloth_version: 'latest',
   use_flash_attention: true,
   use_triton_kernels: true,
@@ -86,6 +90,31 @@ function formatTime(value: string | null): string {
   return `${pad(parsed.getHours())}:${pad(parsed.getMinutes())}:${pad(parsed.getSeconds())}`
 }
 
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) {
+    return 'n/a'
+  }
+
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return value
+  }
+
+  return parsed.toLocaleString('en-US')
+}
+
+function formatSourceLabel(value: string | null | undefined): string {
+  if (!value) {
+    return 'Unknown feed'
+  }
+
+  return value
+    .split(/[_-]+/)
+    .filter((part) => part.length > 0)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
 function resolveRoute(pathname: string): 'workbench' | 'math-code' {
   const normalized = pathname.replace(/\/+$/, '')
   if (normalized.endsWith('/math-code')) {
@@ -119,6 +148,19 @@ function EstimatorWorkbench() {
     pricingMeta,
     refetch: refetchPricing,
   } = useGPUPricing({ refreshMs: 180_000 })
+
+  const pricingSourceLabel = formatSourceLabel(pricingMeta?.source ?? null)
+  const fetchedTimeLabel = formatTime(pricingMeta?.fetched_at ?? pricingFetchedAt)
+  const staleAfterLabel = formatDateTime(pricingMeta?.stale_after ?? null)
+  const snapshotLabel = pricingMeta?.snapshot_updated_at ? formatDateTime(pricingMeta.snapshot_updated_at) : null
+  const pricingRowLabel = `${pricing.length} pricing row${pricing.length === 1 ? '' : 's'}`
+  const targetGpuLabel =
+    state.target_gpu.length > 0
+      ? `${state.target_gpu.length} target GPU famil${state.target_gpu.length === 1 ? 'y' : 'ies'}`
+      : 'All GPU families in scope'
+  const freshnessHeadline = pricingMeta?.is_stale ? 'Stale pricing window' : 'Within freshness window'
+  const fallbackHeadline = pricingMeta?.fallback_reason ? 'Snapshot fallback active' : 'Direct feed only'
+  const cacheHeadline = pricingMeta?.cached ? 'Cache warm' : 'Fresh network response'
 
   const handleInputChange = useCallback(
     (patch: Partial<EstimateRequest>) => {
@@ -154,8 +196,11 @@ function EstimatorWorkbench() {
         const architecture = resolved.architecture === 'moe' ? 'MoE' : 'Dense'
 
         setState({
-          model_name: resolved.id,
+          model_name: resolved.hf_repo_id,
+          model_hf_repo_id: resolved.hf_repo_id,
+          auto_resolve_model_metadata: true,
           model_params_billions: resolved.params_billions,
+          model_active_params_billions: resolved.active_params_billions ?? null,
           architecture,
           moe_total_experts: architecture === 'MoE' ? (resolved.moe_total_experts ?? 8) : 1,
           moe_active_experts: architecture === 'MoE' ? (resolved.moe_active_experts ?? 2) : 1,
@@ -169,7 +214,9 @@ function EstimatorWorkbench() {
           model_module_shapes: resolved.module_shapes,
         })
         setModelResolveMessage(
-          `Loaded ${resolved.display_name} (${resolved.params_billions}B, ${resolved.num_layers} layers).`,
+          `Loaded ${resolved.display_name} (${resolved.params_billions}B total${
+            resolved.active_params_billions ? ` / ${resolved.active_params_billions}B active` : ''
+          }, ${resolved.num_layers} layers).`,
         )
       } catch (error) {
         setModelResolveError(error instanceof Error ? error.message : 'Model resolution failed.')
@@ -182,45 +229,91 @@ function EstimatorWorkbench() {
 
   return (
     <div className="app-shell">
-      <header className="card app-header">
-        <div className="brand-wrap">
-          <p className="brand-kicker">ragweld engineering tools</p>
-          <h1>crucible</h1>
-          <p className="tagline">Know what your training costs before you burn the credits.</p>
-        </div>
+      <header className="card app-header estimator-header">
+        <div className="estimator-header-grid">
+          <div className="estimator-hero">
+            <div className="brand-wrap estimator-brand">
+              <p className="brand-kicker">ragweld engineering tools</p>
+              <div className="estimator-title-row">
+                <h1>crucible</h1>
+                <span className="estimator-title-chip">Operator Range Planner</span>
+              </div>
+              <p className="tagline">Know what your training costs before you burn the credits.</p>
+            </div>
 
-        <p className="header-center-note">
-          API for live GPU pricing provided by{' '}
-          <a href={SHADEFORM_URL} target="_blank" rel="noopener noreferrer">
-            Shadeform
-          </a>
-          .
-        </p>
-
-        <div className="header-right">
-          <a className="header-callout" href={MAIN_RAGWELD_URL} target="_blank" rel="noopener noreferrer">
-            and for when you need everything on prem and local, check out our mlops engineering surface and
-            workbench.
-          </a>
-
-          <div className="header-meta mono">
-            <span>Target GPUs: {state.target_gpu.length}</span>
-            <span>Pricing rows: {pricing.length}</span>
-            <span>
-              Pricing: {pricingMeta?.source ?? 'unknown'}
-              {pricingMeta?.cached ? ' (cached)' : ''}
-            </span>
-            <span>Fetched: {formatTime(pricingMeta?.fetched_at ?? pricingFetchedAt)}</span>
-            {pricingMeta?.fallback_reason ? (
-              <span title={pricingMeta.fallback_reason}>Fallback: yes</span>
-            ) : (
-              <span>Fallback: no</span>
-            )}
+            <div className="estimator-purpose-card">
+              <p className="estimator-purpose-kicker">Planner posture</p>
+              <p className="estimator-purpose-copy">
+                This is an operator planning tool with visible assumptions and ranges, not a benchmark
+                database.
+              </p>
+            </div>
           </div>
 
-          <div className="header-actions">
+          <div className="estimator-status-deck">
+            <article className="estimator-status-card">
+              <span className="estimator-status-label">Price feed</span>
+              <strong className="estimator-status-main">{pricingLoading ? 'Refreshing feed…' : pricingSourceLabel}</strong>
+              <span className="estimator-status-meta">
+                {pricingRowLabel} • fetched {fetchedTimeLabel}
+              </span>
+            </article>
+
+            <article className="estimator-status-card">
+              <span className="estimator-status-label">Freshness</span>
+              <strong
+                className={`estimator-status-main ${
+                  pricingMeta?.is_stale ? 'estimator-status-main-warn' : 'estimator-status-main-good'
+                }`}
+              >
+                {freshnessHeadline}
+              </strong>
+              <span className="estimator-status-meta">Stale after {staleAfterLabel}</span>
+            </article>
+
+            <article className="estimator-status-card">
+              <span className="estimator-status-label">Search scope</span>
+              <strong className="estimator-status-main">{targetGpuLabel}</strong>
+              <span className="estimator-status-meta">{cacheHeadline}</span>
+            </article>
+
+            <article
+              className={`estimator-status-card estimator-status-card-wide ${
+                pricingMeta?.fallback_reason ? 'estimator-status-card-alert' : ''
+              }`}
+            >
+              <span className="estimator-status-label">Fallback state</span>
+              <strong
+                className={`estimator-status-main ${
+                  pricingMeta?.fallback_reason ? 'estimator-status-main-warn' : 'estimator-status-main-good'
+                }`}
+              >
+                {fallbackHeadline}
+              </strong>
+              <span className="estimator-status-meta">
+                {pricingMeta?.fallback_reason ?? 'No snapshot fallback is currently shaping the feed.'}
+              </span>
+            </article>
+          </div>
+        </div>
+
+        <div className="estimator-header-footer">
+          <div className="estimator-header-notes">
+            <span className="header-provider-pill">
+              Live GPU pricing via{' '}
+              <a href={SHADEFORM_URL} target="_blank" rel="noopener noreferrer">
+                Shadeform
+              </a>
+            </span>
+            {snapshotLabel ? <span className="info-chip">Snapshot {snapshotLabel}</span> : null}
+          </div>
+
+          <div className="header-actions estimator-header-actions">
             <a className="ghost-link-button" href={mathCodeHref}>
               Math Code Workbench
+            </a>
+            <a className="ghost-link-button ghost-link-button-subtle" href={MAIN_RAGWELD_URL} target="_blank" rel="noopener noreferrer">
+              Ragweld Surface
             </a>
             <button
               type="button"
@@ -240,6 +333,7 @@ function EstimatorWorkbench() {
         <InputPanel
           value={state}
           onChange={handleInputChange}
+          estimate={estimate}
           pricing={pricing}
           pricingLoading={pricingLoading}
           onResolveModel={handleResolveModel}

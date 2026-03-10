@@ -1,12 +1,20 @@
 import type {
   CostComparisonEntry,
   EstimateRequest,
+  FitStatus,
+  PricingFreshness,
   PricingTier,
   ProviderPricing,
+  Range3,
   TrainingEstimate,
 } from '../types/index'
 import { resolveGPUType } from './gpu-specs'
 import { estimateTrainingHoursForGPU } from './training'
+import { assessProviderSupport } from './provider-support'
+import { buildRangeFromTypical, rangeFromTriplet } from './ranges'
+
+const LIVE_ROW_STALE_AFTER_MS = 6 * 60 * 60 * 1000
+const STATIC_ROW_STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000
 
 export interface CostComparisonResult {
   entries: CostComparisonEntry[]
@@ -101,6 +109,25 @@ function pickBestSelectedTierCost(
   return { cost: bestCost, tier: bestTier }
 }
 
+function selectedTierHourlyRate(
+  entry: ProviderPricing,
+  selectedTier: PricingTier | null,
+): number | null {
+  switch (selectedTier) {
+    case 'spot':
+      return entry.spot_price_cents ?? null
+    case 'reserved_1mo':
+      return entry.reserved_1mo_price_cents ?? null
+    case 'reserved_3mo':
+      return entry.reserved_3mo_price_cents ?? null
+    case 'on_demand':
+      return entry.hourly_price_cents
+    case null:
+    default:
+      return entry.hourly_price_cents
+  }
+}
+
 function deriveEntryHours(
   params: EstimateRequest,
   training: TrainingEstimate,
@@ -109,7 +136,9 @@ function deriveEntryHours(
   // Request and provider rows can represent different cluster sizes.
   // We normalize wall clock estimates by GPU-count ratio so rows remain comparable.
   const requestedGPUCount = Math.max(1, asNonNegative(params.num_gpus, 1))
+  const nodeCount = Math.max(1, asNonNegative(params.num_nodes, 1))
   const providerGPUCount = Math.max(1, asNonNegative(pricingEntry.num_gpus, 1))
+  const providerTotalGPUCount = providerGPUCount * nodeCount
   const normalizedGPU = resolveGPUType(String(pricingEntry.gpu))
   const trainingHoursFromTargetMap =
     (normalizedGPU && training.estimated_hours_by_gpu[normalizedGPU]) ||
@@ -120,7 +149,7 @@ function deriveEntryHours(
   if (trainingHoursFromTargetMap !== undefined) {
     return (
       trainingHoursFromTargetMap *
-      (requestedGPUCount / providerGPUCount) *
+      (requestedGPUCount / providerTotalGPUCount) *
       interconnectMultiplier *
       hostFeedMultiplier
     )
@@ -130,12 +159,46 @@ function deriveEntryHours(
     params,
     training.total_flops,
     String(pricingEntry.gpu),
-    providerGPUCount,
+    providerTotalGPUCount,
   )
   if (derivedHours === null) {
     return Number.POSITIVE_INFINITY
   }
   return derivedHours * interconnectMultiplier * hostFeedMultiplier
+}
+
+function deriveEntryHoursRange(
+  params: EstimateRequest,
+  training: TrainingEstimate,
+  pricingEntry: ProviderPricing,
+): Range3 {
+  const requestedGPUCount = Math.max(1, asNonNegative(params.num_gpus, 1))
+  const nodeCount = Math.max(1, asNonNegative(params.num_nodes, 1))
+  const providerGPUCount = Math.max(1, asNonNegative(pricingEntry.num_gpus, 1))
+  const providerTotalGPUCount = providerGPUCount * nodeCount
+  const normalizedGPU = resolveGPUType(String(pricingEntry.gpu))
+  const trainingHoursRangeFromTargetMap =
+    (normalizedGPU && training.estimated_hours_by_gpu_range[normalizedGPU]) ||
+    training.estimated_hours_by_gpu_range[String(pricingEntry.gpu)]
+  const interconnectMultiplier = deriveInterconnectMultiplier(pricingEntry.interconnect)
+  const hostFeedMultiplier = deriveHostFeedMultiplier(pricingEntry)
+  const scale = (requestedGPUCount / providerTotalGPUCount) * interconnectMultiplier * hostFeedMultiplier
+
+  if (trainingHoursRangeFromTargetMap) {
+    return {
+      optimistic: trainingHoursRangeFromTargetMap.optimistic * scale,
+      typical: trainingHoursRangeFromTargetMap.typical * scale,
+      conservative: trainingHoursRangeFromTargetMap.conservative * scale,
+    }
+  }
+
+  const typicalHours = deriveEntryHours(params, training, pricingEntry)
+  const optimisticSpread = training.assumptions.optimistic_spread ?? 0.12
+  const conservativeSpread = training.assumptions.conservative_spread ?? 0.2
+  return buildRangeFromTypical(typicalHours, {
+    optimisticSpread,
+    conservativeSpread,
+  })
 }
 
 function normalizeLower(value: string): string {
@@ -220,11 +283,150 @@ function summarizeRegionMatch(
   }
 }
 
+function fitStatusForRow(
+  entry: ProviderPricing,
+  requiredVRAMRange: Range3,
+  minRequiredVRAM: number,
+): FitStatus {
+  const vramPerGpu = asNonNegative(entry.vram_per_gpu_in_gb)
+  const likelyFitThreshold = Math.max(minRequiredVRAM, requiredVRAMRange.conservative)
+  const borderlineThreshold = Math.max(minRequiredVRAM, requiredVRAMRange.typical)
+
+  if (vramPerGpu >= likelyFitThreshold) {
+    return 'likely_fit'
+  }
+  if (vramPerGpu >= borderlineThreshold) {
+    return 'borderline'
+  }
+  return 'likely_oom'
+}
+
+function toTimestamp(value: string | null | undefined): number | null {
+  if (!value) {
+    return null
+  }
+  const parsed = Date.parse(value)
+  if (!Number.isFinite(parsed)) {
+    return null
+  }
+  return parsed
+}
+
+function addDurationIso(value: string | null | undefined, durationMs: number): string | null {
+  const parsed = toTimestamp(value)
+  if (parsed === null) {
+    return null
+  }
+  return new Date(parsed + durationMs).toISOString()
+}
+
+function deriveRowPricingFreshness(
+  pricingEntry: ProviderPricing,
+  feedFreshness: PricingFreshness,
+): PricingFreshness {
+  const now = Date.now()
+  const staleAfter =
+    pricingEntry.source === 'static'
+      ? addDurationIso(pricingEntry.fetched_at, STATIC_ROW_STALE_AFTER_MS)
+      : addDurationIso(pricingEntry.fetched_at, LIVE_ROW_STALE_AFTER_MS)
+  const staleAt = toTimestamp(staleAfter)
+  const fetchedAt = toTimestamp(pricingEntry.fetched_at)
+
+  return {
+    source: pricingEntry.source,
+    fetched_at: pricingEntry.fetched_at,
+    stale_after: staleAfter ?? feedFreshness.stale_after,
+    is_stale: staleAt === null ? feedFreshness.is_stale : now > staleAt,
+    fallback_reason: pricingEntry.source === 'static' ? feedFreshness.fallback_reason : null,
+    cached: feedFreshness.cached,
+    cache_ttl_ms: feedFreshness.cache_ttl_ms,
+    snapshot_updated_at: feedFreshness.snapshot_updated_at,
+    data_age_ms: fetchedAt === null ? null : Math.max(0, now - fetchedAt),
+    snapshot_age_ms: feedFreshness.snapshot_age_ms,
+  }
+}
+
+function derivePriceRange(
+  pricingEntry: ProviderPricing,
+  selectedTier: PricingTier | null,
+  rowFreshness: PricingFreshness,
+): Range3 {
+  const hourlyCents = selectedTierHourlyRate(pricingEntry, selectedTier)
+  if (hourlyCents === null || !Number.isFinite(hourlyCents)) {
+    return rangeFromTriplet(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY)
+  }
+
+  let optimisticSpread = 0
+  let conservativeSpread = 0
+
+  if (pricingEntry.source === 'static') {
+    optimisticSpread += 0.08
+    conservativeSpread += 0.14
+  }
+
+  if (selectedTier !== null && selectedTier !== 'on_demand') {
+    optimisticSpread += 0.02
+    conservativeSpread += 0.05
+  }
+
+  if (pricingEntry.source === 'static' && rowFreshness.fallback_reason) {
+    conservativeSpread += 0.06
+  }
+
+  if (rowFreshness.is_stale) {
+    optimisticSpread += 0.04
+    conservativeSpread += 0.1
+  }
+
+  return buildRangeFromTypical(hourlyCents / 100, {
+    optimisticSpread,
+    conservativeSpread,
+  })
+}
+
+function sortTierRank(tier: CostComparisonEntry['provider_support_tier']): number {
+  switch (tier) {
+    case 'documented':
+      return 0
+    case 'inferred':
+      return 1
+    case 'custom':
+    default:
+      return 2
+  }
+}
+
+function fitStatusRank(status: FitStatus): number {
+  switch (status) {
+    case 'likely_fit':
+      return 0
+    case 'borderline':
+      return 1
+    case 'likely_oom':
+    default:
+      return 2
+  }
+}
+
+function sourceRank(source: ProviderPricing['source']): number {
+  switch (source) {
+    case 'shadeform':
+    case 'runpod':
+    case 'vastai':
+    case 'lambdalabs':
+      return 0
+    case 'static':
+    default:
+      return 1
+  }
+}
+
 export function estimateCostComparison(
   params: EstimateRequest,
   pricing: ProviderPricing[],
   training: TrainingEstimate,
-  requiredVRAMPerGPU: number,
+  requiredVRAMRange: Range3,
+  pricingFreshness: PricingFreshness,
 ): CostComparisonResult {
   const warnings: string[] = []
   const intermediates: Record<string, number> = {}
@@ -232,8 +434,9 @@ export function estimateCostComparison(
   const runs = Math.max(1, asNonNegative(params.num_runs, 1))
   const nodes = Math.max(1, asNonNegative(params.num_nodes, 1))
   const selectedTiers = normalizeTierSelection(params.pricing_tier)
-  const minRequiredVRAM = Math.max(0, asNonNegative(params.min_vram_gb ?? requiredVRAMPerGPU))
+  const minRequiredVRAM = Math.max(0, asNonNegative(params.min_vram_gb ?? requiredVRAMRange.typical))
   const requestedGPUCount = Math.max(1, asNonNegative(params.num_gpus, 1))
+  const requestedGPUsPerNode = requestedGPUCount / nodes
   const selectedProviders = new Set(
     params.target_providers.map(normalizeLower).filter((provider) => provider.length > 0),
   )
@@ -259,7 +462,7 @@ export function estimateCostComparison(
     if (selectedGPUs.size > 0 && !selectedGPUs.has(normalizeGPUName(String(entry.gpu)))) {
       return false
     }
-    if (entry.num_gpus !== requestedGPUCount) {
+    if (entry.num_gpus * nodes !== requestedGPUCount) {
       return false
     }
     if (selectedInstanceTypes.size > 0) {
@@ -295,8 +498,15 @@ export function estimateCostComparison(
     )
   }
 
+  if (nodes > 1 && !Number.isInteger(requestedGPUsPerNode)) {
+    warnings.push(
+      `Requested GPU topology (${requestedGPUCount} GPUs across ${nodes} nodes) cannot be evenly split per node, so provider matching may be empty.`,
+    )
+  }
+
   const entries: CostComparisonEntry[] = filteredPricing.map((pricingEntry) => {
     const estimatedHours = deriveEntryHours(params, training, pricingEntry)
+    const estimatedHoursRange = deriveEntryHoursRange(params, training, pricingEntry)
     const tierCosts: TierCostMap = {
       on_demand: costFromHourlyRate(pricingEntry.hourly_price_cents, estimatedHours, runs, nodes),
       spot: costFromHourlyRate(pricingEntry.spot_price_cents, estimatedHours, runs, nodes),
@@ -320,6 +530,18 @@ export function estimateCostComparison(
     const vramTotal = asNonNegative(pricingEntry.vram_per_gpu_in_gb) * Math.max(1, pricingEntry.num_gpus)
     const regionSummary = summarizeRegionMatch(pricingEntry, selectedRegions)
     const selectedCostOrFallback = selectedTierCost.cost ?? tierCosts.on_demand
+    const providerSupport = assessProviderSupport(params, pricingEntry)
+    const fitStatus = fitStatusForRow(pricingEntry, requiredVRAMRange, minRequiredVRAM)
+    const rowPricingFreshness = deriveRowPricingFreshness(pricingEntry, pricingFreshness)
+    const priceRange = derivePriceRange(pricingEntry, selectedTierCost.tier, rowPricingFreshness)
+    const costRangeDollars = {
+      optimistic:
+        estimatedHoursRange.optimistic * priceRange.optimistic * runs * Math.max(1, nodes),
+      typical:
+        estimatedHoursRange.typical * priceRange.typical * runs * Math.max(1, nodes),
+      conservative:
+        estimatedHoursRange.conservative * priceRange.conservative * runs * Math.max(1, nodes),
+    }
 
     return {
       provider: pricingEntry.provider,
@@ -332,19 +554,36 @@ export function estimateCostComparison(
       reserved_1mo_price_cents: pricingEntry.reserved_1mo_price_cents ?? null,
       reserved_3mo_price_cents: pricingEntry.reserved_3mo_price_cents ?? null,
       estimated_hours: estimatedHours,
+      estimated_hours_range: estimatedHoursRange,
       total_cost_dollars: selectedCostOrFallback ?? Number.POSITIVE_INFINITY,
+      cost_range_dollars: costRangeDollars,
       spot_cost_dollars: tierCosts.spot,
       reserved_1mo_cost_dollars: tierCosts.reserved_1mo,
       reserved_3mo_cost_dollars: tierCosts.reserved_3mo,
       available: pricingEntry.available && regionSummary.availableInScope,
-      fits_in_vram: asNonNegative(pricingEntry.vram_per_gpu_in_gb) >= minRequiredVRAM,
+      fits_in_vram: fitStatus !== 'likely_oom',
+      fit_status: fitStatus,
+      selected_pricing_tier: selectedTierCost.tier,
+      provider_support_tier: providerSupport.tier,
+      provider_support_reasons: providerSupport.reasons,
+      price_source: pricingEntry.source,
+      price_fetched_at: pricingEntry.fetched_at,
+      price_stale_after: rowPricingFreshness.stale_after,
+      fallback_reason: rowPricingFreshness.fallback_reason,
+      pricing_freshness: rowPricingFreshness,
       source: pricingEntry.source,
     }
   })
 
   entries.sort((a, b) => {
-    if (a.fits_in_vram !== b.fits_in_vram) {
-      return a.fits_in_vram ? -1 : 1
+    if (sortTierRank(a.provider_support_tier) !== sortTierRank(b.provider_support_tier)) {
+      return sortTierRank(a.provider_support_tier) - sortTierRank(b.provider_support_tier)
+    }
+    if (fitStatusRank(a.fit_status) !== fitStatusRank(b.fit_status)) {
+      return fitStatusRank(a.fit_status) - fitStatusRank(b.fit_status)
+    }
+    if (sourceRank(a.source) !== sourceRank(b.source)) {
+      return sourceRank(a.source) - sourceRank(b.source)
     }
     if (a.total_cost_dollars !== b.total_cost_dollars) {
       return a.total_cost_dollars - b.total_cost_dollars
@@ -362,7 +601,9 @@ export function estimateCostComparison(
   intermediates.required_vram_per_gpu = minRequiredVRAM
   intermediates.num_pricing_entries = filteredPricing.length
   intermediates.num_runs = runs
-  intermediates.num_fit_candidates = entries.filter((entry) => entry.fits_in_vram).length
+  intermediates.num_fit_candidates = entries.filter((entry) => entry.fit_status === 'likely_fit').length
+  intermediates.num_borderline_candidates = entries.filter((entry) => entry.fit_status === 'borderline').length
+  intermediates.pricing_source_is_stale = pricingFreshness.is_stale ? 1 : 0
 
   return {
     entries,

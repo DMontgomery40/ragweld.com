@@ -1,6 +1,7 @@
 import type { Handler } from '@netlify/functions'
 import { resolveGPUType } from '../../crucible/src/engine/gpu-specs'
 import type { EstimateRequest } from '../../crucible/src/types/index'
+import { normalizeLegacyEstimateRequest } from '../../crucible/src/request-normalization'
 import {
   applyRateLimit,
   buildCorsHeaders,
@@ -10,6 +11,7 @@ import {
   optionsResponse,
   parseJsonBody,
 } from './crucible-shared'
+import { hydrateEstimateRequestModel } from './crucible-model-resolution'
 
 const ALLOW_METHODS = 'POST, OPTIONS'
 const PRICING_TIER_VALUES = new Set(['on_demand', 'spot', 'reserved_1mo', 'reserved_3mo'])
@@ -32,16 +34,16 @@ function isEstimateRequest(value: unknown): value is EstimateRequest {
     return false
   }
 
-  const candidate = value as Partial<EstimateRequest>
+  const candidate = value as Partial<EstimateRequest> & Record<string, unknown>
   return (
     typeof candidate.model_name === 'string' &&
     typeof candidate.model_params_billions === 'number' &&
     typeof candidate.method === 'string' &&
     typeof candidate.framework === 'string' &&
     typeof candidate.dataset_tokens === 'number' &&
-    typeof candidate.num_epochs === 'number' &&
+    (typeof candidate.num_epochs === 'number' || typeof candidate.epochs === 'number') &&
     typeof candidate.batch_size === 'number' &&
-    Array.isArray(candidate.target_gpu) &&
+    (Array.isArray(candidate.target_gpu) || typeof candidate.gpu_type === 'string') &&
     Array.isArray(candidate.pricing_tier) &&
     typeof candidate.num_gpus === 'number'
   )
@@ -126,22 +128,67 @@ function normalizeQuantizationProfile(
   return defaultQuantizationProfileForBits(bits)
 }
 
-function normalizeEstimateRequest(request: EstimateRequest): EstimateRequest {
+export function normalizeEstimateRequest(
+  request: EstimateRequest & Record<string, unknown>,
+): {
+  request: EstimateRequest
+  normalizations: ReturnType<typeof normalizeLegacyEstimateRequest>['normalizations']
+  warnings: string[]
+} {
+  const autoResolveModelMetadata =
+    typeof (request as Partial<EstimateRequest>).auto_resolve_model_metadata === 'boolean'
+      ? Boolean((request as Partial<EstimateRequest>).auto_resolve_model_metadata)
+      : false
   const normalizedQuantizationBits = normalizeQuantizationBits(request.quantization_bits)
-  return {
+  const normalizedRequest: EstimateRequest = {
     ...request,
+    model_name: request.model_name.trim(),
+    model_hf_repo_id:
+      typeof (request as Partial<EstimateRequest>).model_hf_repo_id === 'string'
+        ? (request as Partial<EstimateRequest>).model_hf_repo_id?.trim() ?? ''
+        : '',
+    auto_resolve_model_metadata: autoResolveModelMetadata,
+    model_active_params_billions:
+      typeof (request as Partial<EstimateRequest>).model_active_params_billions === 'number' &&
+      Number.isFinite((request as Partial<EstimateRequest>).model_active_params_billions)
+        ? (request as Partial<EstimateRequest>).model_active_params_billions ?? null
+        : null,
     quantization_bits: normalizedQuantizationBits,
     quantization_profile: normalizeQuantizationProfile(
       (request as Partial<EstimateRequest>).quantization_profile,
       normalizedQuantizationBits,
     ),
-    target_gpu: normalizeStringArray(request.target_gpu) as EstimateRequest['target_gpu'],
+    num_epochs:
+      typeof request.num_epochs === 'number'
+        ? request.num_epochs
+        : typeof request.epochs === 'number'
+          ? request.epochs
+          : 0,
+    target_gpu:
+      normalizeStringArray(request.target_gpu).length > 0
+        ? (normalizeStringArray(request.target_gpu) as EstimateRequest['target_gpu'])
+        : typeof request.gpu_type === 'string' && request.gpu_type.trim().length > 0
+          ? ([request.gpu_type.trim()] as EstimateRequest['target_gpu'])
+          : ([] as EstimateRequest['target_gpu']),
     target_providers: normalizeStringArray((request as Partial<EstimateRequest>).target_providers),
     target_regions: normalizeStringArray((request as Partial<EstimateRequest>).target_regions),
     target_interconnects: normalizeStringArray((request as Partial<EstimateRequest>).target_interconnects),
     target_instance_types: normalizeStringArray((request as Partial<EstimateRequest>).target_instance_types),
     pricing_tier: normalizePricingTiers(request.pricing_tier),
   }
+
+  return normalizeLegacyEstimateRequest({
+    ...normalizedRequest,
+    rl: request.rl,
+    rl_algorithm: request.rl_algorithm,
+    rl_generations_per_prompt: request.rl_generations_per_prompt,
+    context_length: request.context_length,
+    epochs: request.epochs,
+  })
+}
+
+function dedupeWarnings(warnings: string[]): string[] {
+  return Array.from(new Set(warnings))
 }
 
 // "Tier support" means the provider row has a concrete price for that billing tier.
@@ -174,7 +221,7 @@ function rowSupportsTier(
   )
 }
 
-function rowMatchesRequestFilters(
+export function rowMatchesRequestFilters(
   request: EstimateRequest,
   row: {
     provider: string
@@ -185,6 +232,8 @@ function rowMatchesRequestFilters(
     availability: Array<{ region: string; available?: boolean }>
   },
 ): boolean {
+  const requestedNodeCount = Math.max(1, request.num_nodes)
+
   if (request.target_providers.length > 0) {
     const providerSet = new Set(request.target_providers.map((provider) => normalizeLower(provider)))
     if (!providerSet.has(normalizeLower(row.provider))) {
@@ -199,7 +248,7 @@ function rowMatchesRequestFilters(
     }
   }
 
-  if (request.num_gpus > 0 && row.num_gpus !== request.num_gpus) {
+  if (request.num_gpus > 0 && row.num_gpus * requestedNodeCount !== request.num_gpus) {
     return false
   }
 
@@ -352,7 +401,24 @@ export const handler: Handler = async (event) => {
     return errorResponse(400, 'INVALID_REQUEST', 'Request body does not match EstimateRequest.', responseHeaders)
   }
   // From here on, use a normalized request to avoid repeated type/shape checks.
-  const normalizedRequest = normalizeEstimateRequest(requestBody)
+  const requestCompatibility = normalizeEstimateRequest(requestBody as EstimateRequest & Record<string, unknown>)
+  const normalizedRequest = requestCompatibility.request
+
+  let hydratedRequest = normalizedRequest
+  let modelResolution: Awaited<ReturnType<typeof hydrateEstimateRequestModel>>['model_resolution'] = null
+  let modelNormalizations: Awaited<ReturnType<typeof hydrateEstimateRequestModel>>['normalizations'] = []
+  let modelWarnings: string[] = [...requestCompatibility.warnings]
+  try {
+    const hydrated = await hydrateEstimateRequestModel(normalizedRequest)
+    hydratedRequest = hydrated.request
+    modelResolution = hydrated.model_resolution
+    modelNormalizations = hydrated.normalizations
+    modelWarnings = [...modelWarnings, ...hydrated.warnings]
+  } catch (error) {
+    modelWarnings.push(
+      `Model metadata hydration failed (${normalizeErrorMessage(error)}); using request-provided model fields.`,
+    )
+  }
 
   let pricing
   try {
@@ -364,7 +430,7 @@ export const handler: Handler = async (event) => {
   }
 
   const rowsMatchingFilters = pricing.pricing.filter((row) =>
-    rowMatchesRequestFilters(normalizedRequest, row),
+    rowMatchesRequestFilters(hydratedRequest, row),
   )
 
   if (rowsMatchingFilters.length === 0) {
@@ -375,20 +441,21 @@ export const handler: Handler = async (event) => {
       responseHeaders,
       {
         selected: {
-          target_providers: normalizedRequest.target_providers,
-          target_gpu: normalizedRequest.target_gpu,
-          target_regions: normalizedRequest.target_regions,
-          target_interconnects: normalizedRequest.target_interconnects,
-          target_instance_types: normalizedRequest.target_instance_types,
-          num_gpus: normalizedRequest.num_gpus,
-          pricing_tier: normalizedRequest.pricing_tier,
+          target_providers: hydratedRequest.target_providers,
+          target_gpu: hydratedRequest.target_gpu,
+          target_regions: hydratedRequest.target_regions,
+          target_interconnects: hydratedRequest.target_interconnects,
+          target_instance_types: hydratedRequest.target_instance_types,
+          num_gpus: hydratedRequest.num_gpus,
+          pricing_tier: hydratedRequest.pricing_tier,
         },
         available_capabilities: summarizeCapabilities(pricing.pricing),
       },
     )
   }
 
-  const selectedTiers = normalizedRequest.pricing_tier.length > 0 ? normalizedRequest.pricing_tier : ['on_demand']
+  const selectedTiers: EstimateRequest['pricing_tier'] =
+    hydratedRequest.pricing_tier.length > 0 ? hydratedRequest.pricing_tier : ['on_demand']
   const rowsMatchingTierSupport = rowsMatchingFilters.filter((row) =>
     selectedTiers.some((tier) => rowSupportsTier(row, tier)),
   )
@@ -406,7 +473,13 @@ export const handler: Handler = async (event) => {
         pricing_meta: {
           source: pricing.source,
           fetched_at: pricing.fetchedAt,
+          stale_after: pricing.staleAfter,
+          is_stale: pricing.isStale,
           cached: pricing.cached,
+          cache_ttl_ms: pricing.cacheTtlMs,
+          snapshot_updated_at: pricing.snapshotUpdatedAt,
+          data_age_ms: pricing.dataAgeMs,
+          snapshot_age_ms: pricing.snapshotAgeMs,
           fallback_reason: pricing.fallbackReason ?? null,
         },
       },
@@ -419,15 +492,45 @@ export const handler: Handler = async (event) => {
       throw new Error('computeEstimate export is missing from crucible/src/engine/index.ts.')
     }
 
-    const estimate = module.computeEstimate(normalizedRequest, rowsMatchingTierSupport)
+    const estimate = module.computeEstimate(hydratedRequest, rowsMatchingTierSupport, {
+      source: pricing.source,
+      fetched_at: pricing.fetchedAt,
+      stale_after: pricing.staleAfter,
+      is_stale: pricing.isStale,
+      cached: pricing.cached,
+      cache_ttl_ms: pricing.cacheTtlMs,
+      snapshot_updated_at: pricing.snapshotUpdatedAt,
+      data_age_ms: pricing.dataAgeMs,
+      snapshot_age_ms: pricing.snapshotAgeMs,
+      fallback_reason: pricing.fallbackReason ?? null,
+    })
     return jsonResponse(
       200,
       {
         ...estimate,
+        effective_request: hydratedRequest,
+        model_resolution: modelResolution,
+        normalizations: [
+          ...requestCompatibility.normalizations,
+          ...modelNormalizations,
+          ...estimate.normalizations,
+        ],
+        warnings: dedupeWarnings([...modelWarnings, ...estimate.warnings]),
+        meta: {
+          ...estimate.meta,
+          model_hf_repo_id: hydratedRequest.model_hf_repo_id || null,
+          model_source: modelResolution?.strategy ?? null,
+        },
         pricing_meta: {
           source: pricing.source,
           fetched_at: pricing.fetchedAt,
+          stale_after: pricing.staleAfter,
+          is_stale: pricing.isStale,
           cached: pricing.cached,
+          cache_ttl_ms: pricing.cacheTtlMs,
+          snapshot_updated_at: pricing.snapshotUpdatedAt,
+          data_age_ms: pricing.dataAgeMs,
+          snapshot_age_ms: pricing.snapshotAgeMs,
           fallback_reason: pricing.fallbackReason ?? null,
         },
       },

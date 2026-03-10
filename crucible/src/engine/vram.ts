@@ -5,9 +5,11 @@ import type {
   Optimizer,
   QuantizationBits,
   QuantizationProfile,
+  SupportTier,
   VRAMEstimateDetails,
 } from '../types/index'
 import { getModelConfigFromRequest, resolveModuleShape } from './models'
+import { deriveSupportUncertaintyTier } from './ranges'
 
 const BYTES_IN_GIB = 1024 ** 3
 const DEFAULT_LORA_TARGETS: EstimateRequest['lora_target_modules'] = ['q', 'k', 'v', 'o']
@@ -85,6 +87,16 @@ interface UnslothReferencePoint {
   min_params_billions: number
   max_params_billions: number
   vram_gb: number
+}
+
+interface EstimateVRAMOptions {
+  supportTier?: SupportTier
+}
+
+interface VRAMUncertaintyProfile {
+  tightSpread: number
+  typicalSpread: number
+  conservativeSpread: number
 }
 
 const UNSLOTH_REFERENCE_TABLE: UnslothReferencePoint[] = [
@@ -228,7 +240,42 @@ function normalizeQuantizationProfile(params: EstimateRequest, warnings: string[
   return expected
 }
 
-export function estimateVRAM(params: EstimateRequest): VRAMEstimateDetails {
+function deriveVRAMUncertainty(
+  params: EstimateRequest,
+  supportTier: SupportTier | undefined,
+): VRAMUncertaintyProfile {
+  let score = 0.04 + deriveSupportUncertaintyTier(supportTier ?? 'inferred')
+
+  if (params.framework !== 'Unsloth') {
+    score += 0.05
+  }
+  if (params.training_type === 'GRPO' || params.training_type === 'GSPO') {
+    score += 0.08
+  }
+  if (params.max_seq_length >= 32768) {
+    score += Math.min(0.1, 0.03 + (params.max_seq_length / 32768 - 1) * 0.03)
+  }
+  if (params.use_qat) {
+    score += 0.03
+  }
+  if (params.architecture === 'MoE') {
+    score += 0.04
+  }
+  if (params.num_gpus > 1) {
+    score += 0.02
+  }
+
+  return {
+    tightSpread: Math.min(0.12, 0.04 + score * 0.18),
+    typicalSpread: Math.min(0.22, 0.1 + score * 0.2),
+    conservativeSpread: Math.min(0.42, 0.18 + score * 0.35),
+  }
+}
+
+export function estimateVRAM(
+  params: EstimateRequest,
+  options: EstimateVRAMOptions = {},
+): VRAMEstimateDetails {
   const warnings: string[] = []
   const intermediates: Record<string, number> = {}
 
@@ -319,10 +366,11 @@ export function estimateVRAM(params: EstimateRequest): VRAMEstimateDetails {
   const generations = isGrpo ? Math.max(1, Math.round(asNonNegative(params.grpo_num_generations, 1))) : 0
   const vocabSize = model.vocab_size
   const contextLength = Math.max(1, Math.round(asNonNegative(params.max_seq_length, 1)))
+  const microBatch = Math.max(1, Math.round(asNonNegative(params.batch_size, 1)))
 
   // Unsloth GRPO kernels avoid materializing full logits tensors; model this as an 8x reduction.
   const rlLogitsReduction = params.framework === 'Unsloth' ? 8 : 1
-  const rlLogitsBytes = isGrpo ? 2 * 2 * generations * contextLength * vocabSize : 0
+  const rlLogitsBytes = isGrpo ? 2 * 2 * microBatch * generations * contextLength * vocabSize : 0
   const rlLogitsVRAMGB = rlLogitsBytes / rlLogitsReduction / BYTES_IN_GIB
 
   // vLLM KV cache (approx): 2 * 2 bytes * layers * seq_len * kv_dim * batch.
@@ -353,9 +401,10 @@ export function estimateVRAM(params: EstimateRequest): VRAMEstimateDetails {
   const nonWeightAfterFrameworkGB = nonWeightBeforeFrameworkGB + frameworkOverheadGB
 
   const baseVRAMGB = modelVRAMGB + nonWeightAfterFrameworkGB
-  const tightVRAMGB = baseVRAMGB * 1.05
-  const typicalVRAMGB = baseVRAMGB * 1.15
-  const conservativeVRAMGB = baseVRAMGB * 1.25
+  const rangeProfile = deriveVRAMUncertainty(params, options.supportTier)
+  const tightVRAMGB = baseVRAMGB * (1 + rangeProfile.tightSpread)
+  const typicalVRAMGB = baseVRAMGB * (1 + rangeProfile.typicalSpread)
+  const conservativeVRAMGB = baseVRAMGB * (1 + rangeProfile.conservativeSpread)
   const bufferGB = typicalVRAMGB - baseVRAMGB
 
   // MoE compute can route fewer experts, but resident VRAM still pays for full expert weights.
@@ -417,6 +466,10 @@ export function estimateVRAM(params: EstimateRequest): VRAMEstimateDetails {
   intermediates.effective_seq = effectiveSeq
   intermediates.activation_bytes_per_layer = activationBytesPerLayer
   intermediates.rl_logits_reduction = rlLogitsReduction
+  intermediates.vram_tight_spread = rangeProfile.tightSpread
+  intermediates.vram_typical_spread = rangeProfile.typicalSpread
+  intermediates.vram_conservative_spread = rangeProfile.conservativeSpread
+  intermediates.rl_logits_micro_batch = microBatch
   intermediates.rl_logits_bytes = rlLogitsBytes
   intermediates.rl_logits_vram_gb = rlLogitsVRAMGB
   intermediates.kv_cache_bytes = kvCacheBytes
@@ -427,9 +480,9 @@ export function estimateVRAM(params: EstimateRequest): VRAMEstimateDetails {
   intermediates.framework_overhead_gb = frameworkOverheadGB
   intermediates.non_weight_vram_after_framework_gb = nonWeightAfterFrameworkGB
   intermediates.base_vram_gb = baseVRAMGB
-  intermediates.tight_multiplier = 1.05
-  intermediates.typical_multiplier = 1.15
-  intermediates.conservative_multiplier = 1.25
+  intermediates.tight_multiplier = 1 + rangeProfile.tightSpread
+  intermediates.typical_multiplier = 1 + rangeProfile.typicalSpread
+  intermediates.conservative_multiplier = 1 + rangeProfile.conservativeSpread
 
   return {
     bands_gb: {

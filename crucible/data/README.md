@@ -2,12 +2,20 @@
 
 This folder contains machine-consumable reference datasets used by Crucible's estimator and API fallback logic.
 
+For source-backed compatibility guardrails and refresh notes, see [docs/crucible-estimator-source-ledger.md](/Users/davidmontgomery/ragweld.com/crucible/docs/crucible-estimator-source-ledger.md).
+
 ## Files
 
-- `models.json`: Curated Unsloth-supported model catalog with architecture fields and precomputed `module_shapes` for LoRA target modules (`q`, `k`, `v`, `o`, `gate`, `up`, `down`).
+- `models.json`: Crucible-owned model structure catalog with architecture fields and precomputed `module_shapes` for LoRA target modules (`q`, `k`, `v`, `o`, `gate`, `up`, `down`).
 - `gpu-specs.json`: GPU VRAM, memory bandwidth, and precision-specific throughput reference values.
-- `static-pricing.json`: Static cloud GPU pricing fallback (AWS/GCP/Azure) with spot and reserved estimates.
+- `static-pricing.json`: Static provider pricing snapshot fallback with spot and reserved estimates plus source timestamps. The live `/prices` feed also merges in non-duplicate static direct-cloud rows so AWS/GCP/Azure/CoreWeave remain visible even when Shadeform is healthy.
 - `unsloth-changelog.json`: Performance-relevant Unsloth release history and metrics.
+
+## Ownership Boundaries
+
+- `models.json` is the model structure source of truth for Crucible's training math. It is separate from the landing-page/demo catalog.
+- `static-pricing.json` is a fallback snapshot for the live provider pricing catalog exposed via `/crucible/api/v1/prices`, and a supplemental source for direct-cloud rows/tier backfill when the live feed is incomplete.
+- Unsloth compatibility and provider/workflow support rules live in Crucible engine source alongside the estimator because they are executable planner logic, not passive catalog rows.
 
 ## Primary Sources
 

@@ -1,9 +1,12 @@
-import type { EstimateRequest, ProviderPricing } from '../../types/index'
+import type { EstimateRequest, PricingFreshness, ProviderPricing } from '../../types/index'
 
 export function makeEstimateRequest(overrides: Partial<EstimateRequest> = {}): EstimateRequest {
   return {
     model_name: 'Llama-3.3-70B',
+    model_hf_repo_id: '',
+    auto_resolve_model_metadata: true,
     model_params_billions: 70.6,
+    model_active_params_billions: null,
     architecture: 'Dense',
     moe_total_experts: 8,
     moe_active_experts: 2,
@@ -34,6 +37,7 @@ export function makeEstimateRequest(overrides: Partial<EstimateRequest> = {}): E
     packing: true,
 
     framework: 'Unsloth',
+    workflow_mode: 'custom_pipeline',
     unsloth_version: 'latest',
     use_flash_attention: true,
     use_triton_kernels: true,
@@ -84,6 +88,22 @@ export function makePricing(overrides: Partial<ProviderPricing> = {}): ProviderP
     availability: [{ region: 'us-west', available: true }],
     available: true,
     fetched_at: '2026-03-01T00:00:00Z',
+    ...overrides,
+  }
+}
+
+export function makePricingFreshness(overrides: Partial<PricingFreshness> = {}): PricingFreshness {
+  return {
+    source: 'shadeform',
+    fetched_at: '2026-03-01T00:00:00Z',
+    stale_after: '2026-03-01T06:00:00Z',
+    is_stale: false,
+    fallback_reason: null,
+    cached: false,
+    cache_ttl_ms: 900_000,
+    snapshot_updated_at: null,
+    data_age_ms: 0,
+    snapshot_age_ms: null,
     ...overrides,
   }
 }

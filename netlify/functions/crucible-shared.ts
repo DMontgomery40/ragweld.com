@@ -25,12 +25,20 @@ interface RateLimitResult {
 export interface PricingPayload {
   pricing: ProviderPricing[]
   fetchedAt: string
-  source: ProviderPricing['source']
+  source: string
   cached: boolean
+  staleAfter: string | null
+  isStale: boolean
+  cacheTtlMs: number
+  snapshotUpdatedAt: string | null
+  dataAgeMs: number | null
+  snapshotAgeMs: number | null
   fallbackReason?: string
 }
 
 const FIFTEEN_MINUTES_MS = 15 * 60 * 1000
+const LIVE_PRICING_STALE_AFTER_MS = 6 * 60 * 60 * 1000
+const SNAPSHOT_PRICING_STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000
 const SHADEFORM_PRICING_URL = 'https://api.shadeform.ai/v1/instances/types'
 
 const PROJECT_ROOT = process.cwd()
@@ -73,7 +81,7 @@ const rateLimitStore = new Map<string, RateLimitState>()
 let pricingCache:
   | {
       expiresAt: number
-      payload: Omit<PricingPayload, 'cached'>
+      payload: Omit<PricingPayload, 'cached' | 'isStale' | 'dataAgeMs' | 'snapshotAgeMs'>
     }
   | null = null
 
@@ -122,6 +130,61 @@ function toBooleanValue(value: unknown): boolean | null {
   return null
 }
 
+function toIsoStringOrNull(value: string | null | undefined): string | null {
+  if (!value) {
+    return null
+  }
+  const parsed = Date.parse(value)
+  if (!Number.isFinite(parsed)) {
+    return null
+  }
+  return new Date(parsed).toISOString()
+}
+
+function addDuration(value: string, durationMs: number): string | null {
+  const parsed = Date.parse(value)
+  if (!Number.isFinite(parsed)) {
+    return null
+  }
+  return new Date(parsed + durationMs).toISOString()
+}
+
+function ageFromIso(value: string | null, now: number): number | null {
+  if (!value) {
+    return null
+  }
+  const parsed = Date.parse(value)
+  if (!Number.isFinite(parsed)) {
+    return null
+  }
+  return Math.max(0, now - parsed)
+}
+
+function staleFromIso(value: string | null, now: number): boolean {
+  if (!value) {
+    return false
+  }
+  const parsed = Date.parse(value)
+  if (!Number.isFinite(parsed)) {
+    return false
+  }
+  return now > parsed
+}
+
+function materializePricingPayload(
+  payload: Omit<PricingPayload, 'cached' | 'isStale' | 'dataAgeMs' | 'snapshotAgeMs'>,
+  cached: boolean,
+  now: number,
+): PricingPayload {
+  return {
+    ...payload,
+    cached,
+    isStale: staleFromIso(payload.staleAfter, now),
+    dataAgeMs: ageFromIso(payload.fetchedAt, now),
+    snapshotAgeMs: ageFromIso(payload.snapshotUpdatedAt, now),
+  }
+}
+
 function hasPositivePrice(value: number | null | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
@@ -162,6 +225,10 @@ function buildInstanceCandidateKeys(row: ProviderPricing): string[] {
   return [normalizeInstanceTypeKey(row.cloud_instance_type), normalizeInstanceTypeKey(row.shade_instance_type)].filter(
     (value, index, values) => value.length > 0 && values.indexOf(value) === index,
   )
+}
+
+function buildCatalogDedupKey(row: ProviderPricing): string {
+  return `${buildPricingBaseKey(row)}|${normalizeInstanceTypeKey(row.cloud_instance_type)}`
 }
 
 function selectClosestByHourlyPrice(
@@ -287,6 +354,36 @@ function enrichShadeformPricingWithStatic(
   return { pricing, rowsNeedingTierData, rowsEnriched, rowsStillMissingTierData }
 }
 
+export function appendNonDuplicatePricingRows(
+  primaryRows: ProviderPricing[],
+  supplementalRows: ProviderPricing[],
+): {
+  pricing: ProviderPricing[]
+  rowsAdded: number
+  providersAdded: string[]
+} {
+  const seenKeys = new Set(primaryRows.map(buildCatalogDedupKey))
+  const providersAdded = new Set<string>()
+  const additions: ProviderPricing[] = []
+
+  for (const row of supplementalRows) {
+    const dedupeKey = buildCatalogDedupKey(row)
+    if (seenKeys.has(dedupeKey)) {
+      continue
+    }
+
+    seenKeys.add(dedupeKey)
+    additions.push(row)
+    providersAdded.add(normalizeLower(row.provider))
+  }
+
+  return {
+    pricing: [...primaryRows, ...additions],
+    rowsAdded: additions.length,
+    providersAdded: Array.from(providersAdded).sort(),
+  }
+}
+
 function dollarsToCents(value: unknown): number | null {
   const parsed = toNumberValue(value)
   if (parsed === null || parsed < 0) {
@@ -309,6 +406,25 @@ function normalizeAvailability(value: unknown): ProviderPricing['availability'] 
     normalized.push({ region, available })
   }
   return normalized
+}
+
+function normalizeStaticAvailability(
+  availabilityValue: unknown,
+  regionCodeValue: unknown,
+  regionNameValue: unknown,
+  availableFallback: boolean,
+): ProviderPricing['availability'] {
+  const explicitAvailability = normalizeAvailability(availabilityValue)
+  if (explicitAvailability.length > 0) {
+    return explicitAvailability
+  }
+
+  const normalizedRegion = toStringValue(regionCodeValue) ?? toStringValue(regionNameValue)
+  if (!normalizedRegion) {
+    return []
+  }
+
+  return [{ region: normalizedRegion, available: availableFallback }]
 }
 
 function readRequestHeader(event: HandlerEvent, headerName: string): string | null {
@@ -524,7 +640,7 @@ function normalizeShadeformPricing(raw: unknown): ProviderPricing[] {
   return pricing
 }
 
-function normalizeStaticPricing(raw: unknown): ProviderPricing[] {
+export function normalizeStaticPricing(raw: unknown): ProviderPricing[] {
   const fallbackFetchedAt = new Date().toISOString()
 
   if (Array.isArray(raw)) {
@@ -604,15 +720,30 @@ function normalizeStaticPricing(raw: unknown): ProviderPricing[] {
   return pricing
 }
 
+function extractStaticSnapshotUpdatedAt(raw: unknown): string | null {
+  if (!isRecord(raw)) {
+    return null
+  }
+
+  const metadata = isRecord(raw.metadata) ? raw.metadata : null
+  return (
+    toIsoStringOrNull(toStringValue(metadata?.last_updated) ?? null) ??
+    toIsoStringOrNull(toStringValue(raw.last_updated) ?? null) ??
+    toIsoStringOrNull(toStringValue(raw.updated_at) ?? null)
+  )
+}
+
 function normalizeStaticArrayEntry(entry: unknown, fetchedAt: string): ProviderPricing | null {
   if (!isRecord(entry)) {
     return null
   }
 
-  const availability = normalizeAvailability(entry.availability)
-  const availabilityStatus = availability.length > 0 ? availability.some((region) => region.available) : undefined
+  const explicitAvailability = normalizeAvailability(entry.availability)
+  const availabilityStatus =
+    explicitAvailability.length > 0 ? explicitAvailability.some((region) => region.available) : undefined
   const available =
     toBooleanValue(entry.available) ?? availabilityStatus ?? toBooleanValue(entry.is_available) ?? true
+  const availability = normalizeStaticAvailability(entry.availability, entry.region_code, entry.region_name, available)
   const hourlyPriceCents =
     maybeCents(entry.hourly_price_cents) ??
     dollarsToCents(entry.on_demand_usd_per_hour) ??
@@ -673,10 +804,17 @@ function normalizeStaticProviderEntry(
   details: Record<string, unknown>,
   fetchedAt: string,
 ): ProviderPricing | null {
-  const availability = normalizeAvailability(details.availability)
-  const availabilityStatus = availability.length > 0 ? availability.some((region) => region.available) : undefined
+  const explicitAvailability = normalizeAvailability(details.availability)
+  const availabilityStatus =
+    explicitAvailability.length > 0 ? explicitAvailability.some((region) => region.available) : undefined
   const available =
     toBooleanValue(details.available) ?? availabilityStatus ?? toBooleanValue(details.is_available) ?? true
+  const availability = normalizeStaticAvailability(
+    details.availability,
+    details.region_code,
+    details.region_name,
+    available,
+  )
   const hourlyPriceCents =
     maybeCents(details.hourly_price_cents) ??
     dollarsToCents(details.on_demand_usd_per_hour) ??
@@ -773,39 +911,54 @@ async function fetchShadeformPricing(): Promise<ProviderPricing[]> {
   return normalized
 }
 
-async function fetchStaticPricing(): Promise<ProviderPricing[]> {
+async function fetchStaticPricing(): Promise<{ pricing: ProviderPricing[]; snapshotUpdatedAt: string | null }> {
   const raw = await readJsonFromCandidates(STATIC_PRICING_PATH_CANDIDATES)
   const normalized = normalizeStaticPricing(raw)
   if (normalized.length === 0) {
     throw new Error('Static pricing file did not include any usable pricing rows.')
   }
-  return normalized
+  return {
+    pricing: normalized,
+    snapshotUpdatedAt: extractStaticSnapshotUpdatedAt(raw),
+  }
 }
 
 export async function getPricingPayload(forceRefresh = false): Promise<PricingPayload> {
   const now = Date.now()
 
   if (!forceRefresh && pricingCache && pricingCache.expiresAt > now) {
-    return {
-      ...pricingCache.payload,
-      cached: true,
-    }
+    return materializePricingPayload(pricingCache.payload, true, now)
   }
 
   try {
     const shadeformPricing = await fetchShadeformPricing()
     let mergedPricing = shadeformPricing
     let fallbackReason: string | undefined
+    let snapshotUpdatedAt: string | null = null
+    let source = 'shadeform'
 
     try {
       const staticPricing = await fetchStaticPricing()
-      const enrichment = enrichShadeformPricingWithStatic(shadeformPricing, staticPricing)
-      mergedPricing = enrichment.pricing
+      snapshotUpdatedAt = staticPricing.snapshotUpdatedAt
+      const enrichment = enrichShadeformPricingWithStatic(shadeformPricing, staticPricing.pricing)
+      const appended = appendNonDuplicatePricingRows(enrichment.pricing, staticPricing.pricing)
+      mergedPricing = appended.pricing
 
+      const notes: string[] = []
       if (enrichment.rowsNeedingTierData > 0) {
-        fallbackReason =
+        notes.push(
           `Shadeform omitted spot/reserved tier prices for ${enrichment.rowsNeedingTierData} rows; ` +
-          `static catalog filled ${enrichment.rowsEnriched}, still missing ${enrichment.rowsStillMissingTierData}.`
+            `static catalog filled ${enrichment.rowsEnriched}, still missing ${enrichment.rowsStillMissingTierData}.`,
+        )
+      }
+      if (appended.rowsAdded > 0) {
+        notes.push(
+          `Added ${appended.rowsAdded} direct-cloud snapshot row${appended.rowsAdded === 1 ? '' : 's'} from ${appended.providersAdded.join(', ')}.`,
+        )
+      }
+      if (notes.length > 0) {
+        fallbackReason = notes.join(' ')
+        source = 'shadeform+static'
       }
     } catch (enrichmentError) {
       const reason =
@@ -814,10 +967,13 @@ export async function getPricingPayload(forceRefresh = false): Promise<PricingPa
     }
 
     const fetchedAt = new Date().toISOString()
-    const payload: Omit<PricingPayload, 'cached'> = {
+    const payload: Omit<PricingPayload, 'cached' | 'isStale' | 'dataAgeMs' | 'snapshotAgeMs'> = {
       pricing: mergedPricing,
       fetchedAt,
-      source: 'shadeform',
+      source,
+      staleAfter: addDuration(fetchedAt, LIVE_PRICING_STALE_AFTER_MS),
+      cacheTtlMs: FIFTEEN_MINUTES_MS,
+      snapshotUpdatedAt,
       fallbackReason,
     }
     pricingCache = {
@@ -825,19 +981,22 @@ export async function getPricingPayload(forceRefresh = false): Promise<PricingPa
       payload,
     }
 
-    return {
-      ...payload,
-      cached: false,
-    }
+    return materializePricingPayload(payload, false, now)
   } catch (shadeformError) {
     const staticPricing = await fetchStaticPricing()
     const fetchedAt = new Date().toISOString()
     const fallbackReason =
       shadeformError instanceof Error ? shadeformError.message : 'Shadeform request failed and static fallback was used.'
-    const payload: Omit<PricingPayload, 'cached'> = {
-      pricing: staticPricing,
+    const payload: Omit<PricingPayload, 'cached' | 'isStale' | 'dataAgeMs' | 'snapshotAgeMs'> = {
+      pricing: staticPricing.pricing,
       fetchedAt,
       source: 'static',
+      staleAfter:
+        staticPricing.snapshotUpdatedAt === null
+          ? null
+          : addDuration(staticPricing.snapshotUpdatedAt, SNAPSHOT_PRICING_STALE_AFTER_MS),
+      cacheTtlMs: FIFTEEN_MINUTES_MS,
+      snapshotUpdatedAt: staticPricing.snapshotUpdatedAt,
       fallbackReason,
     }
     pricingCache = {
@@ -845,10 +1004,7 @@ export async function getPricingPayload(forceRefresh = false): Promise<PricingPa
       payload,
     }
 
-    return {
-      ...payload,
-      cached: false,
-    }
+    return materializePricingPayload(payload, false, now)
   }
 }
 

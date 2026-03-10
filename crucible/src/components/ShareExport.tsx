@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { serializeEstimateRequestQuery } from '../hooks/useURLState'
 import type { EstimateRequest, EstimateResponse, ProviderPricing } from '../types'
 
 interface ShareExportProps {
@@ -199,6 +200,13 @@ function toShadeformExportPlan(
 
 export function ShareExport({ request, estimate, queryString, pricing }: ShareExportProps) {
   const [status, setStatus] = useState<string | null>(null)
+  const effectiveRequest = estimate?.effective_request ?? request
+  const shareQueryString = useMemo(() => {
+    if (!estimate) {
+      return queryString
+    }
+    return serializeEstimateRequestQuery(effectiveRequest)
+  }, [effectiveRequest, estimate, queryString])
 
   const urls = useMemo(() => {
     const basePath = normalizeBasePath(import.meta.env.BASE_URL)
@@ -206,20 +214,20 @@ export function ShareExport({ request, estimate, queryString, pricing }: ShareEx
 
     return {
       api: `${origin}${basePath}api/v1/estimate`,
-      share: `${origin}${basePath}${queryString.length > 0 ? `?${queryString}` : ''}`,
+      share: `${origin}${basePath}${shareQueryString.length > 0 ? `?${shareQueryString}` : ''}`,
     }
-  }, [queryString])
+  }, [shareQueryString])
 
   const curlCommand = useMemo(() => {
-    const payload = JSON.stringify(request)
+    const payload = JSON.stringify(effectiveRequest)
     const escapedPayload = payload.replaceAll("'", "'\\''")
 
     return `curl -X POST '${urls.api}' -H 'Content-Type: application/json' -d '${escapedPayload}'`
-  }, [request, urls.api])
+  }, [effectiveRequest, urls.api])
 
   const shadeformPlan = useMemo(() => {
-    return toShadeformExportPlan(estimate, pricing, request)
-  }, [estimate, pricing, request])
+    return toShadeformExportPlan(estimate, pricing, effectiveRequest)
+  }, [effectiveRequest, estimate, pricing])
 
   const handleCopyCurl = async () => {
     try {
@@ -257,6 +265,7 @@ export function ShareExport({ request, estimate, queryString, pricing }: ShareEx
     const payload = {
       exported_at: new Date().toISOString(),
       request,
+      effective_request: effectiveRequest,
       estimate,
     }
 
@@ -273,7 +282,9 @@ export function ShareExport({ request, estimate, queryString, pricing }: ShareEx
     const payload = {
       exported_at: new Date().toISOString(),
       request,
+      effective_request: effectiveRequest,
       estimate_meta: estimate?.meta ?? null,
+      model_resolution: estimate?.model_resolution ?? null,
       shadeform: {
         docs: {
           site: SHADEFORM_SITE_URL,
@@ -309,7 +320,7 @@ export function ShareExport({ request, estimate, queryString, pricing }: ShareEx
     if (!estimate || estimate.cost_comparison.length === 0) {
       const fallbackRows = [
         ['field', 'value'],
-        ...Object.entries(request).map(([key, value]) => [
+        ...Object.entries(effectiveRequest).map(([key, value]) => [
           key,
           Array.isArray(value) ? value.join('|') : value === null ? '' : String(value),
         ]),
