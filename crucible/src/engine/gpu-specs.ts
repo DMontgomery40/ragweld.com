@@ -46,7 +46,7 @@ export const GPU_SPECS: Record<GPUType, GPUSpec> = {
   },
   RTX_5090: {
     vram_gb: 32,
-    tflops: { bf16: 419, fp16: 419, fp32: 105 },
+    tflops: { bf16: 419, fp16: 419, fp8: 838, fp32: 105 },
   },
   B200: {
     // NVIDIA DGX B200 / AWS p6-b200: 1,440 GB total GPU memory across 8 GPUs => 180 GB per GPU.

@@ -69,6 +69,8 @@ export function MathExplainer({ estimate }: MathExplainerProps) {
       warnings.push('Low MFU assumption may inflate time estimates.')
     }
 
+    warnings.push(...estimate.training_estimate.range_reasons)
+
     return warnings
   }, [estimate])
 
@@ -87,6 +89,10 @@ export function MathExplainer({ estimate }: MathExplainerProps) {
       {open && (
         <div className="math-content">
           <div className="metric-grid assumptions-grid">
+            <div className="metric-row">
+              <span className="metric-label">Range posture</span>
+              <span className="metric-value mono">heuristic planner</span>
+            </div>
             <div className="metric-row">
               <span className="metric-label">Token utilization</span>
               <span className="metric-value mono">
@@ -115,6 +121,12 @@ export function MathExplainer({ estimate }: MathExplainerProps) {
               <span className="metric-label">Attention penalty</span>
               <span className="metric-value mono">
                 {estimate.training_estimate.assumptions.attention_penalty.toFixed(3)}
+              </span>
+            </div>
+            <div className="metric-row">
+              <span className="metric-label">Uncertainty score</span>
+              <span className="metric-value mono">
+                {(estimate.training_estimate.assumptions.uncertainty_score ?? 0).toFixed(3)}
               </span>
             </div>
           </div>

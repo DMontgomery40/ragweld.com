@@ -1,5 +1,10 @@
 import { useMemo } from 'react'
 import estimateFunctionSource from '../../../netlify/functions/estimate.ts?raw'
+import pricingSharedSource from '../../../netlify/functions/crucible-shared.ts?raw'
+import compatibilitySource from '../engine/compatibility.ts?raw'
+import providerSupportSource from '../engine/provider-support.ts?raw'
+import rangesSource from '../engine/ranges.ts?raw'
+import requestNormalizationSource from '../request-normalization.ts?raw'
 import trainingSource from '../engine/training.ts?raw'
 import costSource from '../engine/cost.ts?raw'
 import vramSource from '../engine/vram.ts?raw'
@@ -23,6 +28,41 @@ const CODE_SECTIONS: CodeSection[] = [
     subtitle: 'How Crucible validates inputs and computes response payloads in Netlify Functions.',
     filePath: 'crucible/netlify/functions/estimate.ts',
     code: estimateFunctionSource,
+  },
+  {
+    id: 'pricing-shared',
+    title: 'Pricing Fetch + Freshness Logic',
+    subtitle: 'Live pricing fetch, snapshot fallback, cache TTLs, and stale-data metadata.',
+    filePath: 'netlify/functions/crucible-shared.ts',
+    code: pricingSharedSource,
+  },
+  {
+    id: 'compatibility-guards',
+    title: 'Compatibility + Normalization Rules',
+    subtitle: 'Source-backed rules for invalid or equivalent combinations and support posture.',
+    filePath: 'crucible/src/engine/compatibility.ts',
+    code: compatibilitySource,
+  },
+  {
+    id: 'provider-support',
+    title: 'Provider Support Ranking',
+    subtitle: 'How workflow mode and provider capability assumptions map to documented, inferred, or custom.',
+    filePath: 'crucible/src/engine/provider-support.ts',
+    code: providerSupportSource,
+  },
+  {
+    id: 'range-engine',
+    title: 'Range Construction Utilities',
+    subtitle: 'Shared helpers used to build optimistic, typical, and conservative planner outputs.',
+    filePath: 'crucible/src/engine/ranges.ts',
+    code: rangesSource,
+  },
+  {
+    id: 'request-normalization',
+    title: 'Request Compatibility + Legacy Input Mapping',
+    subtitle: 'How older query params and export fields are normalized into the current estimator contract.',
+    filePath: 'crucible/src/request-normalization.ts',
+    code: requestNormalizationSource,
   },
   {
     id: 'training-engine',

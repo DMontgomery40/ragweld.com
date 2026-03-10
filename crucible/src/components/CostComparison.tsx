@@ -34,7 +34,7 @@ function toFiniteNumber(value: number | string): number {
 }
 
 function formatCurrency(value: number | null): string {
-  if (value === null) {
+  if (value === null || (typeof value === 'number' && !Number.isFinite(value))) {
     return 'n/a'
   }
   return `$${decimalNumberFormatter.format(value)}`
@@ -52,6 +52,20 @@ function formatHoursTick(value: number | string): string {
 
 function formatHourly(cents: number): string {
   return `$${decimalNumberFormatter.format(cents / 100)}/hr`
+}
+
+function formatSupportTierLabel(
+  tier: CostComparisonEntry['provider_support_tier'],
+): string {
+  switch (tier) {
+    case 'documented':
+      return 'Documented'
+    case 'inferred':
+      return 'Inferred'
+    case 'custom':
+    default:
+      return 'Custom'
+  }
 }
 
 type EntryStatus = 'ready' | 'reserved' | 'down' | 'oom'
@@ -136,14 +150,14 @@ export function CostComparison({ entries, pricingTiers, request }: CostCompariso
   const [hoveredEntry, setHoveredEntry] = useState<string | null>(null)
 
   const nodeCount = Math.max(1, request.num_nodes)
-  const gpusPerNode = Math.max(1, request.num_gpus)
-  const totalGpus = nodeCount * gpusPerNode
+  const totalGpus = Math.max(1, request.num_gpus)
+  const gpusPerNode = totalGpus / nodeCount
   const runs = Math.max(1, request.num_runs)
 
   const reservedTier = useMemo(() => hasNonOnDemandTier(pricingTiers), [pricingTiers])
 
   const sortedEntries = useMemo(() => {
-    return [...entries].sort((a, b) => a.total_cost_dollars - b.total_cost_dollars)
+    return [...entries]
   }, [entries])
 
   const entriesWithStatus = useMemo(() => {
@@ -185,23 +199,6 @@ export function CostComparison({ entries, pricingTiers, request }: CostCompariso
   const maxHours = scatterData.reduce((max, e) => Math.max(max, e.hours), 0)
   const maxScatterCost = scatterData.reduce((max, e) => Math.max(max, e.cost), 0)
 
-  // Group entries by status for table view
-  const groupedEntries = useMemo(() => {
-    const groups: Record<EntryStatus, typeof filteredEntries> = {
-      ready: [],
-      reserved: [],
-      down: [],
-      oom: [],
-    }
-    for (const e of filteredEntries) {
-      groups[e.status].push(e)
-    }
-    return STATUS_ORDER.filter((s) => groups[s].length > 0).map((s) => ({
-      status: s,
-      entries: groups[s],
-    }))
-  }, [filteredEntries])
-
   // Active color legend entries
   const activeStatuses = useMemo(() => {
     const set = new Set(filteredEntries.map((e) => e.status))
@@ -230,7 +227,8 @@ export function CostComparison({ entries, pricingTiers, request }: CostCompariso
       </div>
 
       <p className="mono" style={{ marginTop: 0 }}>
-        Assumes {nodeCount} node(s) × {gpusPerNode} GPU/node ({totalGpus} GPUs total); costs include all nodes and {runs} run(s).
+        Assumes {nodeCount} node(s), {totalGpus} GPUs total
+        {Number.isInteger(gpusPerNode) ? ` (${gpusPerNode} GPU/node)` : ''}; costs include all nodes and {runs} run(s).
         Hourly rates shown are per node.
       </p>
 
@@ -289,16 +287,26 @@ export function CostComparison({ entries, pricingTiers, request }: CostCompariso
                     <span>{e.entry.cloud_instance_type}</span>
                   </div>
                   <div className="chart-tooltip-row">
+                    <span className="chart-tooltip-key">Support</span>
+                    <span>{formatSupportTierLabel(e.entry.provider_support_tier)}</span>
+                  </div>
+                  <div className="chart-tooltip-row">
                     <span className="chart-tooltip-key">Hourly</span>
                     <span>{formatHourly(e.entry.hourly_price_cents)}</span>
                   </div>
                   <div className="chart-tooltip-row">
                     <span className="chart-tooltip-key">Hours</span>
-                    <span>{decimalNumberFormatter.format(e.entry.estimated_hours)}h</span>
+                    <span>
+                      {decimalNumberFormatter.format(e.entry.estimated_hours_range.optimistic)}h -{' '}
+                      {decimalNumberFormatter.format(e.entry.estimated_hours_range.conservative)}h
+                    </span>
                   </div>
                   <div className="chart-tooltip-row">
                     <span className="chart-tooltip-key">Total</span>
-                    <span>{formatCurrency(e.entry.total_cost_dollars)}</span>
+                    <span>
+                      {formatCurrency(e.entry.cost_range_dollars.optimistic)} -{' '}
+                      {formatCurrency(e.entry.cost_range_dollars.conservative)}
+                    </span>
                   </div>
                   {e.entry.spot_cost_dollars !== null && (
                     <div className="chart-tooltip-row">
@@ -320,15 +328,26 @@ export function CostComparison({ entries, pricingTiers, request }: CostCompariso
                   )}
                   <div className="chart-tooltip-row">
                     <span className="chart-tooltip-key">Fit</span>
-                    <span>{e.entry.fits_in_vram ? 'yes' : 'oom'}</span>
+                    <span>{e.entry.fit_status}</span>
                   </div>
                   <div className="chart-tooltip-row">
                     <span className="chart-tooltip-key">Avail</span>
                     <span>{e.entry.available ? 'up' : 'down'}</span>
                   </div>
+                  <div className="chart-tooltip-row">
+                    <span className="chart-tooltip-key">Source</span>
+                    <span>
+                      {e.entry.price_source} @ {e.entry.price_fetched_at}
+                    </span>
+                  </div>
                 </div>
               </div>
-              <span className="cost-bar-value">{formatCurrency(e.entry.total_cost_dollars)}</span>
+              <div className="cost-bar-value-wrap">
+                <span className={`support-chip support-chip-inline support-chip-${e.entry.provider_support_tier}`}>
+                  {formatSupportTierLabel(e.entry.provider_support_tier)}
+                </span>
+                <span className="cost-bar-value">{formatCurrency(e.entry.total_cost_dollars)}</span>
+              </div>
             </div>
           )
         })}
@@ -398,6 +417,7 @@ export function CostComparison({ entries, pricingTiers, request }: CostCompariso
                 <th>Provider</th>
                 <th>GPU</th>
                 <th>Instance</th>
+                <th>Support</th>
                 <th>Hourly</th>
                 <th>Hours</th>
                 <th>Total</th>
@@ -409,8 +429,7 @@ export function CostComparison({ entries, pricingTiers, request }: CostCompariso
               </tr>
             </thead>
             <tbody>
-              {groupedEntries.map((group, gi) => (
-                <>{group.entries.map((e, ei) => (
+              {filteredEntries.map((e) => (
                   <tr
                     key={e.id}
                     className={rowClass(e.status)}
@@ -418,20 +437,25 @@ export function CostComparison({ entries, pricingTiers, request }: CostCompariso
                     onMouseEnter={() => setHoveredEntry(e.id)}
                     onMouseLeave={() => setHoveredEntry(null)}
                   >
-                    {ei === 0 && gi > 0 ? null : null}
                     <td>{e.entry.provider}</td>
                     <td>{`${e.entry.gpu} x${e.entry.num_gpus}`}</td>
                     <td>{e.entry.cloud_instance_type}</td>
+                    <td>{formatSupportTierLabel(e.entry.provider_support_tier)}</td>
                     <td>{formatHourly(e.entry.hourly_price_cents)}</td>
-                    <td>{decimalNumberFormatter.format(e.entry.estimated_hours)}h</td>
-                    <td>{formatCurrency(e.entry.total_cost_dollars)}</td>
+                    <td>
+                      {decimalNumberFormatter.format(e.entry.estimated_hours_range.optimistic)}h -{' '}
+                      {decimalNumberFormatter.format(e.entry.estimated_hours_range.conservative)}h
+                    </td>
+                    <td>
+                      {formatCurrency(e.entry.cost_range_dollars.optimistic)} -{' '}
+                      {formatCurrency(e.entry.cost_range_dollars.conservative)}
+                    </td>
                     <td>{formatCurrency(e.entry.spot_cost_dollars)}</td>
                     <td>{formatCurrency(e.entry.reserved_1mo_cost_dollars)}</td>
                     <td>{formatCurrency(e.entry.reserved_3mo_cost_dollars)}</td>
-                    <td>{e.entry.fits_in_vram ? 'fit' : 'oom'}</td>
+                    <td>{e.entry.fit_status}</td>
                     <td>{e.entry.available ? 'up' : 'down'}</td>
                   </tr>
-                ))}</>
               ))}
             </tbody>
           </table>

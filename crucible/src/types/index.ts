@@ -11,6 +11,9 @@ export type QuantizationProfile =
   | 'int16'
   | 'int32'
 export type TrainingType = 'SFT' | 'GRPO' | 'GSPO' | 'DPO' | 'PPO' | 'ORPO' | 'SimPO'
+export type WorkflowMode = 'guided' | 'custom_pipeline'
+export type SupportTier = 'documented' | 'inferred' | 'custom'
+export type FitStatus = 'likely_fit' | 'borderline' | 'likely_oom'
 
 export type QATScheme = 'fp8-int4' | 'fp8-fp8' | 'int8-int4' | 'int4'
 export type ImportanceSamplingLevel = 'token' | 'sequence'
@@ -43,6 +46,8 @@ export interface ModelConfig {
   id: string
   display_name: string
   params_billions: number
+  active_params_billions?: number
+  hf_repo_id?: string
   hidden_size: number
   num_layers: number
   num_attention_heads: number
@@ -65,7 +70,10 @@ export interface ModuleShape {
 
 export interface EstimateRequest {
   model_name: string
+  model_hf_repo_id: string
+  auto_resolve_model_metadata: boolean
   model_params_billions: number
+  model_active_params_billions: number | null
   architecture: Architecture
   moe_total_experts: number
   moe_active_experts: number
@@ -104,6 +112,7 @@ export interface EstimateRequest {
   packing: boolean
 
   framework: Framework
+  workflow_mode: WorkflowMode
   unsloth_version: string
   use_flash_attention: boolean
   use_triton_kernels: boolean
@@ -158,6 +167,41 @@ export interface ProviderPricing {
   fetched_at: string
 }
 
+export interface Range3 {
+  optimistic: number
+  typical: number
+  conservative: number
+}
+
+export interface NormalizationEvent {
+  rule_id: string
+  field: string
+  input: unknown
+  normalized_to: unknown
+  reason: string
+  source_ids: string[]
+}
+
+export interface SupportReason {
+  rule_id: string
+  tier: SupportTier
+  reason: string
+  source_ids: string[]
+}
+
+export interface PricingFreshness {
+  source: string
+  fetched_at: string
+  stale_after: string | null
+  is_stale: boolean
+  fallback_reason: string | null
+  cached: boolean
+  cache_ttl_ms: number
+  snapshot_updated_at: string | null
+  data_age_ms: number | null
+  snapshot_age_ms: number | null
+}
+
 export interface VRAMBreakdown {
   model_weights: number
   quant_metadata: number
@@ -190,10 +234,16 @@ export interface TrainingEstimateAssumptions {
   mfu: number
   speed_multiplier: number
   attention_penalty: number
+  total_params_billions?: number
+  compute_params_billions?: number
+  active_params_billions?: number | null
   moe_compute_multiplier?: number
   qat_compute_multiplier?: number
   custom_speed_multiplier?: number
   reference_model_pct?: number
+  uncertainty_score?: number
+  optimistic_spread?: number
+  conservative_spread?: number
 }
 
 export interface TrainingEstimate {
@@ -201,9 +251,12 @@ export interface TrainingEstimate {
   effective_batch_tokens: number
   total_steps: number
   total_flops: number
+  total_flops_range: Range3
   estimated_hours_by_gpu: Record<string, number>
+  estimated_hours_by_gpu_range: Record<string, Range3>
   assumptions: TrainingEstimateAssumptions
   intermediates: Record<string, number>
+  range_reasons: string[]
   warnings: string[]
 }
 
@@ -218,16 +271,30 @@ export interface CostComparisonEntry {
   reserved_1mo_price_cents: number | null
   reserved_3mo_price_cents: number | null
   estimated_hours: number
+  estimated_hours_range: Range3
   total_cost_dollars: number
+  cost_range_dollars: Range3
   spot_cost_dollars: number | null
   reserved_1mo_cost_dollars: number | null
   reserved_3mo_cost_dollars: number | null
   available: boolean
   fits_in_vram: boolean
+  fit_status: FitStatus
+  selected_pricing_tier: PricingTier | null
+  provider_support_tier: SupportTier
+  provider_support_reasons: SupportReason[]
+  price_source: ProviderPricing['source']
+  price_fetched_at: string
+  price_stale_after: string | null
+  fallback_reason: string | null
+  pricing_freshness: PricingFreshness
   source: ProviderPricing['source']
 }
 
 export interface EstimateResponse {
+  vram_range_gb: Range3
+  hours_range: Range3
+  cost_range_dollars: Range3
   vram_estimate_gb: number
   vram_estimate_bands_gb: VRAMEstimateBands
   vram_breakdown: VRAMBreakdown
@@ -238,12 +305,24 @@ export interface EstimateResponse {
     training: Record<string, number>
     cost: Record<string, number>
   }
+  support_tier: SupportTier
+  support_reasons: SupportReason[]
+  normalizations: NormalizationEvent[]
+  pricing_freshness: PricingFreshness
+  source_ledger_version: string
   warnings: string[]
+  effective_request?: EstimateRequest
+  model_resolution?: ModelResolution | null
   meta: {
     prices_fetched_at: string
     framework_used: Framework
+    workflow_mode: WorkflowMode
+    support_tier: SupportTier
     computation_version: string
+    source_ledger_version: string
     model_name: string
+    model_hf_repo_id?: string | null
+    model_source?: string | null
   }
 }
 
@@ -253,11 +332,27 @@ export interface ErrorResponse {
   details?: unknown
 }
 
+export type ModelResolutionSource =
+  | 'request'
+  | 'catalog'
+  | 'hf_config'
+  | 'hf_model_card'
+  | 'hf_hub_api'
+  | 'fallback'
+
+export interface ModelFieldProvenance {
+  field: string
+  source: ModelResolutionSource
+  source_ref?: string | null
+  note?: string
+}
+
 export interface ResolvedModelPayload {
   id: string
   display_name: string
   hf_repo_id: string
   params_billions: number
+  active_params_billions?: number
   hidden_size: number
   num_layers: number
   num_attention_heads: number
@@ -270,4 +365,17 @@ export interface ResolvedModelPayload {
   moe_active_experts?: number
   module_shapes: Partial<Record<LoRATargetModule, ModuleShape>>
   source: string
+  config_source?: string | null
+  model_card_source?: string | null
+  hub_api_source?: string | null
+  field_provenance?: ModelFieldProvenance[]
+  warnings?: string[]
+}
+
+export interface ModelResolution {
+  strategy: 'catalog' | 'huggingface' | 'fallback'
+  source_input: string
+  applied: boolean
+  model: ResolvedModelPayload
+  warnings: string[]
 }

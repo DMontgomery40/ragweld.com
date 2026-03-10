@@ -18,7 +18,13 @@ export interface PricingMeta {
   count?: number
   source?: string
   fetched_at?: string
+  stale_after?: string | null
+  is_stale?: boolean
   cached?: boolean
+  cache_ttl_ms?: number
+  snapshot_updated_at?: string | null
+  data_age_ms?: number | null
+  snapshot_age_ms?: number | null
   fallback_reason?: string | null
   filters?: Record<string, unknown>
 }
