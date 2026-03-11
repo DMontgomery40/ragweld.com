@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { normalizeModuleShapeOverrides } from '../engine/models'
 import { normalizeLegacyEstimateRequest } from '../request-normalization'
 import type { EstimateRequest } from '../types'
 
@@ -80,7 +81,8 @@ function parseExtraParamValue<K extends ExtraQueryKey>(
     }
     try {
       const parsed = JSON.parse(rawValue)
-      return (typeof parsed === 'object' && parsed !== null ? parsed : undefined) as EstimateRequest[K]
+      const normalized = normalizeModuleShapeOverrides(parsed)
+      return (normalized && Object.keys(normalized).length > 0 ? normalized : undefined) as EstimateRequest[K]
     } catch {
       return undefined as EstimateRequest[K]
     }

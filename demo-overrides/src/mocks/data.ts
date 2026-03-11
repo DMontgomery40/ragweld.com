@@ -219,16 +219,7 @@ JSON format:
 Allowed relation_type values: related_to, references`,
   lightweight_chunk_summaries:
     'Extract key information from this database: symbols (function/class names), purpose (one sentence), keywords (technical terms). Return JSON only.',
-  eval_analysis: `You are an expert RAG (Retrieval-Augmented Generation) system analyst.
-Your job is to analyze evaluation comparisons and provide HONEST, SKEPTICAL insights.
-
-CRITICAL: Do NOT force explanations that don't make sense. If the data is contradictory or confusing:
-- Say so clearly: "This result is surprising and may indicate other factors at play"
-- Consider: index changes, data drift, eval dataset updates, or measurement noise
-- Acknowledge when correlation != causation
-- It's BETTER to say "I'm not sure why this happened" than to fabricate a plausible-sounding but wrong explanation
-
-Be rigorous:
+  eval_analysis: `Be rigorous:
 1. Question whether the config changes ACTUALLY explain the performance delta
 2. Flag when results seem counterintuitive (e.g., disabling a feature improving results)
 3. Consider confounding variables: Was the index rebuilt? Did the test set change?

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "astro.config.mjs",
+    "playwright.config.ts",
+    "netlify/functions/**/*.ts",
+    "scripts/**/*.{js,cjs,mjs}",
+    "tests/**/*.ts"
+  ],
+  "project": [
+    "netlify/functions/**/*.ts",
+    "scripts/**/*.{js,cjs,mjs}",
+    "tests/**/*.ts"
+  ],
+  "ignore": [
+    "dist/**",
+    ".astro/**",
+    ".netlify/**",
+    "output/**",
+    "docs/**",
+    "test-results/**",
+    "public/**"
+  ]
+}

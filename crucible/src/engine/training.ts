@@ -31,6 +31,7 @@ const TRAINING_TYPE_FLOP_MULTIPLIER: Record<TrainingType, number> = {
 }
 const MAX_EFFECTIVE_UTILIZATION = 0.72
 const SPEED_MULTIPLIER_CONFIDENCE = 0.15
+const MAX_MULTI_NODE_TOPOLOGY_PENALTY = 0.3
 
 interface TrainingUncertaintyProfile {
   score: number
@@ -60,7 +61,7 @@ function resolveComputeParamsBillions(params: EstimateRequest, warnings: string[
 
   if (activeParams > 0 && activeParams < totalParams) {
     warnings.push(
-      `MoE compute uses ${activeParams.toFixed(2)}B activated parameters while VRAM uses ${totalParams.toFixed(2)}B total parameters.`,
+      `Sparse MoE compute uses ${activeParams.toFixed(2)}B activated params per token while VRAM and model capacity stay at ${totalParams.toFixed(2)}B total params.`,
     )
     return activeParams
   }
@@ -70,7 +71,9 @@ function resolveComputeParamsBillions(params: EstimateRequest, warnings: string[
     params.moe_active_experts > 0 &&
     params.moe_active_experts < params.moe_total_experts
   ) {
-    warnings.push('MoE active-parameter count is unknown, so compute remains conservative on total parameters.')
+    warnings.push(
+      'MoE activated params per token are unknown, so compute stays conservative on total parameters.',
+    )
   }
 
   return totalParams
@@ -138,6 +141,13 @@ function speedMultiplier(params: EstimateRequest): number {
   const dampedKernelMultiplier =
     rawMultiplier <= 1 ? rawMultiplier : 1 + (rawMultiplier - 1) * SPEED_MULTIPLIER_CONFIDENCE
   return dampedKernelMultiplier * runtimePenaltyMultiplier(params) * customSpeedMultiplier(params)
+}
+
+function multiNodeTopologyMultiplier(nodeCount: number): number {
+  if (nodeCount <= 1) {
+    return 1
+  }
+  return 1 + Math.min(MAX_MULTI_NODE_TOPOLOGY_PENALTY, 0.08 * (nodeCount - 1))
 }
 
 function normalizeTargetGPU(gpu: GPUType): GPUType | string {
@@ -229,8 +239,9 @@ function estimateHours(
   const effectiveUtilization = Math.min(MAX_EFFECTIVE_UTILIZATION, requestedUtilization)
   const practicalFlopsPerSecPerGPU = tflops * 1e12 * effectiveUtilization
   const gpuCount = Math.max(1, asNonNegative(numGPUsOverride ?? params.num_gpus, 1))
+  const topologyMultiplier = multiNodeTopologyMultiplier(Math.max(1, asNonNegative(params.num_nodes, 1)))
   const trainingSeconds = totalFLOPs / (practicalFlopsPerSecPerGPU * gpuCount)
-  return trainingSeconds / 3600
+  return (trainingSeconds / 3600) * topologyMultiplier
 }
 
 export function estimateTrainingHoursForGPU(
@@ -367,6 +378,7 @@ export function estimateTraining(
   const rawRequestedEffectiveUtilization = frameworkMFU * rawSpeedMultiplier
   const requestedEffectiveUtilization = frameworkMFU * frameworkSpeedMultiplier
   const cappedEffectiveUtilization = Math.min(MAX_EFFECTIVE_UTILIZATION, requestedEffectiveUtilization)
+  const topologyMultiplier = multiNodeTopologyMultiplier(Math.max(1, asNonNegative(params.num_nodes, 1)))
 
   if (rawSpeedMultiplier > frameworkSpeedMultiplier * 1.2) {
     warnings.push(
@@ -428,6 +440,7 @@ export function estimateTraining(
   intermediates.raw_requested_effective_utilization = rawRequestedEffectiveUtilization
   intermediates.requested_effective_utilization = requestedEffectiveUtilization
   intermediates.capped_effective_utilization = cappedEffectiveUtilization
+  intermediates.multi_node_topology_multiplier = topologyMultiplier
   intermediates.total_flops = totalFLOPs
   intermediates.training_uncertainty_score = uncertaintyProfile.score
   intermediates.training_optimistic_spread = uncertaintyProfile.optimisticSpread

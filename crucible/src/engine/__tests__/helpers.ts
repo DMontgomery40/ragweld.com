@@ -69,7 +69,9 @@ export function makeEstimateRequest(overrides: Partial<EstimateRequest> = {}): E
 }
 
 export function makePricing(overrides: Partial<ProviderPricing> = {}): ProviderPricing {
-  return {
+  const hasOverride = (key: keyof ProviderPricing): boolean =>
+    Object.prototype.hasOwnProperty.call(overrides, key)
+  const base: ProviderPricing = {
     provider: 'runpod',
     source: 'shadeform',
     shade_instance_type: 'H100',
@@ -82,13 +84,64 @@ export function makePricing(overrides: Partial<ProviderPricing> = {}): ProviderP
     vcpus: 16,
     interconnect: 'sxm',
     hourly_price_cents: 300,
+    hourly_price_source: 'shadeform',
+    hourly_price_fetched_at: '2026-03-01T00:00:00Z',
     spot_price_cents: 120,
+    spot_price_source: 'shadeform',
+    spot_price_fetched_at: '2026-03-01T00:00:00Z',
     reserved_1mo_price_cents: 250,
+    reserved_1mo_price_source: 'shadeform',
+    reserved_1mo_price_fetched_at: '2026-03-01T00:00:00Z',
     reserved_3mo_price_cents: 220,
+    reserved_3mo_price_source: 'shadeform',
+    reserved_3mo_price_fetched_at: '2026-03-01T00:00:00Z',
     availability: [{ region: 'us-west', available: true }],
     available: true,
     fetched_at: '2026-03-01T00:00:00Z',
+  }
+  const merged: ProviderPricing = {
+    ...base,
     ...overrides,
+  }
+
+  return {
+    ...merged,
+    hourly_price_source: hasOverride('hourly_price_source') ? merged.hourly_price_source : merged.source,
+    hourly_price_fetched_at: hasOverride('hourly_price_fetched_at')
+      ? merged.hourly_price_fetched_at
+      : merged.fetched_at,
+    spot_price_source:
+      merged.spot_price_cents && merged.spot_price_cents > 0
+        ? (hasOverride('spot_price_source') ? (merged.spot_price_source ?? null) : merged.source)
+        : null,
+    spot_price_fetched_at:
+      merged.spot_price_cents && merged.spot_price_cents > 0
+        ? (hasOverride('spot_price_fetched_at') ? (merged.spot_price_fetched_at ?? null) : merged.fetched_at)
+        : null,
+    reserved_1mo_price_source:
+      merged.reserved_1mo_price_cents && merged.reserved_1mo_price_cents > 0
+        ? (hasOverride('reserved_1mo_price_source') ? (merged.reserved_1mo_price_source ?? null) : merged.source)
+        : null,
+    reserved_1mo_price_fetched_at:
+      merged.reserved_1mo_price_cents && merged.reserved_1mo_price_cents > 0
+        ? (
+            hasOverride('reserved_1mo_price_fetched_at')
+              ? (merged.reserved_1mo_price_fetched_at ?? null)
+              : merged.fetched_at
+          )
+        : null,
+    reserved_3mo_price_source:
+      merged.reserved_3mo_price_cents && merged.reserved_3mo_price_cents > 0
+        ? (hasOverride('reserved_3mo_price_source') ? (merged.reserved_3mo_price_source ?? null) : merged.source)
+        : null,
+    reserved_3mo_price_fetched_at:
+      merged.reserved_3mo_price_cents && merged.reserved_3mo_price_cents > 0
+        ? (
+            hasOverride('reserved_3mo_price_fetched_at')
+              ? (merged.reserved_3mo_price_fetched_at ?? null)
+              : merged.fetched_at
+          )
+        : null,
   }
 }
 

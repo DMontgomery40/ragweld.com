@@ -16,8 +16,6 @@ import {
   mockGraphByCorpus,
   mockHealthResponse,
   generateChatChunks,
-  mockEvalDataset,
-  mockEvalRuns,
 } from './data';
 import {
   getMockAgentTrainDiff,
@@ -43,8 +41,6 @@ const getGraph = (corpusId: string) => {
 
 let promptValues: Record<string, string> = { ...mockPromptDefaults };
 
-let evalDatasetEntries = [...mockEvalDataset];
-
 function streamJsonEvents(events: unknown[], intervalMs = 120) {
   const encoder = new TextEncoder();
   return new ReadableStream({
@@ -57,6 +53,19 @@ function streamJsonEvents(events: unknown[], intervalMs = 120) {
     },
   });
 }
+
+const evalBackendHandlers = [
+  http.get('/api/dataset', () => passthrough()),
+  http.post('/api/dataset', () => passthrough()),
+  http.put('/api/dataset/:entryId', () => passthrough()),
+  http.delete('/api/dataset/:entryId', () => passthrough()),
+  http.get('/api/eval/runs', () => passthrough()),
+  http.get('/api/eval/results', () => passthrough()),
+  http.get('/api/eval/results/:runId', () => passthrough()),
+  http.post('/api/eval/run', () => passthrough()),
+  http.get('/api/eval/run/stream', () => passthrough()),
+  http.post('/api/eval/analyze_comparison', () => passthrough()),
+];
 
 export const handlersFull = [
   // Health check
@@ -266,175 +275,7 @@ export const handlersFull = [
       },
     });
   }),
-
-
-  // Eval dataset endpoints
-  http.get('/api/dataset', async () => {
-    await delay(120);
-    return HttpResponse.json(evalDatasetEntries);
-  }),
-
-  http.post('/api/dataset', async ({ request }) => {
-    await delay(120);
-    const body = (await request.json()) as Record<string, any>;
-    const entry = {
-      entry_id: String(Date.now()),
-      question: String(body?.question || ''),
-      expected_paths: Array.isArray(body?.expected_paths) ? body.expected_paths : [],
-      expected_answer: body?.expected_answer ?? null,
-      tags: Array.isArray(body?.tags) ? body.tags : [],
-      created_at: new Date().toISOString(),
-    };
-    evalDatasetEntries = [...evalDatasetEntries, entry];
-    return HttpResponse.json(entry);
-  }),
-
-  http.put('/api/dataset/:entryId', async ({ request, params }) => {
-    await delay(120);
-    const body = (await request.json()) as Record<string, any>;
-    const entryId = String(params.entryId);
-    const idx = evalDatasetEntries.findIndex((e) => e.entry_id === entryId);
-    if (idx === -1) return new HttpResponse(null, { status: 404 });
-    const updated = {
-      ...evalDatasetEntries[idx],
-      question: String(body?.question || evalDatasetEntries[idx].question),
-      expected_paths: Array.isArray(body?.expected_paths) ? body.expected_paths : evalDatasetEntries[idx].expected_paths,
-      expected_answer: body?.expected_answer ?? evalDatasetEntries[idx].expected_answer ?? null,
-      tags: Array.isArray(body?.tags) ? body.tags : evalDatasetEntries[idx].tags,
-    };
-    evalDatasetEntries = [...evalDatasetEntries.slice(0, idx), updated, ...evalDatasetEntries.slice(idx + 1)];
-    return HttpResponse.json(updated);
-  }),
-
-  http.delete('/api/dataset/:entryId', async ({ params }) => {
-    await delay(120);
-    const entryId = String(params.entryId);
-    const before = evalDatasetEntries.length;
-    evalDatasetEntries = evalDatasetEntries.filter((e) => e.entry_id !== entryId);
-    if (evalDatasetEntries.length === before) return new HttpResponse(null, { status: 404 });
-    return HttpResponse.json({ ok: true, deleted: before - evalDatasetEntries.length });
-  }),
-
-  // Eval run endpoints
-  http.get('/api/eval/runs', async () => {
-    await delay(150);
-    const runs = mockEvalRuns.map((run) => ({
-      run_id: run.run_id,
-      top1_accuracy: run.top1_accuracy ?? 0,
-      topk_accuracy: run.topk_accuracy ?? 0,
-      mrr: run.metrics?.mrr ?? null,
-      total: run.total ?? 0,
-      duration_secs: run.duration_secs ?? 0,
-      has_config: true,
-    }));
-    return HttpResponse.json({ ok: true, runs });
-  }),
-
-  http.get('/api/eval/results', async () => {
-    await delay(150);
-    return HttpResponse.json(mockEvalRuns[0]);
-  }),
-
-  http.get('/api/eval/results/:runId', async ({ params }) => {
-    await delay(150);
-    const runId = String(params.runId);
-    const run = mockEvalRuns.find((r) => r.run_id === runId) || mockEvalRuns[0];
-    return HttpResponse.json(run);
-  }),
-
-  http.post('/api/eval/run', async () => {
-    await delay(150);
-    return HttpResponse.json(mockEvalRuns[0]);
-  }),
-
-  http.get('/api/eval/run/stream', async () => {
-    const encoder = new TextEncoder();
-    const stream = new ReadableStream({
-      async start(controller) {
-        const events = [
-          { type: 'log', message: '🧪 Starting evaluation run' },
-          { type: 'progress', percent: 20, message: 'Loading eval dataset' },
-          { type: 'progress', percent: 60, message: 'Scoring retrieval results' },
-          { type: 'log', message: `Results saved: ${mockEvalRuns[0].run_id}` },
-          { type: 'progress', percent: 95, message: 'Finalizing metrics' },
-          { type: 'complete' },
-        ];
-        for (const evt of events) {
-          await delay(120);
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}
-
-`));
-        }
-        controller.close();
-      },
-    });
-    return new HttpResponse(stream, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-      },
-    });
-  }),
-
-  http.post('/api/eval/analyze_comparison', async ({ request }) => {
-    await delay(200);
-
-    const payload = (await request.json().catch(() => ({}))) as Record<string, any>;
-    const currentRun = payload?.current_run || {};
-    const compareRun = payload?.compare_run || {};
-    const configDiffs = Array.isArray(payload?.config_diffs) ? payload.config_diffs : [];
-    const topkRegressions = Array.isArray(payload?.topk_regressions) ? payload.topk_regressions : [];
-    const topkImprovements = Array.isArray(payload?.topk_improvements) ? payload.topk_improvements : [];
-    const top1RegressionsCount = Number(payload?.top1_regressions_count || 0);
-    const top1ImprovementsCount = Number(payload?.top1_improvements_count || 0);
-
-    const currentTop1 = Number(currentRun?.top1_accuracy || 0);
-    const compareTop1 = Number(compareRun?.top1_accuracy || 0);
-    const currentTopk = Number(currentRun?.topk_accuracy || 0);
-    const compareTopk = Number(compareRun?.topk_accuracy || 0);
-    const currentDuration = Number(currentRun?.duration_secs || 0);
-    const compareDuration = Number(compareRun?.duration_secs || 0);
-
-    const formatPct = (value: number) => `${(value * 100).toFixed(1)}%`;
-    const formatPointDelta = (value: number) => `${value >= 0 ? '+' : ''}${(value * 100).toFixed(1)} points`;
-    const formatConfigValue = (value: unknown) => {
-      if (typeof value === 'string') return `"${value}"`;
-      if (Array.isArray(value)) return JSON.stringify(value);
-      if (value && typeof value === 'object') return JSON.stringify(value);
-      return String(value);
-    };
-
-    const configLines = configDiffs.length > 0
-      ? configDiffs.slice(0, 6).map((diff) => (
-          `- ${String(diff?.key || 'config.unknown')}: ${formatConfigValue(diff?.previous)} → ${formatConfigValue(diff?.current)}`
-        ))
-      : ['- No config diffs were captured for this comparison.'];
-
-    return HttpResponse.json({
-      ok: true,
-      analysis: [
-        '# Eval Comparison',
-        '',
-        '## Summary',
-        `- Top-K accuracy changed by ${formatPointDelta(currentTopk - compareTopk)} (${formatPct(compareTopk)} → ${formatPct(currentTopk)})`,
-        `- Top-1 accuracy changed by ${formatPointDelta(currentTop1 - compareTop1)} (${formatPct(compareTop1)} → ${formatPct(currentTop1)})`,
-        `- Top-K drill-down shows ${topkImprovements.length} improvement(s) and ${topkRegressions.length} regression(s).`,
-        `- Top-1 rank moved on +${top1ImprovementsCount} / -${top1RegressionsCount} questions.`,
-        `- Runtime shifted from ${compareDuration.toFixed(2)}s to ${currentDuration.toFixed(2)}s.`,
-        '',
-        '## Config Diffs',
-        ...configLines,
-        '',
-        '## Takeaway',
-        currentTopk >= compareTopk
-          ? 'The newer run is materially stronger for the demo story: better retrieval coverage with a faster overall profile.'
-          : 'The newer run regressed against baseline; keep the older run selected as the safer default narrative.',
-      ].join('\n'),
-      model_used: 'demo-analysis',
-      error: null,
-    });
-  }),
+  ...evalBackendHandlers,
 
   // Learning reranker studio endpoints
   http.get('/api/reranker/train/profile', async () => {
@@ -1190,6 +1031,7 @@ const passthroughHandlers = [
   http.post('/api/chat', () => passthrough()),
   http.post('/api/chat/stream', () => passthrough()),
   http.get('/api/graph/*', () => passthrough()),
+  ...evalBackendHandlers,
 ];
 
 const LIVE_HANDLER_PATHS = new Set([
@@ -1227,6 +1069,14 @@ const LIVE_HANDLER_PATHS = new Set([
   '/api/chat',
   '/api/chat/stream',
   '/api/graph/*',
+  '/api/dataset',
+  '/api/dataset/:entryId',
+  '/api/eval/runs',
+  '/api/eval/results',
+  '/api/eval/results/:runId',
+  '/api/eval/run',
+  '/api/eval/run/stream',
+  '/api/eval/analyze_comparison',
 ]);
 
 export const handlersPartial = [

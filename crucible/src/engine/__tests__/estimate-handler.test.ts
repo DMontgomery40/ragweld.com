@@ -6,6 +6,7 @@ import {
 import {
   normalizeEstimateRequest,
   rowMatchesRequestFilters,
+  validateEstimateRequestOverrides,
 } from '../../../../netlify/functions/estimate'
 import { makeEstimateRequest } from './helpers'
 
@@ -90,5 +91,19 @@ describe('rowMatchesRequestFilters', () => {
     })
 
     expect(moeEstimate).toBeGreaterThan(denseEstimate * 5)
+  })
+
+  it('rejects malformed model module shape overrides', () => {
+    const error = validateEstimateRequestOverrides({
+      ...makeEstimateRequest(),
+      model_module_shapes: {
+        q: {
+          in_dim: 'oops',
+          out_dim: 4096,
+        },
+      },
+    })
+
+    expect(error).toContain('model_module_shapes')
   })
 })

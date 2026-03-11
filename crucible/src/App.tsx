@@ -1,12 +1,17 @@
-import { useCallback, useMemo, useState } from 'react'
+import { Suspense, lazy, useCallback, useMemo, useState } from 'react'
 import { CrucibleFooter } from './components/CrucibleFooter'
 import { InputPanel } from './components/InputPanel'
-import { MathCodeWorkbenchPage } from './components/MathCodeWorkbenchPage'
 import { ResultsPanel } from './components/ResultsPanel'
 import { useGPUPricing } from './hooks/useGPUPricing'
 import { useTrainingEstimate } from './hooks/useTrainingEstimate'
 import { useURLState } from './hooks/useURLState'
 import type { EstimateRequest, ResolvedModelPayload } from './types'
+
+const MathCodeWorkbenchPage = lazy(() =>
+  import('./components/MathCodeWorkbenchPage').then((module) => ({
+    default: module.MathCodeWorkbenchPage,
+  })),
+)
 
 const DEFAULT_REQUEST: EstimateRequest = {
   model_name: 'qwen3-32b',
@@ -137,6 +142,7 @@ function EstimatorWorkbench() {
     loading: estimateLoading,
     error: estimateError,
     requestedAt: estimateRequestedAt,
+    completedRequest,
     refetch: refetchEstimate,
   } = useTrainingEstimate(state, { debounceMs: 300 })
 
@@ -161,6 +167,12 @@ function EstimatorWorkbench() {
   const freshnessHeadline = pricingMeta?.is_stale ? 'Stale pricing window' : 'Within freshness window'
   const fallbackHeadline = pricingMeta?.fallback_reason ? 'Snapshot fallback active' : 'Direct feed only'
   const cacheHeadline = pricingMeta?.cached ? 'Cache warm' : 'Fresh network response'
+  const estimateIsCurrent = useMemo(() => {
+    if (estimate === null || completedRequest === null) {
+      return false
+    }
+    return JSON.stringify(completedRequest) === JSON.stringify(state)
+  }, [completedRequest, estimate, state])
 
   const handleInputChange = useCallback(
     (patch: Partial<EstimateRequest>) => {
@@ -198,7 +210,7 @@ function EstimatorWorkbench() {
         setState({
           model_name: resolved.hf_repo_id,
           model_hf_repo_id: resolved.hf_repo_id,
-          auto_resolve_model_metadata: true,
+          auto_resolve_model_metadata: false,
           model_params_billions: resolved.params_billions,
           model_active_params_billions: resolved.active_params_billions ?? null,
           architecture,
@@ -344,6 +356,7 @@ function EstimatorWorkbench() {
         <ResultsPanel
           request={state}
           estimate={estimate}
+          estimateIsCurrent={estimateIsCurrent}
           estimateLoading={estimateLoading}
           estimateError={estimateError}
           estimateRequestedAt={estimateRequestedAt}
@@ -369,7 +382,21 @@ function App() {
   }, [])
 
   if (route === 'math-code') {
-    return <MathCodeWorkbenchPage />
+    return (
+      <Suspense
+        fallback={
+          <div className="app-shell">
+            <main className="layout-grid">
+              <section className="card results-head">
+                <p>Loading math code…</p>
+              </section>
+            </main>
+          </div>
+        }
+      >
+        <MathCodeWorkbenchPage />
+      </Suspense>
+    )
   }
 
   return <EstimatorWorkbench />

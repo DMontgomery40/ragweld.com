@@ -39,4 +39,14 @@ describe('estimate request query helpers', () => {
     expect(parsedFromCompact.model_max_position_embeddings).toBe(131072)
     expect(parsedFromCompact.model_module_shapes).toEqual(state.model_module_shapes)
   })
+
+  it('drops malformed module shape overrides from share URLs', () => {
+    const defaults = makeEstimateRequest()
+    const parsed = parseEstimateRequestFromSearch(
+      defaults,
+      '?model_module_shapes=%7B%22q%22%3A%7B%22in_dim%22%3A%22oops%22%2C%22out_dim%22%3A4096%7D%7D',
+    )
+
+    expect(parsed.model_module_shapes).toBeUndefined()
+  })
 })

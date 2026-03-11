@@ -1,0 +1,24 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "index.html",
+    "src/main.tsx",
+    "src/**/*.{test,spec}.{ts,tsx}",
+    "scripts/**/*.mjs",
+    "eslint.config.js",
+    "postcss.config.js",
+    "tailwind.config.js",
+    "vite.config.ts"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx}",
+    "scripts/**/*.mjs",
+    "*.config.{js,ts}",
+    "vite.config.ts"
+  ],
+  "ignore": [
+    "dist/**",
+    "coverage/**",
+    ".tmp_tooltip_outputs_round2/**"
+  ]
+}

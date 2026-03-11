@@ -7,8 +7,12 @@ import type {
   SupportTier,
   WorkflowMode,
 } from '../types/index'
+import {
+  isQATTargetBits,
+  normalizeQATSchemeForBits,
+} from './quantization'
 
-export const SOURCE_LEDGER_VERSION = '2026-03-05'
+export const SOURCE_LEDGER_VERSION = '2026-03-11'
 
 export interface SourceLedgerEntry {
   id: string
@@ -58,6 +62,36 @@ export const ESTIMATOR_SOURCE_LEDGER: SourceLedgerEntry[] = [
     id: 'unsloth-qat',
     title: 'Unsloth Dynamic 2.0 / QAT',
     url: 'https://unsloth.ai/docs/get-started/fine-tuning-llms-guide/lora-hyperparameters-guide',
+    verified_on: SOURCE_LEDGER_VERSION,
+  },
+  {
+    id: 'torchao-qat-api',
+    title: 'TorchAO Quantization API',
+    url: 'https://docs.pytorch.org/ao/stable/api_ref_quantization.html',
+    verified_on: SOURCE_LEDGER_VERSION,
+  },
+  {
+    id: 'torchao-quantized-training',
+    title: 'TorchAO Quantized Training Workflows',
+    url: 'https://docs.pytorch.org/ao/stable/workflows/training.html',
+    verified_on: SOURCE_LEDGER_VERSION,
+  },
+  {
+    id: 'hf-moe-blog',
+    title: 'Hugging Face Mixture-of-Experts Explainer',
+    url: 'https://huggingface.co/blog/moe',
+    verified_on: SOURCE_LEDGER_VERSION,
+  },
+  {
+    id: 'qwen3-30b-a3b-card',
+    title: 'Qwen3-30B-A3B Model Card',
+    url: 'https://huggingface.co/Qwen/Qwen3-30B-A3B',
+    verified_on: SOURCE_LEDGER_VERSION,
+  },
+  {
+    id: 'openai-gpt-oss',
+    title: 'OpenAI GPT-OSS Announcement',
+    url: 'https://openai.com/index/introducing-gpt-oss/',
     verified_on: SOURCE_LEDGER_VERSION,
   },
   {
@@ -141,6 +175,18 @@ const RULES = {
     id: 'qat_full_finetune_custom',
     reason: 'Unsloth QAT docs currently describe LoRA/QLoRA combinations, not full fine-tune QAT workflows.',
     source_ids: ['unsloth-qat'],
+  },
+  qatTargetBitsOnly: {
+    id: 'qat_requires_4_or_8bit_target',
+    reason:
+      'Current source-backed QAT paths in this planner target INT4 or FP8-style exports; disabling QAT for 16/32-bit targets.',
+    source_ids: ['unsloth-qat', 'torchao-qat-api', 'torchao-quantized-training'],
+  },
+  qatSchemeMatchesTargetBits: {
+    id: 'qat_scheme_matches_target_precision',
+    reason:
+      'The selected QAT scheme did not match the current target precision, so it was normalized to a compatible scheme.',
+    source_ids: ['unsloth-qat', 'torchao-qat-api'],
   },
   moeQloraEvolving: {
     id: 'unsloth_moe_qlora_evolving',
@@ -334,6 +380,36 @@ export function applyCompatibilityGuards(request: EstimateRequest): Compatibilit
   }
 
   if (normalized.use_qat) {
+    if (!isQATTargetBits(normalized.quantization_bits)) {
+      const inputUseQat = normalized.use_qat
+      normalized.use_qat = false
+      addNormalization(
+        normalizations,
+        RULES.qatTargetBitsOnly,
+        'use_qat',
+        inputUseQat,
+        normalized.use_qat,
+      )
+      warnings.push(RULES.qatTargetBitsOnly.reason)
+    } else {
+      const normalizedScheme = normalizeQATSchemeForBits(
+        normalized.quantization_bits,
+        normalized.qat_scheme,
+      )
+      if (normalizedScheme && normalizedScheme !== normalized.qat_scheme) {
+        const inputScheme = normalized.qat_scheme
+        normalized.qat_scheme = normalizedScheme
+        addNormalization(
+          normalizations,
+          RULES.qatSchemeMatchesTargetBits,
+          'qat_scheme',
+          inputScheme,
+          normalized.qat_scheme,
+        )
+        warnings.push(RULES.qatSchemeMatchesTargetBits.reason)
+      }
+    }
+
     if (normalized.framework !== 'Unsloth') {
       supportTier = worsenSupportTier(supportTier, 'custom')
       addSupportReason(supportReasons, 'custom', RULES.qatNonUnsloth)

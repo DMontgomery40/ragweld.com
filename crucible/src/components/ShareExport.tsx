@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react'
-import { serializeEstimateRequestQuery } from '../hooks/useURLState'
 import type { EstimateRequest, EstimateResponse, ProviderPricing } from '../types'
+import { resolveShareExportContext } from './shareExportContext'
 
 interface ShareExportProps {
   request: EstimateRequest
   estimate: EstimateResponse | null
+  estimateIsCurrent: boolean
   queryString: string
   pricing: ProviderPricing[]
 }
@@ -106,6 +107,7 @@ async function copyToClipboard(value: string): Promise<void> {
 function resolveMatchingPricingRow(
   candidate: EstimateResponse['cost_comparison'][number],
   pricing: ProviderPricing[],
+  request: EstimateRequest,
 ): ProviderPricing | null {
   return (
     pricing.find((row) => {
@@ -122,7 +124,7 @@ function resolveMatchingPricingRow(
         normalizeLower(row.provider) === normalizeLower(candidate.provider) &&
         normalizeLower(String(row.gpu)) === normalizeLower(candidate.gpu) &&
         normalizeLower(row.cloud_instance_type) === normalizeLower(candidate.cloud_instance_type) &&
-        row.num_gpus === candidate.num_gpus
+        row.num_gpus * Math.max(1, request.num_nodes) === candidate.num_gpus
       )
     }) ?? null
   )
@@ -160,7 +162,7 @@ function toShadeformExportPlan(
     })
 
   for (const candidate of prioritizedCandidates) {
-    const pricingRow = resolveMatchingPricingRow(candidate, pricing)
+    const pricingRow = resolveMatchingPricingRow(candidate, pricing, request)
     if (!pricingRow || !pricingRow.shade_instance_type) {
       continue
     }
@@ -198,15 +200,13 @@ function toShadeformExportPlan(
   return null
 }
 
-export function ShareExport({ request, estimate, queryString, pricing }: ShareExportProps) {
+export function ShareExport({ request, estimate, estimateIsCurrent, queryString, pricing }: ShareExportProps) {
   const [status, setStatus] = useState<string | null>(null)
-  const effectiveRequest = estimate?.effective_request ?? request
-  const shareQueryString = useMemo(() => {
-    if (!estimate) {
-      return queryString
-    }
-    return serializeEstimateRequestQuery(effectiveRequest)
-  }, [effectiveRequest, estimate, queryString])
+  const exportContext = useMemo(
+    () => resolveShareExportContext({ request, estimate, estimateIsCurrent, queryString }),
+    [estimate, estimateIsCurrent, queryString, request],
+  )
+  const { activeEstimate, effectiveRequest, shareQueryString } = exportContext
 
   const urls = useMemo(() => {
     const basePath = normalizeBasePath(import.meta.env.BASE_URL)
@@ -226,8 +226,8 @@ export function ShareExport({ request, estimate, queryString, pricing }: ShareEx
   }, [effectiveRequest, urls.api])
 
   const shadeformPlan = useMemo(() => {
-    return toShadeformExportPlan(estimate, pricing, effectiveRequest)
-  }, [effectiveRequest, estimate, pricing])
+    return toShadeformExportPlan(activeEstimate, pricing, effectiveRequest)
+  }, [activeEstimate, effectiveRequest, pricing])
 
   const handleCopyCurl = async () => {
     try {
@@ -266,7 +266,7 @@ export function ShareExport({ request, estimate, queryString, pricing }: ShareEx
       exported_at: new Date().toISOString(),
       request,
       effective_request: effectiveRequest,
-      estimate,
+      estimate: activeEstimate,
     }
 
     downloadFile(JSON.stringify(payload, null, 2), 'crucible-estimate.json', 'application/json')
@@ -283,8 +283,8 @@ export function ShareExport({ request, estimate, queryString, pricing }: ShareEx
       exported_at: new Date().toISOString(),
       request,
       effective_request: effectiveRequest,
-      estimate_meta: estimate?.meta ?? null,
-      model_resolution: estimate?.model_resolution ?? null,
+      estimate_meta: activeEstimate?.meta ?? null,
+      model_resolution: activeEstimate?.model_resolution ?? null,
       shadeform: {
         docs: {
           site: SHADEFORM_SITE_URL,
@@ -317,7 +317,7 @@ export function ShareExport({ request, estimate, queryString, pricing }: ShareEx
   }
 
   const handleExportCsv = () => {
-    if (!estimate || estimate.cost_comparison.length === 0) {
+    if (!activeEstimate || activeEstimate.cost_comparison.length === 0) {
       const fallbackRows = [
         ['field', 'value'],
         ...Object.entries(effectiveRequest).map(([key, value]) => [
@@ -352,7 +352,7 @@ export function ShareExport({ request, estimate, queryString, pricing }: ShareEx
       'source',
     ]
 
-    const rows = estimate.cost_comparison.map((entry) => [
+    const rows = activeEstimate.cost_comparison.map((entry) => [
       entry.provider,
       entry.gpu,
       entry.cloud_instance_type,

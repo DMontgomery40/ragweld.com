@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { appendNonDuplicatePricingRows, normalizeStaticPricing } from '../../../../netlify/functions/crucible-shared'
+import {
+  appendNonDuplicatePricingRows,
+  enrichShadeformPricingWithStatic,
+  normalizeStaticPricing,
+} from '../../../../netlify/functions/crucible-shared'
 import type { ProviderPricing } from '../../types'
 
 function loadStaticPricingFixture(): unknown {
@@ -97,5 +101,58 @@ describe('pricing catalog composition', () => {
     expect(merged.providersAdded).toEqual(['coreweave'])
     expect(merged.pricing[0].source).toBe('shadeform')
     expect(merged.pricing[1].provider).toBe('coreweave')
+  })
+
+  it('marks static-enriched tier prices with static provenance', () => {
+    const enriched = enrichShadeformPricingWithStatic(
+      [
+        {
+          provider: 'aws',
+          source: 'shadeform',
+          cloud_instance_type: 'p5.48xlarge',
+          gpu: 'H100',
+          num_gpus: 8,
+          vram_per_gpu_in_gb: 80,
+          hourly_price_cents: 5504,
+          hourly_price_source: 'shadeform',
+          hourly_price_fetched_at: '2026-03-06T12:00:00.000Z',
+          spot_price_cents: null,
+          reserved_1mo_price_cents: null,
+          reserved_3mo_price_cents: null,
+          availability: [{ region: 'us-east-1', available: true }],
+          available: true,
+          fetched_at: '2026-03-06T12:00:00.000Z',
+        },
+      ],
+      [
+        {
+          provider: 'aws',
+          source: 'static',
+          cloud_instance_type: 'p5.48xlarge',
+          gpu: 'H100',
+          num_gpus: 8,
+          vram_per_gpu_in_gb: 80,
+          hourly_price_cents: 5504,
+          hourly_price_source: 'static',
+          hourly_price_fetched_at: '2026-03-01T00:00:00.000Z',
+          spot_price_cents: 3041,
+          spot_price_source: 'static',
+          spot_price_fetched_at: '2026-03-01T00:00:00.000Z',
+          reserved_1mo_price_cents: 4954,
+          reserved_1mo_price_source: 'static',
+          reserved_1mo_price_fetched_at: '2026-03-01T00:00:00.000Z',
+          reserved_3mo_price_cents: 2378,
+          reserved_3mo_price_source: 'static',
+          reserved_3mo_price_fetched_at: '2026-03-01T00:00:00.000Z',
+          availability: [{ region: 'us-east-1', available: true }],
+          available: true,
+          fetched_at: '2026-03-01T00:00:00.000Z',
+        },
+      ],
+    )
+
+    expect(enriched.pricing[0].source).toBe('shadeform')
+    expect(enriched.pricing[0].spot_price_source).toBe('static')
+    expect(enriched.pricing[0].spot_price_fetched_at).toBe('2026-03-01T00:00:00.000Z')
   })
 })

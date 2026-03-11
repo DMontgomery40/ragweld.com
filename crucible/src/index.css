@@ -530,19 +530,28 @@ button:disabled {
   position: relative;
   display: inline-flex;
   align-items: center;
+}
+
+.inline-tooltip-button {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
   width: 1.1rem;
   height: 1.1rem;
+  appearance: none;
   border: 1px solid #27272a;
   border-radius: 999px;
   background: #09090b;
   color: #a1a1aa;
   cursor: help;
+  font: inherit;
   transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease;
+  padding: 0;
 }
 
-.inline-tooltip:hover,
-.inline-tooltip:focus-visible {
+.inline-tooltip:hover .inline-tooltip-button,
+.inline-tooltip:focus-within .inline-tooltip-button,
+.inline-tooltip[data-open='true'] .inline-tooltip-button {
   border-color: rgba(100, 116, 139, 0.6);
   background: #18181b;
   color: #f4f4f5;
@@ -711,8 +720,8 @@ button:disabled {
 }
 
 .inline-tooltip:hover .inline-tooltip-content,
-.inline-tooltip:focus-visible .inline-tooltip-content,
-.inline-tooltip:focus-within .inline-tooltip-content {
+.inline-tooltip:focus-within .inline-tooltip-content,
+.inline-tooltip[data-open='true'] .inline-tooltip-content {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;

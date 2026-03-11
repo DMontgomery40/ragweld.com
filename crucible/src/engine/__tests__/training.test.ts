@@ -36,7 +36,7 @@ describe('estimateTraining', () => {
     expect(result.warnings.some((warning) => warning.includes('Long context'))).toBe(true)
   })
 
-  it('treats num_gpus as the total cluster size instead of multiplying by nodes again', () => {
+  it('treats num_gpus as the total cluster size while applying a multi-node topology penalty', () => {
     const singleNode = estimateTraining(
       makeEstimateRequest({
         target_gpu: ['H100'],
@@ -54,7 +54,8 @@ describe('estimateTraining', () => {
 
     expect(multiNode.effective_batch_tokens).toBeCloseTo(singleNode.effective_batch_tokens, 5)
     expect(multiNode.total_steps).toBe(singleNode.total_steps)
-    expect(multiNode.estimated_hours_by_gpu.H100).toBeCloseTo(singleNode.estimated_hours_by_gpu.H100, 5)
+    expect(multiNode.intermediates.multi_node_topology_multiplier).toBeGreaterThan(1)
+    expect(multiNode.estimated_hours_by_gpu.H100).toBeGreaterThan(singleNode.estimated_hours_by_gpu.H100)
   })
 
   it('uses fused chunked CE to reduce long-context wall-clock estimates', () => {
@@ -155,7 +156,7 @@ describe('estimateTraining', () => {
     expect(resolved.total_flops).toBeGreaterThan(conservative.total_flops / 50)
     expect(
       resolved.warnings.some((warning) =>
-        warning.includes('MoE compute uses 32.00B activated parameters'),
+        warning.includes('Sparse MoE compute uses 32.00B activated params per token'),
       ),
     ).toBe(true)
   })

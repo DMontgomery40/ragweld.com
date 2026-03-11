@@ -1,5 +1,6 @@
 import type { Handler } from '@netlify/functions'
 import { resolveGPUType } from '../../crucible/src/engine/gpu-specs'
+import { normalizeModuleShapeOverrides } from '../../crucible/src/engine/models'
 import type { EstimateRequest } from '../../crucible/src/types/index'
 import { normalizeLegacyEstimateRequest } from '../../crucible/src/request-normalization'
 import {
@@ -25,6 +26,15 @@ const QUANTIZATION_PROFILE_VALUES = new Set([
   'int16',
   'int32',
 ])
+const STRUCTURAL_OVERRIDE_INTEGER_FIELDS = [
+  'model_hidden_size',
+  'model_num_layers',
+  'model_num_attention_heads',
+  'model_num_kv_heads',
+  'model_intermediate_size',
+  'model_vocab_size',
+  'model_max_position_embeddings',
+] as const
 
 export const config = { path: '/crucible/api/v1/estimate' }
 
@@ -128,6 +138,33 @@ function normalizeQuantizationProfile(
   return defaultQuantizationProfileForBits(bits)
 }
 
+export function validateEstimateRequestOverrides(request: Record<string, unknown>): string | null {
+  for (const field of STRUCTURAL_OVERRIDE_INTEGER_FIELDS) {
+    const value = request[field]
+    if (value == null) {
+      continue
+    }
+    if (
+      typeof value !== 'number' ||
+      !Number.isFinite(value) ||
+      value <= 0 ||
+      !Number.isInteger(value)
+    ) {
+      return `${field} must be a positive integer when provided.`
+    }
+  }
+
+  const moduleShapes = request.model_module_shapes
+  if (moduleShapes != null && normalizeModuleShapeOverrides(moduleShapes) === null) {
+    return (
+      'model_module_shapes must be an object keyed by q/k/v/o/gate/up/down with positive ' +
+      'numeric in_dim/out_dim values.'
+    )
+  }
+
+  return null
+}
+
 export function normalizeEstimateRequest(
   request: EstimateRequest & Record<string, unknown>,
 ): {
@@ -153,6 +190,12 @@ export function normalizeEstimateRequest(
       Number.isFinite((request as Partial<EstimateRequest>).model_active_params_billions)
         ? (request as Partial<EstimateRequest>).model_active_params_billions ?? null
         : null,
+    model_module_shapes: (() => {
+      const normalizedShapes = normalizeModuleShapeOverrides(
+        (request as Partial<EstimateRequest>).model_module_shapes,
+      )
+      return normalizedShapes && Object.keys(normalizedShapes).length > 0 ? normalizedShapes : undefined
+    })(),
     quantization_bits: normalizedQuantizationBits,
     quantization_profile: normalizeQuantizationProfile(
       (request as Partial<EstimateRequest>).quantization_profile,
@@ -399,6 +442,10 @@ export const handler: Handler = async (event) => {
 
   if (!isEstimateRequest(requestBody)) {
     return errorResponse(400, 'INVALID_REQUEST', 'Request body does not match EstimateRequest.', responseHeaders)
+  }
+  const overrideValidationError = validateEstimateRequestOverrides(requestBody as unknown as Record<string, unknown>)
+  if (overrideValidationError) {
+    return errorResponse(400, 'INVALID_REQUEST', overrideValidationError, responseHeaders)
   }
   // From here on, use a normalized request to avoid repeated type/shape checks.
   const requestCompatibility = normalizeEstimateRequest(requestBody as EstimateRequest & Record<string, unknown>)

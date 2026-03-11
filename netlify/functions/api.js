@@ -1,5 +1,16 @@
 import crypto from 'node:crypto';
 import pg from 'pg';
+import {
+  buildComparisonEvidence,
+  buildEvalAnalysisUserInput,
+  DEFAULT_DEMO_EVAL_DATASET_ID,
+  DEMO_EVAL_ANALYSIS_MODEL,
+  DEMO_EVAL_ANALYSIS_PROMPT,
+  DEMO_EVAL_CORPUS_ID,
+  filterDatasetEntriesForEval,
+  seedDemoEvalScenarios,
+  validateComparableRuns,
+} from '../lib/demo-eval-scenarios.js';
 
 const { Pool } = pg;
 
@@ -137,22 +148,7 @@ Allowed entity_type values: person, org, location, event, concept
 Allowed relation_type values: related_to, references`,
   lightweight_chunk_summaries:
     'Extract key information from this database: symbols (function/class names), purpose (one sentence), keywords (technical terms). Return JSON only.',
-  eval_analysis: `You are an expert RAG (Retrieval-Augmented Generation) system analyst.
-Your job is to analyze evaluation comparisons and provide HONEST, SKEPTICAL insights.
-
-CRITICAL: Do NOT force explanations that don't make sense. If the data is contradictory or confusing:
-- Say so clearly: "This result is surprising and may indicate other factors at play"
-- Consider: index changes, data drift, eval dataset updates, or measurement noise
-- Acknowledge when correlation != causation
-- It's BETTER to say "I'm not sure why this happened" than to fabricate a plausible-sounding but wrong explanation
-
-Be rigorous:
-1. Question whether the config changes ACTUALLY explain the performance delta
-2. Flag when results seem counterintuitive (e.g., disabling a feature improving results)
-3. Consider confounding variables: Was the index rebuilt? Did the test set change?
-4. Provide actionable suggestions only when you have reasonable confidence
-
-Format your response with clear sections using markdown headers.`,
+  eval_analysis: DEMO_EVAL_ANALYSIS_PROMPT,
 };
 
 const PROMPT_METADATA = {
@@ -728,6 +724,10 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function toJsonbParam(value) {
+  return JSON.stringify(value ?? null);
+}
+
 function inferFrontendBackendPorts(event) {
   try {
     const u = new URL(event?.rawUrl || 'https://ragweld.local/');
@@ -897,6 +897,30 @@ async function ensureSchema(sql) {
 
     await sql.query(`CREATE INDEX IF NOT EXISTS eval_runs_corpus_idx ON eval_runs (corpus_id, created_at DESC);`);
 
+    await sql.query(`
+      CREATE TABLE IF NOT EXISTS eval_analysis_cache (
+        current_run_id TEXT NOT NULL,
+        baseline_run_id TEXT NOT NULL,
+        prompt_hash TEXT NOT NULL,
+        model TEXT NOT NULL,
+        reasoning_effort TEXT NOT NULL,
+        max_output_tokens INTEGER NOT NULL,
+        input_hash TEXT NOT NULL,
+        analysis_text TEXT NOT NULL,
+        model_used TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (
+          current_run_id,
+          baseline_run_id,
+          prompt_hash,
+          model,
+          reasoning_effort,
+          max_output_tokens,
+          input_hash
+        )
+      );
+    `);
+
     await sql.query(`CREATE INDEX IF NOT EXISTS graph_entities_name_idx ON graph_entities (corpus_id, name);`);
     await sql.query(`CREATE INDEX IF NOT EXISTS graph_edges_source_idx ON graph_edges (corpus_id, source_id);`);
     await sql.query(`CREATE INDEX IF NOT EXISTS graph_edges_target_idx ON graph_edges (corpus_id, target_id);`);
@@ -912,6 +936,8 @@ async function ensureSchema(sql) {
         ('epstein-files-1', 'Epstein Files 1', 'epstein-files-1', 'epstein-files-1', NULL, 'Epstein files demo corpus')
       ON CONFLICT (corpus_id) DO NOTHING;
     `);
+
+    await seedDemoEvalScenarios(sql);
   })();
   return schemaReady;
 }
@@ -1248,15 +1274,15 @@ async function seedEvalDatasetFromChunks(sql, corpusId, limit = 24) {
         expected_answer,
         tags,
         created_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+      ) VALUES ($1,$2,$3,$4::jsonb,$5,$6::jsonb,$7)
       ON CONFLICT (corpus_id, entry_id) DO NOTHING;`,
       [
         corpusId,
         entry.entry_id,
         entry.question,
-        entry.expected_paths,
+        toJsonbParam(entry.expected_paths),
         entry.expected_answer,
-        entry.tags,
+        toJsonbParam(entry.tags),
         entry.created_at,
       ]
     );
@@ -1266,6 +1292,10 @@ async function seedEvalDatasetFromChunks(sql, corpusId, limit = 24) {
 }
 
 async function ensureEvalDataset(sql, corpusId) {
+  if (String(corpusId || '').trim() === DEMO_EVAL_CORPUS_ID) {
+    await seedDemoEvalScenarios(sql);
+    return null;
+  }
   const countRes = await sql.query(
     `SELECT COUNT(*)::int AS n
      FROM eval_dataset
@@ -1322,8 +1352,16 @@ async function insertEvalDatasetEntry(sql, corpusId, payload) {
       expected_answer,
       tags,
       created_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7);`,
-    [corpusId, entry.entry_id, entry.question, entry.expected_paths, entry.expected_answer, entry.tags, entry.created_at]
+    ) VALUES ($1,$2,$3,$4::jsonb,$5,$6::jsonb,$7);`,
+    [
+      corpusId,
+      entry.entry_id,
+      entry.question,
+      toJsonbParam(entry.expected_paths),
+      entry.expected_answer,
+      toJsonbParam(entry.tags),
+      entry.created_at,
+    ]
   );
   return entry;
 }
@@ -1345,11 +1383,11 @@ async function updateEvalDatasetEntry(sql, corpusId, entryId, payload) {
   await sql.query(
     `UPDATE eval_dataset
      SET question = $3,
-         expected_paths = $4,
+         expected_paths = $4::jsonb,
          expected_answer = $5,
-         tags = $6
+         tags = $6::jsonb
      WHERE corpus_id = $1 AND entry_id = $2;`,
-    [corpusId, entryId, question, expectedPaths, expectedAnswer, tags]
+    [corpusId, entryId, question, toJsonbParam(expectedPaths), expectedAnswer, toJsonbParam(tags)]
   );
 
   return {
@@ -1383,25 +1421,58 @@ async function loadEvalRun(sql, runId) {
 }
 
 async function getLatestEvalRun(sql, corpusId) {
+  const cid = String(corpusId || '').trim();
+  const orderBy = cid === DEMO_EVAL_CORPUS_ID
+    ? `ORDER BY
+         COALESCE((run_json->>'demo_seed_rank')::int, -1) DESC,
+         created_at DESC`
+    : `ORDER BY created_at DESC`;
   const res = await sql.query(
     `SELECT run_json
      FROM eval_runs
      WHERE corpus_id = $1
-     ORDER BY created_at DESC
+     ${orderBy}
      LIMIT 1;`,
-    [corpusId]
+    [cid]
+  );
+  const row = res.rows?.[0];
+  return row ? row.run_json : null;
+}
+
+async function getLatestEvalRunForDataset(sql, corpusId, datasetId) {
+  const cid = String(corpusId || '').trim();
+  const did = String(datasetId || '').trim();
+  const orderBy = cid === DEMO_EVAL_CORPUS_ID
+    ? `ORDER BY
+         COALESCE((run_json->>'demo_seed_rank')::int, -1) DESC,
+         created_at DESC`
+    : `ORDER BY created_at DESC`;
+  const res = await sql.query(
+    `SELECT run_json
+     FROM eval_runs
+     WHERE corpus_id = $1
+       AND dataset_id = $2
+     ${orderBy}
+     LIMIT 1;`,
+    [cid, did]
   );
   const row = res.rows?.[0];
   return row ? row.run_json : null;
 }
 
 async function listEvalRuns(sql, corpusId) {
+  const cid = String(corpusId || '').trim();
+  const orderBy = cid === DEMO_EVAL_CORPUS_ID
+    ? `ORDER BY
+         COALESCE((run_json->>'demo_seed_rank')::int, -1) DESC,
+         created_at DESC`
+    : `ORDER BY created_at DESC`;
   const res = await sql.query(
     `SELECT run_id, top1_accuracy, topk_accuracy, mrr, total, duration_secs, has_config
      FROM eval_runs
      WHERE corpus_id = $1
-     ORDER BY created_at DESC;`,
-    [corpusId]
+     ${orderBy};`,
+    [cid]
   );
   return (res.rows || []).map((r) => ({
     run_id: String(r.run_id),
@@ -1464,11 +1535,13 @@ async function createEvalRun(sql, {
   const startedAt = new Date();
   const completedAt = new Date(startedAt.getTime() + 75 * 1000);
   const runId = formatRunId(corpusId, completedAt);
-  const datasetId = 'epstein-demo';
+  const detectedDatasetId = Array.isArray(entries[0]?.tags)
+    ? String(entries[0].tags.find((tag) => String(tag || '').startsWith('dataset:')) || '').slice('dataset:'.length)
+    : '';
   const run = buildEvalRun({
     runId,
     corpusId,
-    datasetId,
+    datasetId: detectedDatasetId || 'epstein-demo',
     configSnapshot,
     results,
     startedAt: startedAt.toISOString(),
@@ -1490,7 +1563,7 @@ async function createEvalRun(sql, {
       duration_secs,
       has_config,
       run_json
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
     ON CONFLICT (run_id) DO UPDATE SET run_json = EXCLUDED.run_json;`,
     [
       run.run_id,
@@ -1503,7 +1576,7 @@ async function createEvalRun(sql, {
       run.total ?? 0,
       run.duration_secs ?? 0,
       run.config ? true : false,
-      run,
+      toJsonbParam(run),
     ]
   );
 
@@ -1551,14 +1624,102 @@ function extractResponsesText(data) {
   return parts.join('\n').trim();
 }
 
+function sha256Hex(value) {
+  return crypto.createHash('sha256').update(String(value || '')).digest('hex');
+}
+
+async function getEvalAnalysisCache(sql, key) {
+  const res = await sql.query(
+    `SELECT analysis_text, model_used
+     FROM eval_analysis_cache
+     WHERE current_run_id = $1
+       AND baseline_run_id = $2
+       AND prompt_hash = $3
+       AND model = $4
+       AND reasoning_effort = $5
+       AND max_output_tokens = $6
+       AND input_hash = $7
+     LIMIT 1;`,
+    [
+      key.currentRunId,
+      key.baselineRunId,
+      key.promptHash,
+      key.model,
+      key.reasoningEffort,
+      key.maxOutputTokens,
+      key.inputHash,
+    ],
+  );
+  return res.rows?.[0]
+    ? {
+        analysis: String(res.rows[0].analysis_text || ''),
+        modelUsed: res.rows[0].model_used == null ? null : String(res.rows[0].model_used),
+      }
+    : null;
+}
+
+async function putEvalAnalysisCache(sql, key, analysis, modelUsed) {
+  await sql.query(
+    `INSERT INTO eval_analysis_cache (
+      current_run_id,
+      baseline_run_id,
+      prompt_hash,
+      model,
+      reasoning_effort,
+      max_output_tokens,
+      input_hash,
+      analysis_text,
+      model_used
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    ON CONFLICT (
+      current_run_id,
+      baseline_run_id,
+      prompt_hash,
+      model,
+      reasoning_effort,
+      max_output_tokens,
+      input_hash
+    ) DO UPDATE
+    SET analysis_text = EXCLUDED.analysis_text,
+        model_used = EXCLUDED.model_used,
+        created_at = now();`,
+    [
+      key.currentRunId,
+      key.baselineRunId,
+      key.promptHash,
+      key.model,
+      key.reasoningEffort,
+      key.maxOutputTokens,
+      key.inputHash,
+      analysis,
+      modelUsed,
+    ],
+  );
+}
+
 async function callOpenAI(system, user, modelOverride) {
   const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
   if (!apiKey) throw new Error('Missing OPENAI_API_KEY');
 
+  const options = typeof modelOverride === 'string'
+    ? { model: modelOverride }
+    : (modelOverride && typeof modelOverride === 'object' ? modelOverride : {});
+
   const model =
-    String(modelOverride || '').trim() ||
+    String(options.model || '').trim() ||
     String(process.env.RAGWELD_CHAT_MODEL || 'gpt-5.3-codex').trim() ||
     'gpt-5.3-codex';
+  const reasoningEffort = String(options.reasoningEffort || 'xhigh').trim() || 'xhigh';
+  const maxOutputTokens = Number(options.maxOutputTokens);
+  const body = {
+    model,
+    instructions: system,
+    input: user,
+    reasoning: { effort: reasoningEffort },
+  };
+  if (Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) {
+    body.max_output_tokens = Math.floor(maxOutputTokens);
+  }
 
   const res = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
@@ -1566,12 +1727,7 @@ async function callOpenAI(system, user, modelOverride) {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      model,
-      instructions: system,
-      input: user,
-      reasoning: { effort: 'xhigh' },
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
@@ -1583,7 +1739,11 @@ async function callOpenAI(system, user, modelOverride) {
   const content = extractResponsesText(data);
   const tokensUsed = Number(data?.usage?.total_tokens)
     || (Number(data?.usage?.input_tokens || 0) + Number(data?.usage?.output_tokens || 0));
-  return { content, tokensUsed, model };
+  return {
+    content,
+    tokensUsed,
+    model: String(data?.model || model).trim() || model,
+  };
 }
 
 async function callOpenRouter(system, user, modelOverride, baseUrlOverride) {
@@ -2563,11 +2723,22 @@ export const handler = async (event) => {
 
   if (method === 'POST' && path === '/api/eval/run') {
     const corpusId = String(body?.corpus_id || body?.repo_id || body?.repo || '').trim() || 'epstein-files-1';
-    const latest = await getLatestEvalRun(sql, corpusId);
+    const requestedDatasetId = String(body?.dataset_id || '').trim();
+    const selectedDatasetId =
+      corpusId === DEMO_EVAL_CORPUS_ID
+        ? requestedDatasetId || DEFAULT_DEMO_EVAL_DATASET_ID
+        : requestedDatasetId;
+    const latest = selectedDatasetId
+      ? await getLatestEvalRunForDataset(sql, corpusId, selectedDatasetId)
+      : await getLatestEvalRun(sql, corpusId);
     if (latest) return json(200, latest);
 
     const configSnapshot = getConfig(corpusId);
-    const datasetEntries = await listEvalDataset(sql, corpusId);
+    const allDatasetEntries = await listEvalDataset(sql, corpusId);
+    const datasetEntries =
+      corpusId === DEMO_EVAL_CORPUS_ID
+        ? filterDatasetEntriesForEval(allDatasetEntries, selectedDatasetId)
+        : allDatasetEntries;
     const finalK = Number(configSnapshot?.retrieval?.eval_final_k || configSnapshot?.retrieval?.final_k || 5) || 5;
     const useMulti = Boolean(Number(configSnapshot?.retrieval?.eval_multi ?? 1));
     const run = await createEvalRun(sql, {
@@ -2585,21 +2756,33 @@ export const handler = async (event) => {
 
   if (method === 'GET' && path === '/api/eval/run/stream') {
     const corpusId = String(url.searchParams.get('corpus_id') || url.searchParams.get('repo') || '').trim() || 'epstein-files-1';
+    const requestedDatasetId = String(url.searchParams.get('dataset_id') || '').trim();
+    const selectedDatasetId =
+      corpusId === DEMO_EVAL_CORPUS_ID
+        ? requestedDatasetId || DEFAULT_DEMO_EVAL_DATASET_ID
+        : requestedDatasetId;
     const useMulti = Boolean(Number(url.searchParams.get('use_multi') || '1'));
     const finalK = Number(url.searchParams.get('final_k') || '5') || 5;
     const sampleLimitRaw = Number(url.searchParams.get('sample_limit') || '0') || 0;
 
     const configSnapshot = getConfig(corpusId);
-    const datasetEntries = await listEvalDataset(sql, corpusId);
-    const run = await createEvalRun(sql, {
-      corpusId,
-      datasetEntries,
-      configSnapshot,
-      finalK,
-      useMulti,
-      sampleSize: sampleLimitRaw > 0 ? sampleLimitRaw : null,
-      accuracyBias: 0.8,
-    });
+    const allDatasetEntries = await listEvalDataset(sql, corpusId);
+    const datasetEntries =
+      corpusId === DEMO_EVAL_CORPUS_ID
+        ? filterDatasetEntriesForEval(allDatasetEntries, selectedDatasetId)
+        : allDatasetEntries;
+    const run =
+      corpusId === DEMO_EVAL_CORPUS_ID && selectedDatasetId
+        ? await getLatestEvalRunForDataset(sql, corpusId, selectedDatasetId)
+        : await createEvalRun(sql, {
+            corpusId,
+            datasetEntries,
+            configSnapshot,
+            finalK,
+            useMulti,
+            sampleSize: sampleLimitRaw > 0 ? sampleLimitRaw : null,
+            accuracyBias: 0.8,
+          });
 
     if (!run) {
       const errEvent = JSON.stringify({ type: 'error', message: 'No eval dataset entries found.' });
@@ -2627,32 +2810,85 @@ export const handler = async (event) => {
       return json(400, { ok: false, analysis: null, model_used: null, error: 'Missing run data.' });
     }
 
-    const deltaTop1 = ((current.top1_accuracy || 0) - (baseline.top1_accuracy || 0)) * 100;
-    const deltaTopK = ((current.topk_accuracy || 0) - (baseline.topk_accuracy || 0)) * 100;
-    const deltaMrr = ((current.metrics?.mrr || 0) - (baseline.metrics?.mrr || 0)) * 100;
+    const currentRun = await loadEvalRun(sql, String(current.run_id));
+    const baselineRun = await loadEvalRun(sql, String(baseline.run_id));
+    if (!currentRun || !baselineRun) {
+      return json(200, {
+        ok: false,
+        analysis: null,
+        model_used: null,
+        error: 'One or both eval runs could not be loaded from the backend.',
+      });
+    }
 
-    const diffs = Array.isArray(payload.config_diffs) ? payload.config_diffs.slice(0, 12) : [];
-    const diffLines = diffs.map((d) => {
-      const key = d.key || d.path || d.name || 'config';
-      return `- ${key}: ${JSON.stringify(d.previous)} → ${JSON.stringify(d.current)}`;
-    });
+    const comparability = validateComparableRuns(currentRun, baselineRun);
+    if (!comparability.ok) {
+      return json(200, {
+        ok: false,
+        analysis: null,
+        model_used: null,
+        error: comparability.error,
+      });
+    }
 
-    const analysis = [
-      '# Eval Comparison',
-      '',
-      '## Summary',
-      `- Top-1 change: ${deltaTop1.toFixed(1)}%`,
-      `- Top-K change: ${deltaTopK.toFixed(1)}%`,
-      `- MRR change: ${deltaMrr.toFixed(1)}%`,
-      '',
-      '## Notes',
-      deltaTopK >= 0 ? 'Retrieval quality improved on this run.' : 'Retrieval quality regressed; investigate config and index changes.',
-      '',
-      '## Config Diffs',
-      diffLines.length ? diffLines.join('\n') : '- No config diffs supplied.',
-    ].join('\n');
+    const promptScope = String(currentRun?.corpus_id || scope || DEMO_EVAL_CORPUS_ID).trim() || DEMO_EVAL_CORPUS_ID;
+    const systemPrompt = getPromptValue(getConfig(promptScope), 'eval_analysis');
+    const evidence = buildComparisonEvidence(currentRun, baselineRun);
+    const userInput = buildEvalAnalysisUserInput({ currentRun, baselineRun, evidence });
+    const modelOptions = DEMO_EVAL_ANALYSIS_MODEL;
+    const promptHash = sha256Hex(systemPrompt);
+    const inputHash = sha256Hex(JSON.stringify({
+      payload,
+      currentRun,
+      baselineRun,
+      evidence,
+    }));
+    const cacheKey = {
+      currentRunId: String(currentRun.run_id || ''),
+      baselineRunId: String(baselineRun.run_id || ''),
+      promptHash,
+      model: modelOptions.model,
+      reasoningEffort: modelOptions.reasoningEffort,
+      maxOutputTokens: modelOptions.maxOutputTokens,
+      inputHash,
+    };
 
-    return json(200, { ok: true, analysis, model_used: 'demo-analysis', error: null });
+    const cached = await getEvalAnalysisCache(sql, cacheKey);
+    if (cached?.analysis) {
+      return json(200, {
+        ok: true,
+        analysis: cached.analysis,
+        model_used: cached.modelUsed || modelOptions.model,
+        error: null,
+      });
+    }
+
+    try {
+      const result = await callOpenAI(systemPrompt, userInput, modelOptions);
+      const analysis = String(result?.content || '').trim();
+      if (!analysis) {
+        return json(200, {
+          ok: false,
+          analysis: null,
+          model_used: null,
+          error: 'OpenAI returned an empty eval analysis response.',
+        });
+      }
+      await putEvalAnalysisCache(sql, cacheKey, analysis, result.model || modelOptions.model);
+      return json(200, {
+        ok: true,
+        analysis,
+        model_used: result.model || modelOptions.model,
+        error: null,
+      });
+    } catch (error) {
+      return json(200, {
+        ok: false,
+        analysis: null,
+        model_used: null,
+        error: String(error?.message || error),
+      });
+    }
   }
 
   if (method === 'GET' && path === '/api/secrets/check') {
