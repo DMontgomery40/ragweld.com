@@ -1,26 +1,9 @@
 # AGENTS.md
 
-## Scope
-This file applies to `/Users/davidmontgomery/ragweld.com/demo-overrides` and its subdirectories.
+Frontend work in `web/` must reflect backend truth instead of inventing a second schema layer.
 
-## Project
-Hosted-only override layer for the vendored demo app (`vendor/demo`).
-
-Purpose:
-- Keep long-term source parity with `../ragweld/web`.
-- Place site-specific mock and override behavior here instead of accumulating drift in `vendor/demo`.
-
-Current override paths:
-- `src/mocks/*`
-- `public/mockServiceWorker.js`
-
-## Edit Rules
-- Prefer adding override logic here before editing vendored files in `vendor/demo`.
-- Keep overrides minimal and clearly scoped to hosted/demo behavior.
-- If an override becomes generally useful, migrate it upstream into source repo (`../ragweld/web`) and reduce local patching.
-
-## Validation Expectations
-- From repo root, run:
-  - `npm run check:demo-parity`
-  - `npm run build:demo`
-- Verify runtime behavior at `/demo` with and without `?mock=1`.
+- Import API types from `/Users/davidmontgomery/ragweld/web/src/types/generated.ts`; do not hand-write payload types.
+- Do not add adapters/transformers to reshape API payloads for convenience.
+- If the UI cannot honestly represent backend state, fix the backend model or the UI contract, not both with glue.
+- For deadline work, prioritize flows the user can actually see: indexing, graph, chat, feedback, and eval.
+- Keep tests honest: no Playwright request interception stubs for new or edited E2E coverage.

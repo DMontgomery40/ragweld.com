@@ -16,6 +16,7 @@ import type {
   PromptMetadata,
   EvalRun,
   EvalDatasetItem,
+  EvalResult,
 } from '@/types/generated';
 
 // Sample corpora for demo mode
@@ -790,246 +791,261 @@ export const mockHealthResponse = {
 
 
 // Eval dataset + run mocks
-export const mockEvalDataset: EvalDatasetItem[] = [
+const evalDatasetSeed = [
   {
-    entry_id: '1',
     question: 'Where are the 1996 flight logs documented?',
     expected_paths: ['records/flight-logs/1996-09-03.md'],
-    expected_answer: null,
-    tags: ['md'],
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 72).toISOString(),
+    tags: ['md', 'travel'],
   },
   {
-    entry_id: '2',
     question: 'Which file contains the 1997 phone log entries?',
     expected_paths: ['records/phone-logs/1997-02-11.md'],
-    expected_answer: null,
-    tags: ['md'],
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 71).toISOString(),
+    tags: ['md', 'communications'],
   },
   {
-    entry_id: '3',
     question: 'Where is the 1998 passenger manifest recorded?',
     expected_paths: ['records/manifest/1998-04-12.csv'],
-    expected_answer: null,
-    tags: ['csv'],
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 70).toISOString(),
+    tags: ['csv', 'travel'],
   },
   {
-    entry_id: '4',
     question: 'Which document covers the 2007 settlement summary?',
     expected_paths: ['records/legal/settlement-2007.pdf'],
-    expected_answer: null,
-    tags: ['pdf'],
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 69).toISOString(),
+    tags: ['pdf', 'legal'],
   },
-];
+  {
+    question: 'Which file lists the 2002 black book contacts?',
+    expected_paths: ['contacts/black-book/2002-05-17.csv'],
+    tags: ['csv', 'contacts'],
+  },
+  {
+    question: 'Where is the 2001 pilot payroll ledger stored?',
+    expected_paths: ['finance/pilot-payroll/2001-q3.xlsx'],
+    tags: ['xlsx', 'finance'],
+  },
+  {
+    question: 'Which document captures the January 2004 island guest list?',
+    expected_paths: ['island-visits/2004-01-22-guest-list.md'],
+    tags: ['md', 'visitors'],
+  },
+  {
+    question: 'Where can I find the August 2006 scheduling emails?',
+    expected_paths: ['communications/scheduling/2006-08-14.eml'],
+    tags: ['eml', 'communications'],
+  },
+  {
+    question: 'Which document summarizes the November 2005 wire transfers?',
+    expected_paths: ['finance/wire-transfers/2005-11-02.pdf'],
+    tags: ['pdf', 'finance'],
+  },
+  {
+    question: 'Where is the 2008 deposition exhibit index?',
+    expected_paths: ['depositions/exhibits/2008-01-17-index.pdf'],
+    tags: ['pdf', 'deposition'],
+  },
+] as const;
 
-const baselineResults = [
-  {
-    entry_id: '1',
-    question: mockEvalDataset[0].question,
-    retrieved_paths: ['records/flight-logs/1996-09-03.md', 'records/legal/settlement-2007.pdf', 'records/manifest/1998-04-12.csv'],
-    expected_paths: mockEvalDataset[0].expected_paths,
-    top_paths: ['records/flight-logs/1996-09-03.md', 'records/legal/settlement-2007.pdf', 'records/manifest/1998-04-12.csv'],
-    top1_path: ['records/flight-logs/1996-09-03.md'],
-    top1_hit: true,
-    topk_hit: true,
-    reciprocal_rank: 1,
-    recall: 1,
-    latency_ms: 118,
-    duration_secs: 0.118,
-    docs: [
-      { file_path: 'records/flight-logs/1996-09-03.md', start_line: 1, score: 0.92, source: 'sparse' },
-      { file_path: 'records/legal/settlement-2007.pdf', start_line: 1, score: 0.61, source: 'graph' },
-    ],
-  },
-  {
-    entry_id: '2',
-    question: mockEvalDataset[1].question,
-    retrieved_paths: ['records/flight-logs/1996-09-03.md', 'records/phone-logs/1997-02-11.md', 'records/manifest/1998-04-12.csv'],
-    expected_paths: mockEvalDataset[1].expected_paths,
-    top_paths: ['records/flight-logs/1996-09-03.md', 'records/phone-logs/1997-02-11.md', 'records/manifest/1998-04-12.csv'],
-    top1_path: ['records/flight-logs/1996-09-03.md'],
-    top1_hit: false,
-    topk_hit: true,
-    reciprocal_rank: 0.5,
-    recall: 1,
-    latency_ms: 132,
-    duration_secs: 0.132,
-    docs: [
-      { file_path: 'records/flight-logs/1996-09-03.md', start_line: 1, score: 0.87, source: 'sparse' },
-      { file_path: 'records/phone-logs/1997-02-11.md', start_line: 1, score: 0.77, source: 'vector' },
-    ],
-  },
-  {
-    entry_id: '3',
-    question: mockEvalDataset[2].question,
-    retrieved_paths: ['records/manifest/1998-04-12.csv', 'records/phone-logs/1997-02-11.md', 'records/legal/settlement-2007.pdf'],
-    expected_paths: mockEvalDataset[2].expected_paths,
-    top_paths: ['records/manifest/1998-04-12.csv', 'records/phone-logs/1997-02-11.md', 'records/legal/settlement-2007.pdf'],
-    top1_path: ['records/manifest/1998-04-12.csv'],
-    top1_hit: true,
-    topk_hit: true,
-    reciprocal_rank: 1,
-    recall: 1,
-    latency_ms: 109,
-    duration_secs: 0.109,
-    docs: [
-      { file_path: 'records/manifest/1998-04-12.csv', start_line: 1, score: 0.9, source: 'sparse' },
-      { file_path: 'records/phone-logs/1997-02-11.md', start_line: 1, score: 0.62, source: 'graph' },
-    ],
-  },
-  {
-    entry_id: '4',
-    question: mockEvalDataset[3].question,
-    retrieved_paths: ['records/phone-logs/1997-02-11.md', 'records/legal/settlement-2007.pdf', 'records/manifest/1998-04-12.csv'],
-    expected_paths: mockEvalDataset[3].expected_paths,
-    top_paths: ['records/phone-logs/1997-02-11.md', 'records/legal/settlement-2007.pdf', 'records/manifest/1998-04-12.csv'],
-    top1_path: ['records/phone-logs/1997-02-11.md'],
-    top1_hit: false,
-    topk_hit: true,
-    reciprocal_rank: 0.5,
-    recall: 1,
-    latency_ms: 141,
-    duration_secs: 0.141,
-    docs: [
-      { file_path: 'records/phone-logs/1997-02-11.md', start_line: 1, score: 0.74, source: 'sparse' },
-      { file_path: 'records/legal/settlement-2007.pdf', start_line: 1, score: 0.69, source: 'vector' },
-    ],
-  },
-];
+export const mockEvalDataset: EvalDatasetItem[] = evalDatasetSeed.map((entry, index) => ({
+  entry_id: String(index + 1),
+  question: entry.question,
+  expected_paths: [...entry.expected_paths],
+  expected_answer: null,
+  tags: [...entry.tags],
+  created_at: new Date(Date.now() - 1000 * 60 * 60 * (96 - index)).toISOString(),
+}));
 
-const currentResults = [
-  {
-    entry_id: '1',
-    question: mockEvalDataset[0].question,
-    retrieved_paths: ['records/flight-logs/1996-09-03.md', 'records/manifest/1998-04-12.csv', 'records/legal/settlement-2007.pdf'],
-    expected_paths: mockEvalDataset[0].expected_paths,
-    top_paths: ['records/flight-logs/1996-09-03.md', 'records/manifest/1998-04-12.csv', 'records/legal/settlement-2007.pdf'],
-    top1_path: ['records/flight-logs/1996-09-03.md'],
-    top1_hit: true,
-    topk_hit: true,
-    reciprocal_rank: 1,
-    recall: 1,
-    latency_ms: 101,
-    duration_secs: 0.101,
-    docs: [
-      { file_path: 'records/flight-logs/1996-09-03.md', start_line: 1, score: 0.94, source: 'sparse' },
-      { file_path: 'records/manifest/1998-04-12.csv', start_line: 1, score: 0.7, source: 'graph' },
-    ],
-  },
-  {
-    entry_id: '2',
-    question: mockEvalDataset[1].question,
-    retrieved_paths: ['records/phone-logs/1997-02-11.md', 'records/flight-logs/1996-09-03.md', 'records/manifest/1998-04-12.csv'],
-    expected_paths: mockEvalDataset[1].expected_paths,
-    top_paths: ['records/phone-logs/1997-02-11.md', 'records/flight-logs/1996-09-03.md', 'records/manifest/1998-04-12.csv'],
-    top1_path: ['records/phone-logs/1997-02-11.md'],
-    top1_hit: true,
-    topk_hit: true,
-    reciprocal_rank: 1,
-    recall: 1,
-    latency_ms: 115,
-    duration_secs: 0.115,
-    docs: [
-      { file_path: 'records/phone-logs/1997-02-11.md', start_line: 1, score: 0.9, source: 'vector' },
-      { file_path: 'records/flight-logs/1996-09-03.md', start_line: 1, score: 0.62, source: 'sparse' },
-    ],
-  },
-  {
-    entry_id: '3',
-    question: mockEvalDataset[2].question,
-    retrieved_paths: ['records/manifest/1998-04-12.csv', 'records/flight-logs/1996-09-03.md', 'records/phone-logs/1997-02-11.md'],
-    expected_paths: mockEvalDataset[2].expected_paths,
-    top_paths: ['records/manifest/1998-04-12.csv', 'records/flight-logs/1996-09-03.md', 'records/phone-logs/1997-02-11.md'],
-    top1_path: ['records/manifest/1998-04-12.csv'],
-    top1_hit: true,
-    topk_hit: true,
-    reciprocal_rank: 1,
-    recall: 1,
-    latency_ms: 96,
-    duration_secs: 0.096,
-    docs: [
-      { file_path: 'records/manifest/1998-04-12.csv', start_line: 1, score: 0.93, source: 'sparse' },
-      { file_path: 'records/flight-logs/1996-09-03.md', start_line: 1, score: 0.63, source: 'graph' },
-    ],
-  },
-  {
-    entry_id: '4',
-    question: mockEvalDataset[3].question,
-    retrieved_paths: ['records/legal/settlement-2007.pdf', 'records/phone-logs/1997-02-11.md', 'records/manifest/1998-04-12.csv'],
-    expected_paths: mockEvalDataset[3].expected_paths,
-    top_paths: ['records/legal/settlement-2007.pdf', 'records/phone-logs/1997-02-11.md', 'records/manifest/1998-04-12.csv'],
-    top1_path: ['records/legal/settlement-2007.pdf'],
-    top1_hit: true,
-    topk_hit: true,
-    reciprocal_rank: 1,
-    recall: 1,
-    latency_ms: 108,
-    duration_secs: 0.108,
-    docs: [
-      { file_path: 'records/legal/settlement-2007.pdf', start_line: 1, score: 0.88, source: 'sparse' },
-      { file_path: 'records/phone-logs/1997-02-11.md', start_line: 1, score: 0.67, source: 'vector' },
-    ],
-  },
-];
+const resultSources = ['sparse', 'vector', 'graph'] as const;
+
+function percentile(values: number[], q: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * q) - 1));
+  return sorted[index];
+}
+
+function buildEvalResult(entry: EvalDatasetItem, rankedPaths: string[], latencyMs: number): EvalResult {
+  const hitIndex = rankedPaths.findIndex((path) => entry.expected_paths.includes(path));
+  const top1Hit = hitIndex === 0;
+  const topkHit = hitIndex !== -1;
+  const reciprocalRank = hitIndex === -1 ? 0 : 1 / (hitIndex + 1);
+  const recall = topkHit ? 1 : 0;
+
+  return {
+    entry_id: String(entry.entry_id || ''),
+    question: entry.question,
+    retrieved_paths: rankedPaths,
+    expected_paths: entry.expected_paths,
+    top_paths: rankedPaths,
+    top1_path: rankedPaths.slice(0, 1),
+    top1_hit: top1Hit,
+    topk_hit: topkHit,
+    reciprocal_rank: reciprocalRank,
+    recall,
+    latency_ms: latencyMs,
+    duration_secs: Number((latencyMs / 1000).toFixed(3)),
+    docs: rankedPaths.map((filePath, index) => ({
+      file_path: filePath,
+      start_line: 1,
+      score: Number((0.94 - index * 0.12).toFixed(2)),
+      source: resultSources[index % resultSources.length],
+    })),
+  };
+}
+
+function summarizeEvalResults(results: EvalResult[]) {
+  const total = results.length || 1;
+  const top1Hits = results.filter((result) => result.top1_hit).length;
+  const topkHits = results.filter((result) => result.topk_hit).length;
+  const top1Accuracy = top1Hits / total;
+  const topkAccuracy = topkHits / total;
+  const latencies = results.map((result) => result.latency_ms);
+  const mrr = results.reduce((sum, result) => sum + result.reciprocal_rank, 0) / total;
+  const durationSecs = results.reduce((sum, result) => sum + (result.duration_secs ?? result.latency_ms / 1000), 0);
+
+  return {
+    total,
+    top1Hits,
+    topkHits,
+    top1Accuracy,
+    topkAccuracy,
+    durationSecs: Number(durationSecs.toFixed(2)),
+    metrics: {
+      mrr: Number(mrr.toFixed(3)),
+      recall_at_5: Number(topkAccuracy.toFixed(2)),
+      recall_at_10: Number(topkAccuracy.toFixed(2)),
+      recall_at_20: Number(topkAccuracy.toFixed(2)),
+      precision_at_5: Number((((top1Accuracy * 0.65) + (topkAccuracy * 0.35))).toFixed(2)),
+      ndcg_at_10: Number((((mrr * 0.7) + (topkAccuracy * 0.3))).toFixed(2)),
+      latency_p50_ms: percentile(latencies, 0.5),
+      latency_p95_ms: percentile(latencies, 0.95),
+    },
+  };
+}
+
+function buildEvalRun({
+  runId,
+  results,
+  configSnapshot,
+  config,
+  useMulti,
+  finalK,
+  startedAt,
+  completedAt,
+}: {
+  runId: string;
+  results: EvalResult[];
+  configSnapshot: Record<string, unknown>;
+  config: Record<string, unknown>;
+  useMulti: boolean;
+  finalK: number;
+  startedAt: string;
+  completedAt: string;
+}): EvalRun {
+  const summary = summarizeEvalResults(results);
+
+  return {
+    run_id: runId,
+    corpus_id: 'epstein-files-1',
+    dataset_id: 'epstein-demo',
+    config_snapshot: configSnapshot,
+    config,
+    total: summary.total,
+    top1_hits: summary.top1Hits,
+    topk_hits: summary.topkHits,
+    top1_accuracy: summary.top1Accuracy,
+    topk_accuracy: summary.topkAccuracy,
+    duration_secs: summary.durationSecs,
+    use_multi: useMulti,
+    final_k: finalK,
+    metrics: summary.metrics,
+    results,
+    started_at: startedAt,
+    completed_at: completedAt,
+  };
+}
+
+const baselineSpecs = [
+  { rankedPaths: ['records/flight-logs/1996-09-03.md', 'records/legal/settlement-2007.pdf', 'records/manifest/1998-04-12.csv'], latencyMs: 162 },
+  { rankedPaths: ['records/flight-logs/1996-09-03.md', 'records/phone-logs/1997-02-11.md', 'communications/scheduling/2006-08-14.eml'], latencyMs: 175 },
+  { rankedPaths: ['records/phone-logs/1997-02-11.md', 'records/legal/settlement-2007.pdf', 'records/flight-logs/1996-09-03.md'], latencyMs: 188 },
+  { rankedPaths: ['records/legal/settlement-2007.pdf', 'finance/wire-transfers/2005-11-02.pdf', 'records/manifest/1998-04-12.csv'], latencyMs: 169 },
+  { rankedPaths: ['records/phone-logs/1997-02-11.md', 'island-visits/2004-01-22-guest-list.md', 'contacts/black-book/2002-05-17.csv'], latencyMs: 194 },
+  { rankedPaths: ['depositions/exhibits/2008-01-17-index.pdf', 'communications/scheduling/2006-08-14.eml', 'records/phone-logs/1997-02-11.md'], latencyMs: 207 },
+  { rankedPaths: ['island-visits/2004-01-22-guest-list.md', 'records/legal/settlement-2007.pdf', 'records/flight-logs/1996-09-03.md'], latencyMs: 158 },
+  { rankedPaths: ['records/phone-logs/1997-02-11.md', 'records/flight-logs/1996-09-03.md', 'records/legal/settlement-2007.pdf'], latencyMs: 181 },
+  { rankedPaths: ['records/legal/settlement-2007.pdf', 'depositions/exhibits/2008-01-17-index.pdf', 'island-visits/2004-01-22-guest-list.md'], latencyMs: 201 },
+  { rankedPaths: ['depositions/exhibits/2008-01-17-index.pdf', 'finance/wire-transfers/2005-11-02.pdf', 'contacts/black-book/2002-05-17.csv'], latencyMs: 166 },
+] as const;
+
+const currentSpecs = [
+  { rankedPaths: ['records/flight-logs/1996-09-03.md', 'records/manifest/1998-04-12.csv', 'records/legal/settlement-2007.pdf'], latencyMs: 112 },
+  { rankedPaths: ['records/phone-logs/1997-02-11.md', 'records/flight-logs/1996-09-03.md', 'communications/scheduling/2006-08-14.eml'], latencyMs: 119 },
+  { rankedPaths: ['records/manifest/1998-04-12.csv', 'records/flight-logs/1996-09-03.md', 'records/phone-logs/1997-02-11.md'], latencyMs: 108 },
+  { rankedPaths: ['records/legal/settlement-2007.pdf', 'finance/wire-transfers/2005-11-02.pdf', 'depositions/exhibits/2008-01-17-index.pdf'], latencyMs: 121 },
+  { rankedPaths: ['island-visits/2004-01-22-guest-list.md', 'contacts/black-book/2002-05-17.csv', 'records/phone-logs/1997-02-11.md'], latencyMs: 128 },
+  { rankedPaths: ['finance/pilot-payroll/2001-q3.xlsx', 'depositions/exhibits/2008-01-17-index.pdf', 'communications/scheduling/2006-08-14.eml'], latencyMs: 132 },
+  { rankedPaths: ['island-visits/2004-01-22-guest-list.md', 'records/legal/settlement-2007.pdf', 'records/flight-logs/1996-09-03.md'], latencyMs: 114 },
+  { rankedPaths: ['records/flight-logs/1996-09-03.md', 'records/phone-logs/1997-02-11.md', 'records/legal/settlement-2007.pdf'], latencyMs: 141 },
+  { rankedPaths: ['records/legal/settlement-2007.pdf', 'finance/wire-transfers/2005-11-02.pdf', 'depositions/exhibits/2008-01-17-index.pdf'], latencyMs: 135 },
+  { rankedPaths: ['depositions/exhibits/2008-01-17-index.pdf', 'finance/wire-transfers/2005-11-02.pdf', 'contacts/black-book/2002-05-17.csv'], latencyMs: 117 },
+] as const;
+
+const baselineResults = mockEvalDataset.map((entry, index) =>
+  buildEvalResult(entry, [...baselineSpecs[index].rankedPaths], baselineSpecs[index].latencyMs)
+);
+
+const currentResults = mockEvalDataset.map((entry, index) =>
+  buildEvalResult(entry, [...currentSpecs[index].rankedPaths], currentSpecs[index].latencyMs)
+);
 
 export const mockEvalRuns: EvalRun[] = [
-  {
-    run_id: 'epstein-files-1__20260216_080000',
-    corpus_id: 'epstein-files-1',
-    dataset_id: 'epstein-demo',
-    config_snapshot: { retrieval: { final_k: 5 }, fusion: { method: 'rrf' } },
-    config: { 'retrieval.final_k': 5, 'fusion.method': 'rrf' },
-    total: currentResults.length,
-    top1_hits: 4,
-    topk_hits: 4,
-    top1_accuracy: 1,
-    topk_accuracy: 1,
-    duration_secs: 0.42,
-    use_multi: true,
-    final_k: 5,
-    metrics: {
-      mrr: 1,
-      recall_at_5: 1,
-      recall_at_10: 1,
-      recall_at_20: 1,
-      precision_at_5: 0.8,
-      ndcg_at_10: 1,
-      latency_p50_ms: 108,
-      latency_p95_ms: 118,
-    },
+  buildEvalRun({
+    runId: 'epstein-files-1__20260216_080000',
     results: currentResults,
-    started_at: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
-    completed_at: new Date(Date.now() - 1000 * 60 * 60 * 2 + 75000).toISOString(),
-  },
-  {
-    run_id: 'epstein-files-1__20260214_090000',
-    corpus_id: 'epstein-files-1',
-    dataset_id: 'epstein-demo',
-    config_snapshot: { retrieval: { final_k: 5 }, fusion: { method: 'rrf' } },
-    config: { 'retrieval.final_k': 5, 'fusion.method': 'rrf' },
-    total: baselineResults.length,
-    top1_hits: 2,
-    topk_hits: 4,
-    top1_accuracy: 0.5,
-    topk_accuracy: 1,
-    duration_secs: 0.5,
-    use_multi: false,
-    final_k: 5,
-    metrics: {
-      mrr: 0.75,
-      recall_at_5: 1,
-      recall_at_10: 1,
-      recall_at_20: 1,
-      precision_at_5: 0.7,
-      ndcg_at_10: 0.82,
-      latency_p50_ms: 120,
-      latency_p95_ms: 141,
+    configSnapshot: {
+      retrieval: {
+        final_k: 8,
+        eval_multi: 1,
+        mmr_lambda: 0.22,
+      },
+      fusion: { method: 'rrf' },
+      reranker: { enabled: true, top_n: 25 },
     },
+    config: {
+      'retrieval.final_k': 8,
+      'retrieval.eval_multi': 1,
+      'retrieval.mmr_lambda': 0.22,
+      'fusion.method': 'rrf',
+      'reranker.enabled': true,
+      'reranker.top_n': 25,
+    },
+    useMulti: true,
+    finalK: 8,
+    startedAt: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
+    completedAt: new Date(Date.now() - 1000 * 60 * 60 * 2 + 95000).toISOString(),
+  }),
+  buildEvalRun({
+    runId: 'epstein-files-1__20260214_090000',
     results: baselineResults,
-    started_at: new Date(Date.now() - 1000 * 60 * 60 * 36).toISOString(),
-    completed_at: new Date(Date.now() - 1000 * 60 * 60 * 36 + 90000).toISOString(),
-  },
+    configSnapshot: {
+      retrieval: {
+        final_k: 5,
+        eval_multi: 0,
+        mmr_lambda: 0.38,
+      },
+      fusion: { method: 'rrf' },
+      reranker: { enabled: false, top_n: 0 },
+    },
+    config: {
+      'retrieval.final_k': 5,
+      'retrieval.eval_multi': 0,
+      'retrieval.mmr_lambda': 0.38,
+      'fusion.method': 'rrf',
+      'reranker.enabled': false,
+      'reranker.top_n': 0,
+    },
+    useMulti: false,
+    finalK: 5,
+    startedAt: new Date(Date.now() - 1000 * 60 * 60 * 36).toISOString(),
+    completedAt: new Date(Date.now() - 1000 * 60 * 60 * 36 + 132000).toISOString(),
+  }),
 ];

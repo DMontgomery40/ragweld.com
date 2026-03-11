@@ -34,17 +34,17 @@ export function Dashboard() {
 
       {/* System Status Subtab */}
       <div style={{ display: activeSubtab === 'system' ? 'block' : 'none' }}>
-        <SystemStatusSubtab />
+        {activeSubtab === 'system' ? <SystemStatusSubtab /> : null}
       </div>
 
       {/* Monitoring Subtab */}
       <div style={{ display: activeSubtab === 'monitoring' ? 'block' : 'none' }}>
-        <MonitoringSubtab />
+        {activeSubtab === 'monitoring' ? <MonitoringSubtab /> : null}
       </div>
 
       {/* Storage Subtab */}
       <div style={{ display: activeSubtab === 'storage' ? 'block' : 'none' }}>
-        <StorageSubtab />
+        {activeSubtab === 'storage' ? <StorageSubtab /> : null}
       </div>
 
       {/* Help Subtab */}

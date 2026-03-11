@@ -3,10 +3,6 @@ import { useUIStore } from '@/stores/useUIStore';
 
 type ThemeMode = 'light' | 'dark' | 'auto';
 
-function isThemeMode(value: unknown): value is ThemeMode {
-  return value === 'light' || value === 'dark' || value === 'auto';
-}
-
 /**
  * useTheme Hook
  * Manages theme mode (light/dark/auto) with system preference detection
@@ -92,7 +88,6 @@ export function useTheme() {
   const applyTheme = useCallback((newMode: ThemeMode) => {
     try {
       localStorage.setItem('THEME_MODE', newMode);
-      useUIStore.getState().setThemeMode(newMode);
       setTheme(newMode);
       applyThemeToDocument(newMode);
     } catch (e) {
@@ -110,16 +105,13 @@ export function useTheme() {
   // Initialize theme on mount
   useEffect(() => {
     try {
+      // Read from UIStore first (persisted), fallback to localStorage
       const storeMode = useUIStore.getState().themeMode;
-      const savedRaw = localStorage.getItem('THEME_MODE');
-      const savedMode = isThemeMode(savedRaw) ? savedRaw : null;
-      const fallbackStoreMode = isThemeMode(storeMode) ? storeMode : null;
-      const mode = savedMode ?? fallbackStoreMode ?? 'auto';
+      const saved = localStorage.getItem('THEME_MODE') as ThemeMode | null;
+      const mode = storeMode || saved || 'auto';
 
       setTheme(mode);
       applyThemeToDocument(mode);
-      useUIStore.getState().setThemeMode(mode);
-      localStorage.setItem('THEME_MODE', mode);
 
       console.log('[useTheme] Initialized with mode:', mode);
     } catch (e) {

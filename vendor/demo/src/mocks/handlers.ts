@@ -19,6 +19,22 @@ import {
   mockEvalDataset,
   mockEvalRuns,
 } from './data';
+import {
+  getMockAgentTrainDiff,
+  getMockAgentTrainRun,
+  getMockRerankerScore,
+  getMockRerankerTrainDiff,
+  getMockRerankerTrainRun,
+  mockAgentTrainEventsByRunId,
+  mockAgentTrainRunMetas,
+  mockAgentTrainRuns,
+  mockRerankerLegacyStatus,
+  mockRerankerLogs,
+  mockRerankerTrainEventsByRunId,
+  mockRerankerTrainProfile,
+  mockRerankerTrainRunMetas,
+  mockRerankerTrainRuns,
+} from './training';
 
 const getGraph = (corpusId: string) => {
   const key = String(corpusId || '').trim();
@@ -28,6 +44,19 @@ const getGraph = (corpusId: string) => {
 let promptValues: Record<string, string> = { ...mockPromptDefaults };
 
 let evalDatasetEntries = [...mockEvalDataset];
+
+function streamJsonEvents(events: unknown[], intervalMs = 120) {
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    async start(controller) {
+      for (const evt of events) {
+        await delay(intervalMs);
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`));
+      }
+      controller.close();
+    },
+  });
+}
 
 export const handlersFull = [
   // Health check
@@ -348,24 +377,309 @@ export const handlersFull = [
     });
   }),
 
-  http.post('/api/eval/analyze_comparison', async () => {
+  http.post('/api/eval/analyze_comparison', async ({ request }) => {
     await delay(200);
+
+    const payload = (await request.json().catch(() => ({}))) as Record<string, any>;
+    const currentRun = payload?.current_run || {};
+    const compareRun = payload?.compare_run || {};
+    const configDiffs = Array.isArray(payload?.config_diffs) ? payload.config_diffs : [];
+    const topkRegressions = Array.isArray(payload?.topk_regressions) ? payload.topk_regressions : [];
+    const topkImprovements = Array.isArray(payload?.topk_improvements) ? payload.topk_improvements : [];
+    const top1RegressionsCount = Number(payload?.top1_regressions_count || 0);
+    const top1ImprovementsCount = Number(payload?.top1_improvements_count || 0);
+
+    const currentTop1 = Number(currentRun?.top1_accuracy || 0);
+    const compareTop1 = Number(compareRun?.top1_accuracy || 0);
+    const currentTopk = Number(currentRun?.topk_accuracy || 0);
+    const compareTopk = Number(compareRun?.topk_accuracy || 0);
+    const currentDuration = Number(currentRun?.duration_secs || 0);
+    const compareDuration = Number(compareRun?.duration_secs || 0);
+
+    const formatPct = (value: number) => `${(value * 100).toFixed(1)}%`;
+    const formatPointDelta = (value: number) => `${value >= 0 ? '+' : ''}${(value * 100).toFixed(1)} points`;
+    const formatConfigValue = (value: unknown) => {
+      if (typeof value === 'string') return `"${value}"`;
+      if (Array.isArray(value)) return JSON.stringify(value);
+      if (value && typeof value === 'object') return JSON.stringify(value);
+      return String(value);
+    };
+
+    const configLines = configDiffs.length > 0
+      ? configDiffs.slice(0, 6).map((diff) => (
+          `- ${String(diff?.key || 'config.unknown')}: ${formatConfigValue(diff?.previous)} → ${formatConfigValue(diff?.current)}`
+        ))
+      : ['- No config diffs were captured for this comparison.'];
+
     return HttpResponse.json({
       ok: true,
       analysis: [
         '# Eval Comparison',
         '',
         '## Summary',
-        '- Top-1 accuracy improved by +50% (0.50 → 1.00)',
-        '- MRR improved by +0.25',
+        `- Top-K accuracy changed by ${formatPointDelta(currentTopk - compareTopk)} (${formatPct(compareTopk)} → ${formatPct(currentTopk)})`,
+        `- Top-1 accuracy changed by ${formatPointDelta(currentTop1 - compareTop1)} (${formatPct(compareTop1)} → ${formatPct(currentTop1)})`,
+        `- Top-K drill-down shows ${topkImprovements.length} improvement(s) and ${topkRegressions.length} regression(s).`,
+        `- Top-1 rank moved on +${top1ImprovementsCount} / -${top1RegressionsCount} questions.`,
+        `- Runtime shifted from ${compareDuration.toFixed(2)}s to ${currentDuration.toFixed(2)}s.`,
         '',
         '## Config Diffs',
-        '- fusion.method: "rrf" → "rrf" (no change)',
-        '- retrieval.final_k: 5 → 5 (no change)',
+        ...configLines,
+        '',
+        '## Takeaway',
+        currentTopk >= compareTopk
+          ? 'The newer run is materially stronger for the demo story: better retrieval coverage with a faster overall profile.'
+          : 'The newer run regressed against baseline; keep the older run selected as the safer default narrative.',
       ].join('\n'),
       model_used: 'demo-analysis',
       error: null,
     });
+  }),
+
+  // Learning reranker studio endpoints
+  http.get('/api/reranker/train/profile', async () => {
+    await delay(120);
+    return HttpResponse.json(mockRerankerTrainProfile);
+  }),
+
+  http.get('/api/reranker/train/runs', async ({ request }) => {
+    await delay(140);
+    const url = new URL(request.url);
+    const scope = String(url.searchParams.get('scope') || 'corpus').trim();
+    const corpusId = String(url.searchParams.get('corpus_id') || '').trim();
+    const runs = scope === 'all' || !corpusId
+      ? mockRerankerTrainRunMetas
+      : mockRerankerTrainRunMetas.filter((run) => run.corpus_id === corpusId);
+    return HttpResponse.json({ ok: true, runs });
+  }),
+
+  http.get('/api/reranker/train/run/stream', async ({ request }) => {
+    const url = new URL(request.url);
+    const runId = String(url.searchParams.get('run_id') || '').trim();
+    const events = mockRerankerTrainEventsByRunId[runId] || mockRerankerTrainEventsByRunId[mockRerankerTrainRuns[0].run_id] || [];
+    return new HttpResponse(streamJsonEvents(events, 90), {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      },
+    });
+  }),
+
+  http.get('/api/reranker/train/run/:runId', async ({ params }) => {
+    await delay(120);
+    const run = getMockRerankerTrainRun(String(params.runId));
+    if (!run) return new HttpResponse(null, { status: 404 });
+    return HttpResponse.json(run);
+  }),
+
+  http.get('/api/reranker/train/run/:runId/metrics', async ({ params }) => {
+    await delay(120);
+    const runId = String(params.runId);
+    const events = mockRerankerTrainEventsByRunId[runId];
+    if (!events) return new HttpResponse(null, { status: 404 });
+    return HttpResponse.json({ ok: true, events });
+  }),
+
+  http.post('/api/reranker/train/start', async () => {
+    await delay(160);
+    const run = mockRerankerTrainRuns[0];
+    return HttpResponse.json({ ok: true, run_id: run.run_id, run });
+  }),
+
+  http.post('/api/reranker/train/diff', async ({ request }) => {
+    await delay(150);
+    const body = (await request.json().catch(() => ({}))) as Record<string, any>;
+    const baselineRunId = String(body?.baseline_run_id || '');
+    const currentRunId = String(body?.current_run_id || '');
+    return HttpResponse.json(getMockRerankerTrainDiff(baselineRunId, currentRunId));
+  }),
+
+  http.post('/api/reranker/train/run/:runId/promote', async ({ params }) => {
+    await delay(110);
+    const run = getMockRerankerTrainRun(String(params.runId));
+    if (!run) return new HttpResponse(null, { status: 404 });
+    return HttpResponse.json({ ok: true });
+  }),
+
+  http.post('/api/reranker/score', async ({ request }) => {
+    await delay(130);
+    const body = (await request.json().catch(() => ({}))) as Record<string, any>;
+    return HttpResponse.json(
+      getMockRerankerScore(
+        String(body?.query || ''),
+        String(body?.document || ''),
+        Boolean(body?.include_logits)
+      )
+    );
+  }),
+
+  // Legacy reranker controls still used by the training studio shell
+  http.post('/api/reranker/mine', async () => {
+    await delay(140);
+    return HttpResponse.json({
+      ok: true,
+      output: 'Synthetic mining complete: 384 hard-negative triplets refreshed from recent eval and click traces.',
+      error: null,
+    });
+  }),
+
+  http.post('/api/reranker/train', async () => {
+    await delay(160);
+    return HttpResponse.json({
+      ok: true,
+      output: 'Synthetic reranker run selected.',
+      error: null,
+      run_id: mockRerankerTrainRuns[0].run_id,
+    });
+  }),
+
+  http.post('/api/reranker/evaluate', async () => {
+    await delay(150);
+    return HttpResponse.json({
+      ok: true,
+      output: 'Synthetic holdout evaluation complete.',
+      error: null,
+      metrics: {
+        'mrr@10': 0.817,
+        'ndcg@10': 0.8784,
+        map: 0.751,
+      },
+    });
+  }),
+
+  http.get('/api/reranker/status', async () => {
+    await delay(90);
+    return HttpResponse.json(mockRerankerLegacyStatus);
+  }),
+
+  http.get('/api/reranker/info', async () => {
+    await delay(90);
+    return HttpResponse.json({
+      enabled: true,
+      reranker_mode: 'learning',
+      reranker_cloud_provider: null,
+      reranker_cloud_model: null,
+      path: 'models/learning-reranker-epstein-files-1',
+      resolved_path: 'models/learning-reranker-epstein-files-1',
+      device: 'apple_mps',
+      alpha: 0.68,
+      topn: 50,
+      batch: 12,
+      maxlen: 512,
+      snippet_chars: 1200,
+    });
+  }),
+
+  http.get('/api/reranker/logs/count', async () => {
+    await delay(90);
+    return HttpResponse.json({ count: 1427 });
+  }),
+
+  http.get('/api/reranker/triplets/count', async () => {
+    await delay(90);
+    return HttpResponse.json({ count: 384 });
+  }),
+
+  http.get('/api/reranker/costs', async () => {
+    await delay(90);
+    return HttpResponse.json({ total_24h: 1.84, avg_per_query: 0.0013 });
+  }),
+
+  http.get('/api/reranker/nohits', async () => {
+    await delay(90);
+    return HttpResponse.json({
+      queries: [
+        'pilot itinerary variance memo',
+        'island tower staffing ledger',
+        'wire transfer intermediary worksheet',
+      ],
+    });
+  }),
+
+  http.get('/api/reranker/logs', async () => {
+    await delay(90);
+    return HttpResponse.json({ logs: mockRerankerLogs });
+  }),
+
+  http.get('/api/reranker/logs/download', async () => {
+    await delay(90);
+    return new HttpResponse(`${mockRerankerLogs.join('\n')}\n`, {
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+      },
+    });
+  }),
+
+  http.post('/api/reranker/logs/clear', async () => {
+    await delay(90);
+    return HttpResponse.json({ ok: true });
+  }),
+
+  // Ragweld agent training studio endpoints
+  http.get('/api/agent/train/runs', async ({ request }) => {
+    await delay(140);
+    const url = new URL(request.url);
+    const scope = String(url.searchParams.get('scope') || 'corpus').trim();
+    const corpusId = String(url.searchParams.get('corpus_id') || '').trim();
+    const runs = scope === 'all' || !corpusId
+      ? mockAgentTrainRunMetas
+      : mockAgentTrainRunMetas.filter((run) => run.corpus_id === corpusId);
+    return HttpResponse.json({ ok: true, runs });
+  }),
+
+  http.get('/api/agent/train/run/:runId', async ({ params }) => {
+    await delay(120);
+    const run = getMockAgentTrainRun(String(params.runId));
+    if (!run) return new HttpResponse(null, { status: 404 });
+    return HttpResponse.json(run);
+  }),
+
+  http.get('/api/agent/train/run/:runId/metrics', async ({ params }) => {
+    await delay(120);
+    const runId = String(params.runId);
+    const events = mockAgentTrainEventsByRunId[runId];
+    if (!events) return new HttpResponse(null, { status: 404 });
+    return HttpResponse.json({ ok: true, events });
+  }),
+
+  http.get('/api/agent/train/run/:runId/stream', async ({ params }) => {
+    const runId = String(params.runId);
+    const events = mockAgentTrainEventsByRunId[runId] || mockAgentTrainEventsByRunId[mockAgentTrainRuns[0].run_id] || [];
+    return new HttpResponse(streamJsonEvents(events, 95), {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      },
+    });
+  }),
+
+  http.post('/api/agent/train/start', async () => {
+    await delay(160);
+    return HttpResponse.json({ ok: true, run_id: mockAgentTrainRuns[0].run_id });
+  }),
+
+  http.post('/api/agent/train/run/:runId/cancel', async ({ params }) => {
+    await delay(100);
+    const run = getMockAgentTrainRun(String(params.runId));
+    if (!run) return new HttpResponse(null, { status: 404 });
+    return HttpResponse.json({ ok: true });
+  }),
+
+  http.post('/api/agent/train/run/:runId/promote', async ({ params }) => {
+    await delay(100);
+    const run = getMockAgentTrainRun(String(params.runId));
+    if (!run) return new HttpResponse(null, { status: 404 });
+    return HttpResponse.json({ ok: true });
+  }),
+
+  http.post('/api/agent/train/run/:runId/diff', async ({ request }) => {
+    await delay(150);
+    const body = (await request.json().catch(() => ({}))) as Record<string, any>;
+    const baselineRunId = String(body?.baseline_run_id || '');
+    const currentRunId = String(body?.current_run_id || '');
+    return HttpResponse.json(getMockAgentTrainDiff(baselineRunId, currentRunId));
   }),
 
   // Graph endpoints (for offline / ?mock=1 mode)
@@ -876,16 +1190,6 @@ const passthroughHandlers = [
   http.post('/api/chat', () => passthrough()),
   http.post('/api/chat/stream', () => passthrough()),
   http.get('/api/graph/*', () => passthrough()),
-  http.get('/api/eval/runs', () => passthrough()),
-  http.get('/api/eval/results', () => passthrough()),
-  http.get('/api/eval/results/:runId', () => passthrough()),
-  http.post('/api/eval/run', () => passthrough()),
-  http.get('/api/eval/run/stream', () => passthrough()),
-  http.post('/api/eval/analyze_comparison', () => passthrough()),
-  http.get('/api/dataset', () => passthrough()),
-  http.post('/api/dataset', () => passthrough()),
-  http.put('/api/dataset/:entryId', () => passthrough()),
-  http.delete('/api/dataset/:entryId', () => passthrough()),
 ];
 
 const LIVE_HANDLER_PATHS = new Set([
@@ -923,14 +1227,6 @@ const LIVE_HANDLER_PATHS = new Set([
   '/api/chat',
   '/api/chat/stream',
   '/api/graph/*',
-  '/api/eval/runs',
-  '/api/eval/results',
-  '/api/eval/results/:runId',
-  '/api/eval/run',
-  '/api/eval/run/stream',
-  '/api/eval/analyze_comparison',
-  '/api/dataset',
-  '/api/dataset/:entryId',
 ]);
 
 export const handlersPartial = [
