@@ -213,8 +213,43 @@ describe('estimateCostComparison', () => {
 
     expect(comparison.entries).toHaveLength(1)
     expect(comparison.entries[0].cloud_instance_type).toBe('H100-4x')
-    expect(comparison.entries[0].num_gpus).toBe(4)
+    expect(comparison.entries[0].num_gpus).toBe(8)
+    expect(comparison.entries[0].vram_total_gb).toBe(640)
     expect(comparison.entries[0].total_cost_dollars).toBeGreaterThan(0)
+  })
+
+  it('carries selected tier provenance when static pricing fills a live row tier', () => {
+    const params = makeEstimateRequest({
+      pricing_tier: ['spot'],
+      target_gpu: ['H100'],
+    })
+
+    const comparison = estimateCostComparison(
+      params,
+      [
+        makePricing({
+          provider: 'aws',
+          source: 'shadeform',
+          gpu: 'H100',
+          cloud_instance_type: 'p5.48xlarge',
+          hourly_price_cents: 500,
+          spot_price_cents: 250,
+          spot_price_source: 'static',
+          spot_price_fetched_at: '2026-02-20T00:00:00Z',
+        }),
+      ],
+      estimateTraining(params),
+      REQUIRED_VRAM_RANGE,
+      makePricingFreshness({
+        source: 'shadeform+static',
+        fallback_reason: 'Static spot fallback',
+        snapshot_updated_at: '2026-02-20T00:00:00Z',
+      }),
+    )
+
+    expect(comparison.entries[0].price_source).toBe('static')
+    expect(comparison.entries[0].price_fetched_at).toBe('2026-02-20T00:00:00Z')
+    expect(comparison.entries[0].fallback_reason).toBe('Static spot fallback')
   })
 
   it('filters out selected regions that are present but unavailable', () => {

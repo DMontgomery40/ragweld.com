@@ -5,6 +5,46 @@ import type {
   ModuleShape,
 } from '../types/index'
 
+const LORA_TARGET_MODULE_VALUES: LoRATargetModule[] = ['q', 'k', 'v', 'o', 'gate', 'up', 'down']
+const LORA_TARGET_MODULE_SET = new Set<LoRATargetModule>(LORA_TARGET_MODULE_VALUES)
+
+function isPositiveFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+}
+
+export function isValidModuleShape(value: unknown): value is ModuleShape {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    isPositiveFiniteNumber((value as Partial<ModuleShape>).in_dim) &&
+    isPositiveFiniteNumber((value as Partial<ModuleShape>).out_dim)
+  )
+}
+
+export function normalizeModuleShapeOverrides(
+  value: unknown,
+): Partial<Record<LoRATargetModule, ModuleShape>> | null {
+  if (value == null) {
+    return {}
+  }
+  if (typeof value !== 'object') {
+    return null
+  }
+
+  const normalized: Partial<Record<LoRATargetModule, ModuleShape>> = {}
+  for (const [key, shape] of Object.entries(value)) {
+    if (!LORA_TARGET_MODULE_SET.has(key as LoRATargetModule)) {
+      return null
+    }
+    if (!isValidModuleShape(shape)) {
+      return null
+    }
+    normalized[key as LoRATargetModule] = shape
+  }
+
+  return normalized
+}
+
 interface SizeBucket {
   max_params_billions: number
   hidden_size: number
@@ -278,7 +318,7 @@ export function getModelConfigFromRequest(
 export function resolveModuleShape(model: ModelConfig, module: LoRATargetModule): ModuleShape {
   // Request-level module shape overrides take precedence; otherwise use architecture defaults.
   const override = model.module_shapes?.[module]
-  if (override) {
+  if (isValidModuleShape(override)) {
     return override
   }
   return defaultModuleShape(module, model)

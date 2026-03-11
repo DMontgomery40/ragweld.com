@@ -1,6 +1,12 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent, type ReactNode } from 'react'
 import { INPUT_PANEL_HELP, type CrucibleHelpCard } from '../help/inputPanelHelp'
 import { resolveGPUType } from '../engine/gpu-specs'
+import {
+  defaultQATSchemeForBits,
+  isQATTargetBits,
+  normalizeQATSchemeForBits,
+  qatSchemesForBits,
+} from '../engine/quantization'
 import type {
   Architecture,
   EstimateRequest,
@@ -94,7 +100,6 @@ const OPTIMIZER_OPTIONS: Optimizer[] = [
 ]
 const LR_SCHEDULER_OPTIONS: LRScheduler[] = ['cosine', 'linear', 'constant']
 const PRECISION_OPTIONS: Precision[] = ['fp32', 'fp16', 'bf16', 'fp8']
-const QAT_SCHEME_OPTIONS: EstimateRequest['qat_scheme'][] = ['fp8-int4', 'fp8-fp8', 'int8-int4', 'int4']
 const PRICING_TIER_OPTIONS: PricingTier[] = ['on_demand', 'spot', 'reserved_1mo', 'reserved_3mo']
 const GPU_FALLBACK_OPTIONS: GPUType[] = [
   'H100',
@@ -348,14 +353,6 @@ interface TooltipSpec {
   sections?: TooltipSection[]
 }
 
-function stopTooltipToggle(event: MouseEvent<HTMLElement>) {
-  if (event.target instanceof Element && event.target.closest('a')) {
-    return
-  }
-  event.preventDefault()
-  event.stopPropagation()
-}
-
 function isCrucibleHelpCard(value: TooltipSpec | CrucibleHelpCard | string): value is CrucibleHelpCard {
   return typeof value === 'object' && value !== null && 'id' in value && 'short' in value
 }
@@ -403,16 +400,46 @@ function normalizeTooltip(text: string, tooltip: CrucibleHelpCard | TooltipSpec 
 
 function TooltipMark({ label, tooltip }: { label: string; tooltip: CrucibleHelpCard | TooltipSpec | string }) {
   const spec = normalizeTooltip(label, tooltip)
+  const [pinnedOpen, setPinnedOpen] = useState(false)
+  const wrapperRef = useRef<HTMLSpanElement | null>(null)
+
+  const handleBlur = useCallback((event: FocusEvent<HTMLSpanElement>) => {
+    if (event.relatedTarget instanceof Node && wrapperRef.current?.contains(event.relatedTarget)) {
+      return
+    }
+    setPinnedOpen(false)
+  }, [])
 
   return (
     <span
+      ref={wrapperRef}
       className="inline-tooltip"
-      tabIndex={0}
-      aria-label={`${label} help`}
-      onMouseDown={stopTooltipToggle}
-      onClick={stopTooltipToggle}
+      data-open={pinnedOpen ? 'true' : 'false'}
+      onBlur={handleBlur}
     >
-      <span className="inline-tooltip-mark">?</span>
+      <button
+        type="button"
+        className="inline-tooltip-button"
+        aria-label={`${label} help`}
+        aria-expanded={pinnedOpen}
+        onMouseDown={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+        }}
+        onClick={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          setPinnedOpen((current) => !current)
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            setPinnedOpen(false)
+            event.currentTarget.blur()
+          }
+        }}
+      >
+        <span className="inline-tooltip-mark">?</span>
+      </button>
       <span className="inline-tooltip-content tooltip-content" role="tooltip">
         <span className="tt-title">{spec.title}</span>
         {spec.badges && spec.badges.length > 0 ? (
@@ -569,7 +596,7 @@ function MultiSelectMatrix({
 
   return (
     <div className="checkbox-matrix">
-      <p className="matrix-label">{label}</p>
+      <div className="matrix-label">{label}</div>
       {options.length === 0 ? (
         <span className="field-hint">{emptyHint ?? 'No options available for the current filter.'}</span>
       ) : useDropdown ? (
@@ -877,6 +904,19 @@ export function InputPanel({
     }))
   }, [value.quantization_bits])
 
+  const qatSchemeOptions = useMemo<MultiSelectOption[]>(() => {
+    return qatSchemesForBits(value.quantization_bits).map((scheme) => ({
+      value: scheme,
+      label: formatQATSchemeLabel(scheme),
+    }))
+  }, [value.quantization_bits])
+
+  const isQATTargetPrecision = useMemo(() => {
+    return isQATTargetBits(value.quantization_bits)
+  }, [value.quantization_bits])
+
+  const showQuantizationProfile = value.quantization_bits === 4 && !value.use_qat
+
   const selectedModelPreset = useMemo(() => {
     const selected = MODEL_PROFILES.find((profile) => profile.id === value.model_name)
     return selected?.id ?? 'custom'
@@ -1018,6 +1058,28 @@ export function InputPanel({
     value.target_interconnects,
     value.target_providers,
     value.target_regions,
+  ])
+
+  useEffect(() => {
+    if (!value.use_qat) {
+      return
+    }
+
+    if (!isQATTargetPrecision) {
+      onChange({ use_qat: false })
+      return
+    }
+
+    const normalizedScheme = normalizeQATSchemeForBits(value.quantization_bits, value.qat_scheme)
+    if (normalizedScheme && normalizedScheme !== value.qat_scheme) {
+      onChange({ qat_scheme: normalizedScheme })
+    }
+  }, [
+    isQATTargetPrecision,
+    onChange,
+    value.qat_scheme,
+    value.quantization_bits,
+    value.use_qat,
   ])
 
   return (
@@ -1168,7 +1230,7 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <HelpLabel text="Active params (B)" tooltip={INPUT_PANEL_HELP.model.activeParams} />
+            <HelpLabel text="Active params / token (B)" tooltip={INPUT_PANEL_HELP.model.activeParams} />
             <input
               type="number"
               min={0}
@@ -1185,7 +1247,8 @@ export function InputPanel({
               placeholder={value.architecture === 'MoE' ? 'e.g. 32' : 'optional'}
             />
             <span className="field-hint">
-              Leave blank for dense models. For MoE, this should be the activated parameter count when known.
+              Leave blank unless the model card publishes activated params per token. This changes
+              compute/time only; total params still drive VRAM and model capacity.
             </span>
           </label>
 
@@ -1234,7 +1297,10 @@ export function InputPanel({
           </label>
 
           <label className="field">
-            <HelpLabel text="Quantization (bit)" tooltip={INPUT_PANEL_HELP.model.quantizationBits} />
+            <HelpLabel
+              text={value.use_qat ? 'Target weight precision' : 'Quantization (bit)'}
+              tooltip={INPUT_PANEL_HELP.model.quantizationBits}
+            />
             <select
               value={value.quantization_bits}
               onChange={(event) => {
@@ -1243,10 +1309,21 @@ export function InputPanel({
                 const nextProfile = validProfiles.includes(value.quantization_profile)
                   ? value.quantization_profile
                   : defaultQuantizationProfile(nextBits)
-                onChange({
+                const patch: Partial<EstimateRequest> = {
                   quantization_bits: nextBits,
                   quantization_profile: nextProfile,
-                })
+                }
+                if (value.use_qat) {
+                  if (!isQATTargetBits(nextBits)) {
+                    patch.use_qat = false
+                  } else {
+                    patch.qat_scheme =
+                      normalizeQATSchemeForBits(nextBits, value.qat_scheme) ??
+                      defaultQATSchemeForBits(nextBits) ??
+                      value.qat_scheme
+                  }
+                }
+                onChange(patch)
               }}
             >
               {QUANTIZATION_OPTIONS.map((option) => (
@@ -1255,6 +1332,13 @@ export function InputPanel({
                 </option>
               ))}
             </select>
+            <span className="field-hint">
+              {value.use_qat
+                ? 'QAT uses this as the export target precision. The scheme selector below is filtered to match it.'
+                : value.quantization_bits === 4
+                  ? '4-bit keeps a separate profile selector because NF4/FP4-style paths differ materially.'
+                  : '8/16/32-bit modes use a fixed planner profile, so there is no separate profile selector.'}
+            </span>
             {normalizationsByField.get('quantization_bits')?.map((event) => (
               <span key={`${event.rule_id}:${event.field}`} className="field-hint field-hint-warn">
                 Effective quantization: {formatUnknownValue(event.normalized_to)}. {event.reason}
@@ -1262,56 +1346,83 @@ export function InputPanel({
             ))}
           </label>
 
-          <label className="field">
-            <HelpLabel text="Quantization profile" tooltip={INPUT_PANEL_HELP.model.quantizationProfile} />
-            <select
-              value={value.quantization_profile}
-              onChange={(event) => {
-                patchField('quantization_profile', event.target.value as QuantizationProfile)
-              }}
-            >
-              {quantizationProfileOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <span className="field-hint">4-bit profiles model NF4/FP4-era differences; other bit-widths use fixed integer profiles.</span>
-            {normalizationsByField.get('quantization_profile')?.map((event) => (
-              <span key={`${event.rule_id}:${event.field}`} className="field-hint field-hint-warn">
-                Effective profile: {formatUnknownValue(event.normalized_to)}. {event.reason}
+          {showQuantizationProfile ? (
+            <label className="field">
+              <HelpLabel text="Quantization profile" tooltip={INPUT_PANEL_HELP.model.quantizationProfile} />
+              <select
+                value={value.quantization_profile}
+                onChange={(event) => {
+                  patchField('quantization_profile', event.target.value as QuantizationProfile)
+                }}
+              >
+                {quantizationProfileOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <span className="field-hint">
+                4-bit profiles model NF4/FP4-era differences. QAT schemes and higher precisions do
+                not use a separate profile selector here.
               </span>
-            ))}
-          </label>
+              {normalizationsByField.get('quantization_profile')?.map((event) => (
+                <span key={`${event.rule_id}:${event.field}`} className="field-hint field-hint-warn">
+                  Effective profile: {formatUnknownValue(event.normalized_to)}. {event.reason}
+                </span>
+              ))}
+            </label>
+          ) : null}
 
           <label className="field">
             <HelpLabel text="Use QAT" tooltip={INPUT_PANEL_HELP.model.useQat} />
             <input
               type="checkbox"
               checked={value.use_qat}
+              disabled={!isQATTargetPrecision}
               onChange={(event) => {
-                patchField('use_qat', event.target.checked)
+                const nextUseQat = event.target.checked
+                const patch: Partial<EstimateRequest> = {
+                  use_qat: nextUseQat,
+                }
+                if (nextUseQat) {
+                  patch.qat_scheme =
+                    normalizeQATSchemeForBits(value.quantization_bits, value.qat_scheme) ??
+                    defaultQATSchemeForBits(value.quantization_bits) ??
+                    value.qat_scheme
+                }
+                onChange(patch)
               }}
             />
-            <span className="field-hint">Optional. Most useful when targeting 4-bit deployments.</span>
+            <span className="field-hint">
+              {isQATTargetPrecision
+                ? 'Optional. Current source-backed planner paths cover 4-bit INT4 and 8-bit FP8-style export targets.'
+                : 'QAT is disabled here for 16/32-bit targets because the current modeled workflows are 4-bit or 8-bit export paths.'}
+            </span>
           </label>
 
-          <label className="field">
-            <HelpLabel text="QAT scheme" tooltip={INPUT_PANEL_HELP.model.qatScheme} />
-            <select
-              value={value.qat_scheme}
-              disabled={!value.use_qat}
-              onChange={(event) => {
-                patchField('qat_scheme', event.target.value as EstimateRequest['qat_scheme'])
-              }}
-            >
-              {QAT_SCHEME_OPTIONS.map((scheme) => (
-                <option key={scheme} value={scheme}>
-                  {formatQATSchemeLabel(scheme)}
-                </option>
-              ))}
-            </select>
-          </label>
+          {value.use_qat ? (
+            <label className="field">
+              <HelpLabel text="QAT scheme" tooltip={INPUT_PANEL_HELP.model.qatScheme} />
+              <select
+                value={value.qat_scheme}
+                disabled={!value.use_qat}
+                onChange={(event) => {
+                  patchField('qat_scheme', event.target.value as EstimateRequest['qat_scheme'])
+                }}
+              >
+                {qatSchemeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <span className="field-hint">
+                {value.quantization_bits === 8
+                  ? '8-bit QAT is modeled here as an FP8-style export path, so INT4-target schemes are hidden.'
+                  : 'INT4-target QAT schemes stay available for 4-bit exports only.'}
+              </span>
+            </label>
+          ) : null}
 
           <label className="field">
             <HelpLabel text="Framework" tooltip={INPUT_PANEL_HELP.model.framework} />

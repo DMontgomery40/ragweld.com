@@ -10,6 +10,7 @@ interface UseTrainingEstimateResult {
   loading: boolean
   error: string | null
   requestedAt: string | null
+  completedRequest: EstimateRequest | null
   refetch: () => void
 }
 
@@ -59,9 +60,11 @@ export function useTrainingEstimate(
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [requestedAt, setRequestedAt] = useState<string | null>(null)
+  const [completedRequest, setCompletedRequest] = useState<EstimateRequest | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
+    const requestSnapshot = request
     const timeoutId = window.setTimeout(async () => {
       setLoading(true)
       setError(null)
@@ -89,6 +92,7 @@ export function useTrainingEstimate(
 
         setData(payload as EstimateResponse)
         setRequestedAt(new Date().toISOString())
+        setCompletedRequest(requestSnapshot)
       } catch (caught) {
         if (caught instanceof DOMException && caught.name === 'AbortError') {
           return
@@ -118,6 +122,7 @@ export function useTrainingEstimate(
     loading,
     error,
     requestedAt,
+    completedRequest,
     refetch,
   }
 }

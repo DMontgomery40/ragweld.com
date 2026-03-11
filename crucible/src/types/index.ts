@@ -27,6 +27,7 @@ export type Framework =
   | 'LLaMA-Factory'
   | 'torchtune'
   | 'Custom'
+export type PricingSource = 'shadeform' | 'vastai' | 'runpod' | 'lambdalabs' | 'static'
 export type PricingTier = 'on_demand' | 'spot' | 'reserved_1mo' | 'reserved_3mo'
 export type GPUType =
   | 'H100'
@@ -148,7 +149,7 @@ export interface PriceAvailability {
 
 export interface ProviderPricing {
   provider: string
-  source: 'shadeform' | 'vastai' | 'runpod' | 'lambdalabs' | 'static'
+  source: PricingSource
   shade_instance_type?: string
   cloud_instance_type: string
   gpu: GPUType | string
@@ -159,9 +160,17 @@ export interface ProviderPricing {
   vcpus?: number
   interconnect?: string
   hourly_price_cents: number
+  hourly_price_source?: PricingSource
+  hourly_price_fetched_at?: string
   spot_price_cents?: number | null
+  spot_price_source?: PricingSource | null
+  spot_price_fetched_at?: string | null
   reserved_1mo_price_cents?: number | null
+  reserved_1mo_price_source?: PricingSource | null
+  reserved_1mo_price_fetched_at?: string | null
   reserved_3mo_price_cents?: number | null
+  reserved_3mo_price_source?: PricingSource | null
+  reserved_3mo_price_fetched_at?: string | null
   availability: PriceAvailability[]
   available: boolean
   fetched_at: string
@@ -283,12 +292,12 @@ export interface CostComparisonEntry {
   selected_pricing_tier: PricingTier | null
   provider_support_tier: SupportTier
   provider_support_reasons: SupportReason[]
-  price_source: ProviderPricing['source']
+  price_source: PricingSource
   price_fetched_at: string
   price_stale_after: string | null
   fallback_reason: string | null
   pricing_freshness: PricingFreshness
-  source: ProviderPricing['source']
+  source: PricingSource
 }
 
 export interface EstimateResponse {

@@ -1,0 +1,19 @@
+{
+  "minLines": 12,
+  "minTokens": 80,
+  "threshold": 6,
+  "reporters": ["console", "json"],
+  "output": "output/jscpd",
+  "gitignore": true,
+  "ignore": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/.astro/**",
+    "**/.netlify/**",
+    "**/coverage/**",
+    "**/output/**",
+    "**/docs/**",
+    "**/public/mockServiceWorker.js",
+    "**/*.md"
+  ]
+}

@@ -8,6 +8,7 @@ import { VRAMBreakdown } from './VRAMBreakdown'
 interface ResultsPanelProps {
   request: EstimateRequest
   estimate: EstimateResponse | null
+  estimateIsCurrent: boolean
   estimateLoading: boolean
   estimateError: string | null
   estimateRequestedAt: string | null
@@ -96,19 +97,10 @@ function modelSourceLabel(source: NonNullable<EstimateResponse['meta']['model_so
   }
 }
 
-function compareEntriesByCost(
-  left: EstimateResponse['cost_comparison'][number],
-  right: EstimateResponse['cost_comparison'][number],
-): number {
-  if (left.total_cost_dollars !== right.total_cost_dollars) {
-    return left.total_cost_dollars - right.total_cost_dollars
-  }
-  return left.estimated_hours - right.estimated_hours
-}
-
 export function ResultsPanel({
   request,
   estimate,
+  estimateIsCurrent,
   estimateLoading,
   estimateError,
   estimateRequestedAt,
@@ -130,7 +122,7 @@ export function ResultsPanel({
             : fitCandidates.length > 0
               ? fitCandidates
               : estimate.cost_comparison
-        return [...recommendedPool].sort(compareEntriesByCost)[0] ?? null
+        return recommendedPool[0] ?? null
       })()
     : null
   const plannerWarnings = estimate
@@ -239,7 +231,7 @@ export function ResultsPanel({
               <p className="summary-sub mono">
                 Repo {estimate.model_resolution.model.hf_repo_id} · total {estimate.model_resolution.model.params_billions}B
                 {typeof estimate.model_resolution.model.active_params_billions === 'number'
-                  ? ` · active ${estimate.model_resolution.model.active_params_billions}B`
+                  ? ` · active ${estimate.model_resolution.model.active_params_billions}B / token`
                   : ''}
               </p>
               <p className="summary-sub mono">
@@ -291,7 +283,13 @@ export function ResultsPanel({
           <CostComparison entries={estimate.cost_comparison} pricingTiers={request.pricing_tier} request={request} />
           <GPUAvailability pricing={pricing} comparisons={estimate.cost_comparison} />
           <MathExplainer estimate={estimate} />
-          <ShareExport request={request} estimate={estimate} queryString={queryString} pricing={pricing} />
+          <ShareExport
+            request={request}
+            estimate={estimate}
+            estimateIsCurrent={estimateIsCurrent}
+            queryString={queryString}
+            pricing={pricing}
+          />
         </>
       ) : (
         <div className="card empty-state">
@@ -301,7 +299,13 @@ export function ResultsPanel({
             300ms debounce and streams range-planner results here.
           </p>
           <GPUAvailability pricing={pricing} comparisons={[]} />
-          <ShareExport request={request} estimate={null} queryString={queryString} pricing={pricing} />
+          <ShareExport
+            request={request}
+            estimate={null}
+            estimateIsCurrent={false}
+            queryString={queryString}
+            pricing={pricing}
+          />
         </div>
       )}
     </section>

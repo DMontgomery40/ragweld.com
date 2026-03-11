@@ -4,6 +4,8 @@ vendor/demo/node_modules/
 
 # Build output
 dist/
+coverage/
+output/
 
 # Astro
 .astro/

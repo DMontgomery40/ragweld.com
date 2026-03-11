@@ -39,16 +39,17 @@ describe('computeEstimate', () => {
     expect(result.meta.framework_used).toBe('Unsloth')
     expect(result.meta.workflow_mode).toBe('custom_pipeline')
     expect(result.meta.support_tier).toBe('inferred')
-    expect(result.meta.source_ledger_version).toBe('2026-03-05')
+    expect(result.meta.source_ledger_version).toBe('2026-03-11')
     expect(result.support_tier).toBe('inferred')
     expect(result.pricing_freshness.source).toBe('shadeform')
   })
 
-  it('summarizes the cheapest viable row even when provider ranking sorts it later', () => {
+  it('summarizes the same ranked row shown first in cost comparison', () => {
     const params = makeEstimateRequest({
       target_gpu: ['H100'],
       num_gpus: 1,
       num_nodes: 1,
+      workflow_mode: 'guided',
     })
 
     const result = computeEstimate(
@@ -76,13 +77,9 @@ describe('computeEstimate', () => {
       }),
     )
 
-    const cheapestEntry = [...result.cost_comparison].sort(
-      (left, right) => left.total_cost_dollars - right.total_cost_dollars,
-    )[0]
-
     expect(result.cost_comparison[0].provider).toBe('runpod')
-    expect(cheapestEntry.provider).toBe('aws')
-    expect(result.cost_range_dollars.typical).toBeCloseTo(cheapestEntry.cost_range_dollars.typical, 5)
-    expect(result.hours_range.typical).toBeCloseTo(cheapestEntry.estimated_hours_range.typical, 5)
+    expect(result.support_tier).toBe('inferred')
+    expect(result.cost_range_dollars.typical).toBeCloseTo(result.cost_comparison[0].cost_range_dollars.typical, 5)
+    expect(result.hours_range.typical).toBeCloseTo(result.cost_comparison[0].estimated_hours_range.typical, 5)
   })
 })

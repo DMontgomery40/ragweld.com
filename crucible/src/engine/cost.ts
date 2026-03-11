@@ -128,6 +128,46 @@ function selectedTierHourlyRate(
   }
 }
 
+function selectedTierPriceSource(
+  entry: ProviderPricing,
+  selectedTier: PricingTier | null,
+): ProviderPricing['source'] {
+  switch (selectedTier) {
+    case 'spot':
+      return entry.spot_price_source ?? entry.source
+    case 'reserved_1mo':
+      return entry.reserved_1mo_price_source ?? entry.source
+    case 'reserved_3mo':
+      return entry.reserved_3mo_price_source ?? entry.source
+    case 'on_demand':
+    case null:
+    default:
+      return entry.hourly_price_source ?? entry.source
+  }
+}
+
+function selectedTierFetchedAt(
+  entry: ProviderPricing,
+  selectedTier: PricingTier | null,
+): string {
+  switch (selectedTier) {
+    case 'spot':
+      return entry.spot_price_fetched_at ?? entry.fetched_at
+    case 'reserved_1mo':
+      return entry.reserved_1mo_price_fetched_at ?? entry.fetched_at
+    case 'reserved_3mo':
+      return entry.reserved_3mo_price_fetched_at ?? entry.fetched_at
+    case 'on_demand':
+    case null:
+    default:
+      return entry.hourly_price_fetched_at ?? entry.fetched_at
+  }
+}
+
+function providerTotalGPUCount(entry: Pick<ProviderPricing, 'num_gpus'>, nodeCount: number): number {
+  return Math.max(1, asNonNegative(entry.num_gpus, 1)) * Math.max(1, asNonNegative(nodeCount, 1))
+}
+
 function deriveEntryHours(
   params: EstimateRequest,
   training: TrainingEstimate,
@@ -137,8 +177,7 @@ function deriveEntryHours(
   // We normalize wall clock estimates by GPU-count ratio so rows remain comparable.
   const requestedGPUCount = Math.max(1, asNonNegative(params.num_gpus, 1))
   const nodeCount = Math.max(1, asNonNegative(params.num_nodes, 1))
-  const providerGPUCount = Math.max(1, asNonNegative(pricingEntry.num_gpus, 1))
-  const providerTotalGPUCount = providerGPUCount * nodeCount
+  const providerTotal = providerTotalGPUCount(pricingEntry, nodeCount)
   const normalizedGPU = resolveGPUType(String(pricingEntry.gpu))
   const trainingHoursFromTargetMap =
     (normalizedGPU && training.estimated_hours_by_gpu[normalizedGPU]) ||
@@ -149,7 +188,7 @@ function deriveEntryHours(
   if (trainingHoursFromTargetMap !== undefined) {
     return (
       trainingHoursFromTargetMap *
-      (requestedGPUCount / providerTotalGPUCount) *
+      (requestedGPUCount / providerTotal) *
       interconnectMultiplier *
       hostFeedMultiplier
     )
@@ -159,7 +198,7 @@ function deriveEntryHours(
     params,
     training.total_flops,
     String(pricingEntry.gpu),
-    providerTotalGPUCount,
+    providerTotal,
   )
   if (derivedHours === null) {
     return Number.POSITIVE_INFINITY
@@ -174,15 +213,14 @@ function deriveEntryHoursRange(
 ): Range3 {
   const requestedGPUCount = Math.max(1, asNonNegative(params.num_gpus, 1))
   const nodeCount = Math.max(1, asNonNegative(params.num_nodes, 1))
-  const providerGPUCount = Math.max(1, asNonNegative(pricingEntry.num_gpus, 1))
-  const providerTotalGPUCount = providerGPUCount * nodeCount
+  const providerTotal = providerTotalGPUCount(pricingEntry, nodeCount)
   const normalizedGPU = resolveGPUType(String(pricingEntry.gpu))
   const trainingHoursRangeFromTargetMap =
     (normalizedGPU && training.estimated_hours_by_gpu_range[normalizedGPU]) ||
     training.estimated_hours_by_gpu_range[String(pricingEntry.gpu)]
   const interconnectMultiplier = deriveInterconnectMultiplier(pricingEntry.interconnect)
   const hostFeedMultiplier = deriveHostFeedMultiplier(pricingEntry)
-  const scale = (requestedGPUCount / providerTotalGPUCount) * interconnectMultiplier * hostFeedMultiplier
+  const scale = (requestedGPUCount / providerTotal) * interconnectMultiplier * hostFeedMultiplier
 
   if (trainingHoursRangeFromTargetMap) {
     return {
@@ -321,23 +359,24 @@ function addDurationIso(value: string | null | undefined, durationMs: number): s
 }
 
 function deriveRowPricingFreshness(
-  pricingEntry: ProviderPricing,
+  priceSource: ProviderPricing['source'],
+  priceFetchedAt: string,
   feedFreshness: PricingFreshness,
 ): PricingFreshness {
   const now = Date.now()
   const staleAfter =
-    pricingEntry.source === 'static'
-      ? addDurationIso(pricingEntry.fetched_at, STATIC_ROW_STALE_AFTER_MS)
-      : addDurationIso(pricingEntry.fetched_at, LIVE_ROW_STALE_AFTER_MS)
+    priceSource === 'static'
+      ? addDurationIso(priceFetchedAt, STATIC_ROW_STALE_AFTER_MS)
+      : addDurationIso(priceFetchedAt, LIVE_ROW_STALE_AFTER_MS)
   const staleAt = toTimestamp(staleAfter)
-  const fetchedAt = toTimestamp(pricingEntry.fetched_at)
+  const fetchedAt = toTimestamp(priceFetchedAt)
 
   return {
-    source: pricingEntry.source,
-    fetched_at: pricingEntry.fetched_at,
+    source: priceSource,
+    fetched_at: priceFetchedAt,
     stale_after: staleAfter ?? feedFreshness.stale_after,
     is_stale: staleAt === null ? feedFreshness.is_stale : now > staleAt,
-    fallback_reason: pricingEntry.source === 'static' ? feedFreshness.fallback_reason : null,
+    fallback_reason: priceSource === 'static' ? feedFreshness.fallback_reason : null,
     cached: feedFreshness.cached,
     cache_ttl_ms: feedFreshness.cache_ttl_ms,
     snapshot_updated_at: feedFreshness.snapshot_updated_at,
@@ -347,11 +386,11 @@ function deriveRowPricingFreshness(
 }
 
 function derivePriceRange(
-  pricingEntry: ProviderPricing,
+  priceSource: ProviderPricing['source'],
+  hourlyCents: number | null,
   selectedTier: PricingTier | null,
   rowFreshness: PricingFreshness,
 ): Range3 {
-  const hourlyCents = selectedTierHourlyRate(pricingEntry, selectedTier)
   if (hourlyCents === null || !Number.isFinite(hourlyCents)) {
     return rangeFromTriplet(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY)
   }
@@ -359,7 +398,7 @@ function derivePriceRange(
   let optimisticSpread = 0
   let conservativeSpread = 0
 
-  if (pricingEntry.source === 'static') {
+  if (priceSource === 'static') {
     optimisticSpread += 0.08
     conservativeSpread += 0.14
   }
@@ -369,7 +408,7 @@ function derivePriceRange(
     conservativeSpread += 0.05
   }
 
-  if (pricingEntry.source === 'static' && rowFreshness.fallback_reason) {
+  if (priceSource === 'static' && rowFreshness.fallback_reason) {
     conservativeSpread += 0.06
   }
 
@@ -507,6 +546,7 @@ export function estimateCostComparison(
   const entries: CostComparisonEntry[] = filteredPricing.map((pricingEntry) => {
     const estimatedHours = deriveEntryHours(params, training, pricingEntry)
     const estimatedHoursRange = deriveEntryHoursRange(params, training, pricingEntry)
+    const providerTotalGPUs = providerTotalGPUCount(pricingEntry, nodes)
     const tierCosts: TierCostMap = {
       on_demand: costFromHourlyRate(pricingEntry.hourly_price_cents, estimatedHours, runs, nodes),
       spot: costFromHourlyRate(pricingEntry.spot_price_cents, estimatedHours, runs, nodes),
@@ -527,13 +567,24 @@ export function estimateCostComparison(
       )
     }
 
-    const vramTotal = asNonNegative(pricingEntry.vram_per_gpu_in_gb) * Math.max(1, pricingEntry.num_gpus)
     const regionSummary = summarizeRegionMatch(pricingEntry, selectedRegions)
     const selectedCostOrFallback = selectedTierCost.cost ?? tierCosts.on_demand
     const providerSupport = assessProviderSupport(params, pricingEntry)
     const fitStatus = fitStatusForRow(pricingEntry, requiredVRAMRange, minRequiredVRAM)
-    const rowPricingFreshness = deriveRowPricingFreshness(pricingEntry, pricingFreshness)
-    const priceRange = derivePriceRange(pricingEntry, selectedTierCost.tier, rowPricingFreshness)
+    const selectedPriceSource = selectedTierPriceSource(pricingEntry, selectedTierCost.tier)
+    const selectedPriceFetchedAt = selectedTierFetchedAt(pricingEntry, selectedTierCost.tier)
+    const rowPricingFreshness = deriveRowPricingFreshness(
+      selectedPriceSource,
+      selectedPriceFetchedAt,
+      pricingFreshness,
+    )
+    const selectedHourlyRate = selectedTierHourlyRate(pricingEntry, selectedTierCost.tier)
+    const priceRange = derivePriceRange(
+      selectedPriceSource,
+      selectedHourlyRate,
+      selectedTierCost.tier,
+      rowPricingFreshness,
+    )
     const costRangeDollars = {
       optimistic:
         estimatedHoursRange.optimistic * priceRange.optimistic * runs * Math.max(1, nodes),
@@ -547,8 +598,8 @@ export function estimateCostComparison(
       provider: pricingEntry.provider,
       gpu: String(pricingEntry.gpu),
       cloud_instance_type: pricingEntry.cloud_instance_type,
-      num_gpus: Math.max(1, pricingEntry.num_gpus),
-      vram_total_gb: vramTotal,
+      num_gpus: providerTotalGPUs,
+      vram_total_gb: asNonNegative(pricingEntry.vram_per_gpu_in_gb) * providerTotalGPUs,
       hourly_price_cents: pricingEntry.hourly_price_cents,
       spot_price_cents: pricingEntry.spot_price_cents ?? null,
       reserved_1mo_price_cents: pricingEntry.reserved_1mo_price_cents ?? null,
@@ -566,8 +617,8 @@ export function estimateCostComparison(
       selected_pricing_tier: selectedTierCost.tier,
       provider_support_tier: providerSupport.tier,
       provider_support_reasons: providerSupport.reasons,
-      price_source: pricingEntry.source,
-      price_fetched_at: pricingEntry.fetched_at,
+      price_source: selectedPriceSource,
+      price_fetched_at: selectedPriceFetchedAt,
       price_stale_after: rowPricingFreshness.stale_after,
       fallback_reason: rowPricingFreshness.fallback_reason,
       pricing_freshness: rowPricingFreshness,

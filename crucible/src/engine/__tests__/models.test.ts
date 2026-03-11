@@ -42,4 +42,24 @@ describe('model config resolution', () => {
     expect(k.out_dim).toBe(512)
     expect(v.out_dim).toBe(512)
   })
+
+  it('falls back to default module shapes when an override is malformed at runtime', () => {
+    const request = {
+      ...makeEstimateRequest({
+        model_name: 'qwen2.5-7b-instruct',
+        model_params_billions: 7.6,
+      }),
+      model_module_shapes: {
+        q: {
+          in_dim: 'oops',
+          out_dim: 4096,
+        },
+      },
+    } as unknown as ReturnType<typeof makeEstimateRequest>
+
+    const model = getModelConfigFromRequest(request)
+    const q = resolveModuleShape(model, 'q')
+
+    expect(q.out_dim).toBe(3584)
+  })
 })

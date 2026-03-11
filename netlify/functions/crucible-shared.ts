@@ -189,6 +189,17 @@ function hasPositivePrice(value: number | null | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
 
+function priceSourceOrNull(
+  value: number | null | undefined,
+  source: ProviderPricing['source'],
+): ProviderPricing['source'] | null {
+  return hasPositivePrice(value) ? source : null
+}
+
+function priceFetchedAtOrNull(value: number | null | undefined, fetchedAt: string): string | null {
+  return hasPositivePrice(value) ? fetchedAt : null
+}
+
 function normalizeGpuKey(value: unknown): string {
   const raw = toStringValue(value)
   if (!raw) {
@@ -254,7 +265,7 @@ function selectClosestByHourlyPrice(
   return closest
 }
 
-function enrichShadeformPricingWithStatic(
+export function enrichShadeformPricingWithStatic(
   shadeformRows: ProviderPricing[],
   staticRows: ProviderPricing[],
 ): {
@@ -318,6 +329,8 @@ function enrichShadeformPricingWithStatic(
       nextRow = { ...shadeformRow }
       if (!hasPositivePrice(nextRow.spot_price_cents) && hasPositivePrice(staticMatch.spot_price_cents)) {
         nextRow.spot_price_cents = staticMatch.spot_price_cents
+        nextRow.spot_price_source = staticMatch.spot_price_source ?? staticMatch.source
+        nextRow.spot_price_fetched_at = staticMatch.spot_price_fetched_at ?? staticMatch.fetched_at
         changed = true
       }
       if (
@@ -325,6 +338,10 @@ function enrichShadeformPricingWithStatic(
         hasPositivePrice(staticMatch.reserved_1mo_price_cents)
       ) {
         nextRow.reserved_1mo_price_cents = staticMatch.reserved_1mo_price_cents
+        nextRow.reserved_1mo_price_source =
+          staticMatch.reserved_1mo_price_source ?? staticMatch.source
+        nextRow.reserved_1mo_price_fetched_at =
+          staticMatch.reserved_1mo_price_fetched_at ?? staticMatch.fetched_at
         changed = true
       }
       if (
@@ -332,6 +349,10 @@ function enrichShadeformPricingWithStatic(
         hasPositivePrice(staticMatch.reserved_3mo_price_cents)
       ) {
         nextRow.reserved_3mo_price_cents = staticMatch.reserved_3mo_price_cents
+        nextRow.reserved_3mo_price_source =
+          staticMatch.reserved_3mo_price_source ?? staticMatch.source
+        nextRow.reserved_3mo_price_fetched_at =
+          staticMatch.reserved_3mo_price_fetched_at ?? staticMatch.fetched_at
         changed = true
       }
     }
@@ -607,6 +628,10 @@ function normalizeShadeformPricing(raw: unknown): ProviderPricing[] {
       toBooleanValue(config.available) ??
       false
     const hourlyPriceCents = maybeCents(row.hourly_price ?? row.hourly_price_cents ?? row.price)
+    const rowFetchedAt = toStringValue(row.fetched_at) ?? fetchedAt
+    const spotPriceCents = maybeCents(row.spot_price ?? row.spot_hourly_price ?? row.spot_price_cents)
+    const reserved1moPriceCents = maybeCents(row.reserved_1mo_price ?? row.reserved_1mo_price_cents)
+    const reserved3moPriceCents = maybeCents(row.reserved_3mo_price ?? row.reserved_3mo_price_cents)
 
     if (hourlyPriceCents === null) {
       continue
@@ -626,12 +651,20 @@ function normalizeShadeformPricing(raw: unknown): ProviderPricing[] {
       vcpus: toNumberValue(config.vcpus ?? row.vcpus) ?? undefined,
       interconnect: toStringValue(config.interconnect ?? row.interconnect) ?? undefined,
       hourly_price_cents: hourlyPriceCents,
-      spot_price_cents: maybeCents(row.spot_price ?? row.spot_hourly_price ?? row.spot_price_cents),
-      reserved_1mo_price_cents: maybeCents(row.reserved_1mo_price ?? row.reserved_1mo_price_cents),
-      reserved_3mo_price_cents: maybeCents(row.reserved_3mo_price ?? row.reserved_3mo_price_cents),
+      hourly_price_source: 'shadeform',
+      hourly_price_fetched_at: rowFetchedAt,
+      spot_price_cents: spotPriceCents,
+      spot_price_source: priceSourceOrNull(spotPriceCents, 'shadeform'),
+      spot_price_fetched_at: priceFetchedAtOrNull(spotPriceCents, rowFetchedAt),
+      reserved_1mo_price_cents: reserved1moPriceCents,
+      reserved_1mo_price_source: priceSourceOrNull(reserved1moPriceCents, 'shadeform'),
+      reserved_1mo_price_fetched_at: priceFetchedAtOrNull(reserved1moPriceCents, rowFetchedAt),
+      reserved_3mo_price_cents: reserved3moPriceCents,
+      reserved_3mo_price_source: priceSourceOrNull(reserved3moPriceCents, 'shadeform'),
+      reserved_3mo_price_fetched_at: priceFetchedAtOrNull(reserved3moPriceCents, rowFetchedAt),
       availability: availability.length > 0 ? availability : [{ region: 'any', available }],
       available,
-      fetched_at: toStringValue(row.fetched_at) ?? fetchedAt,
+      fetched_at: rowFetchedAt,
     }
 
     pricing.push(normalized)
@@ -750,6 +783,23 @@ function normalizeStaticArrayEntry(entry: unknown, fetchedAt: string): ProviderP
     dollarsToCents(entry.on_demand_hourly) ??
     dollarsToCents(entry.hourly_price) ??
     maybeCents(entry.price_cents)
+  const rowFetchedAt = toStringValue(entry.fetched_at) ?? fetchedAt
+  const spotPriceCents =
+    maybeCents(entry.spot_price_cents) ??
+    dollarsToCents(entry.spot_estimate_usd_per_hour) ??
+    dollarsToCents(entry.spot_hourly_estimate) ??
+    dollarsToCents(entry.spot_hourly) ??
+    null
+  const reserved1moPriceCents =
+    maybeCents(entry.reserved_1mo_price_cents) ??
+    dollarsToCents(entry.reserved_1mo_usd_per_hour) ??
+    dollarsToCents(entry.reserved_1mo_hourly) ??
+    null
+  const reserved3moPriceCents =
+    maybeCents(entry.reserved_3mo_price_cents) ??
+    dollarsToCents(entry.reserved_3mo_usd_per_hour) ??
+    dollarsToCents(entry.reserved_3mo_hourly) ??
+    null
 
   if (hourlyPriceCents === null) {
     return null
@@ -776,25 +826,20 @@ function normalizeStaticArrayEntry(entry: unknown, fetchedAt: string): ProviderP
     vcpus: toNumberValue(entry.vcpus) ?? undefined,
     interconnect: toStringValue(entry.interconnect) ?? undefined,
     hourly_price_cents: hourlyPriceCents,
-    spot_price_cents:
-      maybeCents(entry.spot_price_cents) ??
-      dollarsToCents(entry.spot_estimate_usd_per_hour) ??
-      dollarsToCents(entry.spot_hourly_estimate) ??
-      dollarsToCents(entry.spot_hourly) ??
-      null,
-    reserved_1mo_price_cents:
-      maybeCents(entry.reserved_1mo_price_cents) ??
-      dollarsToCents(entry.reserved_1mo_usd_per_hour) ??
-      dollarsToCents(entry.reserved_1mo_hourly) ??
-      null,
-    reserved_3mo_price_cents:
-      maybeCents(entry.reserved_3mo_price_cents) ??
-      dollarsToCents(entry.reserved_3mo_usd_per_hour) ??
-      dollarsToCents(entry.reserved_3mo_hourly) ??
-      null,
+    hourly_price_source: 'static',
+    hourly_price_fetched_at: rowFetchedAt,
+    spot_price_cents: spotPriceCents,
+    spot_price_source: priceSourceOrNull(spotPriceCents, 'static'),
+    spot_price_fetched_at: priceFetchedAtOrNull(spotPriceCents, rowFetchedAt),
+    reserved_1mo_price_cents: reserved1moPriceCents,
+    reserved_1mo_price_source: priceSourceOrNull(reserved1moPriceCents, 'static'),
+    reserved_1mo_price_fetched_at: priceFetchedAtOrNull(reserved1moPriceCents, rowFetchedAt),
+    reserved_3mo_price_cents: reserved3moPriceCents,
+    reserved_3mo_price_source: priceSourceOrNull(reserved3moPriceCents, 'static'),
+    reserved_3mo_price_fetched_at: priceFetchedAtOrNull(reserved3moPriceCents, rowFetchedAt),
     availability: availability.length > 0 ? availability : [{ region: 'any', available }],
     available,
-    fetched_at: toStringValue(entry.fetched_at) ?? fetchedAt,
+    fetched_at: rowFetchedAt,
   }
 }
 
@@ -821,6 +866,22 @@ function normalizeStaticProviderEntry(
     dollarsToCents(details.on_demand_hourly) ??
     dollarsToCents(details.hourly_price) ??
     dollarsToCents(details.price_per_hour)
+  const spotPriceCents =
+    maybeCents(details.spot_price_cents) ??
+    dollarsToCents(details.spot_estimate_usd_per_hour) ??
+    dollarsToCents(details.spot_hourly_estimate) ??
+    dollarsToCents(details.spot_hourly) ??
+    null
+  const reserved1moPriceCents =
+    maybeCents(details.reserved_1mo_price_cents) ??
+    dollarsToCents(details.reserved_1mo_usd_per_hour) ??
+    dollarsToCents(details.reserved_1mo_hourly) ??
+    null
+  const reserved3moPriceCents =
+    maybeCents(details.reserved_3mo_price_cents) ??
+    dollarsToCents(details.reserved_3mo_usd_per_hour) ??
+    dollarsToCents(details.reserved_3mo_hourly) ??
+    null
 
   if (hourlyPriceCents === null) {
     return null
@@ -842,22 +903,17 @@ function normalizeStaticProviderEntry(
     vcpus: toNumberValue(details.vcpus) ?? undefined,
     interconnect: toStringValue(details.interconnect) ?? undefined,
     hourly_price_cents: hourlyPriceCents,
-    spot_price_cents:
-      maybeCents(details.spot_price_cents) ??
-      dollarsToCents(details.spot_estimate_usd_per_hour) ??
-      dollarsToCents(details.spot_hourly_estimate) ??
-      dollarsToCents(details.spot_hourly) ??
-      null,
-    reserved_1mo_price_cents:
-      maybeCents(details.reserved_1mo_price_cents) ??
-      dollarsToCents(details.reserved_1mo_usd_per_hour) ??
-      dollarsToCents(details.reserved_1mo_hourly) ??
-      null,
-    reserved_3mo_price_cents:
-      maybeCents(details.reserved_3mo_price_cents) ??
-      dollarsToCents(details.reserved_3mo_usd_per_hour) ??
-      dollarsToCents(details.reserved_3mo_hourly) ??
-      null,
+    hourly_price_source: 'static',
+    hourly_price_fetched_at: fetchedAt,
+    spot_price_cents: spotPriceCents,
+    spot_price_source: priceSourceOrNull(spotPriceCents, 'static'),
+    spot_price_fetched_at: priceFetchedAtOrNull(spotPriceCents, fetchedAt),
+    reserved_1mo_price_cents: reserved1moPriceCents,
+    reserved_1mo_price_source: priceSourceOrNull(reserved1moPriceCents, 'static'),
+    reserved_1mo_price_fetched_at: priceFetchedAtOrNull(reserved1moPriceCents, fetchedAt),
+    reserved_3mo_price_cents: reserved3moPriceCents,
+    reserved_3mo_price_source: priceSourceOrNull(reserved3moPriceCents, 'static'),
+    reserved_3mo_price_fetched_at: priceFetchedAtOrNull(reserved3moPriceCents, fetchedAt),
     availability: availability.length > 0 ? availability : [{ region: 'any', available }],
     available,
     fetched_at: fetchedAt,
