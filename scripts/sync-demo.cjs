@@ -71,6 +71,15 @@ function shouldSkipRel(relPath) {
   return false;
 }
 
+function shouldSkipOverlayRel(relPath) {
+  const rel = normalizeRel(relPath);
+  if (!rel) return false;
+
+  // Keep repo-local instructions in demo-overrides only; copying them into
+  // vendor/demo creates immediate parity drift against the source web app.
+  return rel === 'AGENTS.md' || rel.endsWith('/AGENTS.md');
+}
+
 function removeContentsExcept(dir, keep) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   for (const entry of fs.readdirSync(dir)) {
@@ -79,13 +88,16 @@ function removeContentsExcept(dir, keep) {
   }
 }
 
-function copyTreeFiltered(srcRoot, dstRoot) {
+function copyTreeFiltered(srcRoot, dstRoot, options = {}) {
+  const skipRel = typeof options.skipRel === 'function' ? options.skipRel : null;
+
   function walk(curSrc) {
     const entries = fs.readdirSync(curSrc, { withFileTypes: true });
     for (const entry of entries) {
       const srcAbs = path.join(curSrc, entry.name);
       const rel = normalizeRel(path.relative(srcRoot, srcAbs));
       if (shouldSkipRel(rel)) continue;
+      if (skipRel && skipRel(rel, srcAbs, entry)) continue;
 
       const dstAbs = path.join(dstRoot, rel);
       if (entry.isDirectory()) {
@@ -167,7 +179,7 @@ function main() {
   console.log(`Mirrored source: ${sourceDir} -> ${targetDir}`);
 
   if (fs.existsSync(overlaysDir)) {
-    copyTreeFiltered(overlaysDir, targetDir);
+    copyTreeFiltered(overlaysDir, targetDir, { skipRel: shouldSkipOverlayRel });
     console.log(`Applied overlays: ${overlaysDir} -> ${targetDir}`);
   } else {
     console.log(`No overlays found at ${overlaysDir} (continuing)`);
