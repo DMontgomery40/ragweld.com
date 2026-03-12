@@ -1093,14 +1093,11 @@ export function InputPanel({
         <div className="input-note-card">
           <h3>Effective Behavior</h3>
           {(estimate?.normalizations.length ?? 0) > 0 ? (
-            <ul className="warnings-list compact-list">
-              {estimate?.normalizations.map((event) => (
-                <li key={`${event.rule_id}:${event.field}`}>
-                  <strong>{event.field}</strong>: {formatUnknownValue(event.input)} to{' '}
-                  {formatUnknownValue(event.normalized_to)}. {event.reason}
-                </li>
-              ))}
-            </ul>
+            <p className="field-hint">
+              {estimate?.normalizations.length} automatic input adjustment
+              {(estimate?.normalizations.length ?? 0) === 1 ? '' : 's'} are active for this estimate.
+              See <strong>Results → Normalized Inputs</strong> for the compact summary and full detail.
+            </p>
           ) : null}
           {selectionAdjustmentMessages.length > 0 ? (
             <ul className="warnings-list compact-list">

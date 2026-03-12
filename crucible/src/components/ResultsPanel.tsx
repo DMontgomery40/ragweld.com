@@ -97,6 +97,126 @@ function modelSourceLabel(source: NonNullable<EstimateResponse['meta']['model_so
   }
 }
 
+const FIELD_LABELS: Record<string, string> = {
+  architecture: 'Architecture',
+  full_finetuning: 'Full finetuning',
+  method: 'Method',
+  model_hidden_size: 'hidden size',
+  model_hf_repo_id: 'Repo id',
+  model_intermediate_size: 'intermediate size',
+  model_max_position_embeddings: 'max position',
+  model_module_shapes: 'module shapes',
+  model_name: 'Model identity',
+  model_num_attention_heads: 'attention heads',
+  model_num_kv_heads: 'KV heads',
+  model_num_layers: 'layers',
+  model_vocab_size: 'vocab size',
+  quantization_bits: 'Quantization',
+  quantization_profile: 'Quantization profile',
+  qat_scheme: 'QAT scheme',
+  use_qat: 'QAT',
+}
+
+const STRUCTURAL_MODEL_FIELDS = [
+  'model_hidden_size',
+  'model_num_layers',
+  'model_num_attention_heads',
+  'model_num_kv_heads',
+  'model_intermediate_size',
+  'model_vocab_size',
+  'model_max_position_embeddings',
+  'model_module_shapes',
+] as const
+
+const IMPORTANT_NORMALIZATION_FIELDS = [
+  'method',
+  'quantization_bits',
+  'quantization_profile',
+  'use_qat',
+  'qat_scheme',
+  'architecture',
+  'full_finetuning',
+] as const
+
+function formatUnknownValue(value: unknown): string {
+  if (value == null) {
+    return 'none'
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
+  if (typeof value === 'string') {
+    return value.length > 0 ? value : 'empty'
+  }
+  return '[object]'
+}
+
+function fieldLabel(field: string): string {
+  return FIELD_LABELS[field] ?? field.replaceAll('_', ' ')
+}
+
+interface NormalizationSummaryItem {
+  id: string
+  label: string
+  body: string
+}
+
+function summarizeNormalizations(
+  events: EstimateResponse['normalizations'],
+): {
+  summary: NormalizationSummaryItem[]
+} {
+  const summary: NormalizationSummaryItem[] = []
+  const seen = new Set<string>()
+
+  const identityEvents = events.filter((event) => event.field === 'model_name' || event.field === 'model_hf_repo_id')
+  if (identityEvents.length > 0) {
+    const target =
+      identityEvents.find((event) => event.field === 'model_hf_repo_id')?.normalized_to ??
+      identityEvents[0]?.normalized_to
+    summary.push({
+      id: 'model_identity',
+      label: 'Model identity',
+      body: `Resolved to ${formatUnknownValue(target)}.`,
+    })
+    seen.add('model_name')
+    seen.add('model_hf_repo_id')
+  }
+
+  const structuralEvents = events.filter((event) =>
+    STRUCTURAL_MODEL_FIELDS.includes(event.field as (typeof STRUCTURAL_MODEL_FIELDS)[number]),
+  )
+  if (structuralEvents.length > 0) {
+    summary.push({
+      id: 'model_structure',
+      label: 'Structural model fields',
+      body: `Auto-resolved ${structuralEvents.length} fields from the model catalog: ${structuralEvents
+        .map((event) => fieldLabel(event.field))
+        .join(', ')}.`,
+    })
+    for (const event of structuralEvents) {
+      seen.add(event.field)
+    }
+  }
+
+  for (const field of IMPORTANT_NORMALIZATION_FIELDS) {
+    const event = events.find((candidate) => candidate.field === field)
+    if (!event || seen.has(field)) {
+      continue
+    }
+    summary.push({
+      id: field,
+      label: fieldLabel(field),
+      body: `${formatUnknownValue(event.input)} -> ${formatUnknownValue(event.normalized_to)}. ${event.reason}`,
+    })
+    seen.add(field)
+  }
+
+  return {
+    summary,
+  }
+}
+
 export function ResultsPanel({
   request,
   estimate,
@@ -128,6 +248,7 @@ export function ResultsPanel({
   const plannerWarnings = estimate
     ? Array.from(new Set([...estimate.warnings, ...estimate.training_estimate.warnings]))
     : []
+  const normalizationSummary = estimate ? summarizeNormalizations(estimate.normalizations) : null
 
   return (
     <section className="results-panel">
@@ -242,29 +363,59 @@ export function ResultsPanel({
                   : 'dense'}
               </p>
               {estimate.model_resolution.model.field_provenance && estimate.model_resolution.model.field_provenance.length > 0 ? (
-                <ul className="warnings-list compact-list">
-                  {estimate.model_resolution.model.field_provenance.slice(0, 8).map((entry) => (
-                    <li key={`${entry.field}:${entry.source}`}>
-                      <strong>{entry.field}</strong>: {entry.source.replaceAll('_', ' ')}
-                      {entry.source_ref ? ` (${entry.source_ref})` : ''}
-                    </li>
-                  ))}
-                </ul>
+                <details className="results-disclosure">
+                  <summary className="results-disclosure-summary">
+                    <span className="results-disclosure-title">Field provenance</span>
+                    <span className="results-disclosure-copy">
+                      {estimate.model_resolution.model.field_provenance.length} resolved field
+                      {estimate.model_resolution.model.field_provenance.length === 1 ? '' : 's'}
+                    </span>
+                  </summary>
+                  <ul className="warnings-list compact-list">
+                    {estimate.model_resolution.model.field_provenance.map((entry) => (
+                      <li key={`${entry.field}:${entry.source}`}>
+                        <strong>{entry.field}</strong>: {entry.source.replaceAll('_', ' ')}
+                        {entry.source_ref ? ` (${entry.source_ref})` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               ) : null}
             </div>
           ) : null}
 
           {estimate.normalizations.length > 0 ? (
             <div className="card warning-card">
-              <h3>Normalized Inputs</h3>
-              <ul className="warnings-list">
-                {estimate.normalizations.map((event) => (
-                  <li key={`${event.rule_id}:${event.field}`}>
-                    <strong>{event.field}</strong>: {String(event.input)} to {String(event.normalized_to)}.{' '}
-                    {event.reason}
-                  </li>
-                ))}
-              </ul>
+              <div className="section-head">
+                <h3>Normalized Inputs</h3>
+                <span className="section-meta">
+                  {estimate.normalizations.length} automatic adjustment
+                  {estimate.normalizations.length === 1 ? '' : 's'}
+                </span>
+              </div>
+              {normalizationSummary && normalizationSummary.summary.length > 0 ? (
+                <ul className="warnings-list compact-list">
+                  {normalizationSummary.summary.map((item) => (
+                    <li key={item.id}>
+                      <strong>{item.label}</strong>: {item.body}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <details className="results-disclosure">
+                <summary className="results-disclosure-summary">
+                  <span className="results-disclosure-title">Show full normalized field list</span>
+                  <span className="results-disclosure-copy">Opens the original field-by-field normalization log.</span>
+                </summary>
+                <ul className="warnings-list compact-list">
+                  {estimate.normalizations.map((event) => (
+                    <li key={`${event.rule_id}:${event.field}`}>
+                      <strong>{event.field}</strong>: {formatUnknownValue(event.input)} to{' '}
+                      {formatUnknownValue(event.normalized_to)}. {event.reason}
+                    </li>
+                  ))}
+                </ul>
+              </details>
             </div>
           ) : null}
 
