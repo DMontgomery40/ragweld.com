@@ -100,7 +100,10 @@ function modelSourceLabel(source: NonNullable<EstimateResponse['meta']['model_so
 const FIELD_LABELS: Record<string, string> = {
   architecture: 'Architecture',
   full_finetuning: 'Full finetuning',
+  grpo_num_generations: 'GRPO generations',
+  max_seq_length: 'Max seq length',
   method: 'Method',
+  model_active_params_billions: 'Active params / token',
   model_hidden_size: 'hidden size',
   model_hf_repo_id: 'Repo id',
   model_intermediate_size: 'intermediate size',
@@ -110,10 +113,12 @@ const FIELD_LABELS: Record<string, string> = {
   model_num_attention_heads: 'attention heads',
   model_num_kv_heads: 'KV heads',
   model_num_layers: 'layers',
+  num_epochs: 'Epochs',
   model_vocab_size: 'vocab size',
   quantization_bits: 'Quantization',
   quantization_profile: 'Quantization profile',
   qat_scheme: 'QAT scheme',
+  training_type: 'Training type',
   use_qat: 'QAT',
 }
 
@@ -148,17 +153,52 @@ function formatUnknownValue(value: unknown): string {
   if (typeof value === 'string') {
     return value.length > 0 ? value : 'empty'
   }
-  return '[object]'
+
+  try {
+    const serialized = JSON.stringify(value)
+    if (!serialized) {
+      return '[unserializable]'
+    }
+    return serialized.length > 160 ? `${serialized.slice(0, 157)}...` : serialized
+  } catch {
+    return '[unserializable]'
+  }
 }
 
 function fieldLabel(field: string): string {
   return FIELD_LABELS[field] ?? field.replaceAll('_', ' ')
 }
 
+function normalizationSourcePhrase(events: EstimateResponse['normalizations']): string {
+  const sourceIds = Array.from(new Set(events.flatMap((event) => event.source_ids)))
+
+  if (sourceIds.length === 0) {
+    return 'resolved model metadata'
+  }
+
+  if (sourceIds.every((sourceId) => sourceId === 'catalog')) {
+    return 'the model catalog'
+  }
+
+  if (sourceIds.every((sourceId) => sourceId === 'legacy-api-compat')) {
+    return 'legacy request aliases'
+  }
+
+  if (sourceIds.every((sourceId) => sourceId.startsWith('huggingface-'))) {
+    return 'Hugging Face metadata'
+  }
+
+  return 'resolved model metadata'
+}
+
 interface NormalizationSummaryItem {
   id: string
   label: string
   body: string
+}
+
+function formatNormalizationSummaryBody(event: EstimateResponse['normalizations'][number]): string {
+  return `${formatUnknownValue(event.input)} -> ${formatUnknownValue(event.normalized_to)}. ${event.reason}`
 }
 
 function summarizeNormalizations(
@@ -177,7 +217,7 @@ function summarizeNormalizations(
     summary.push({
       id: 'model_identity',
       label: 'Model identity',
-      body: `Resolved to ${formatUnknownValue(target)}.`,
+      body: `Resolved to ${formatUnknownValue(target)} from ${normalizationSourcePhrase(identityEvents)}.`,
     })
     seen.add('model_name')
     seen.add('model_hf_repo_id')
@@ -190,7 +230,7 @@ function summarizeNormalizations(
     summary.push({
       id: 'model_structure',
       label: 'Structural model fields',
-      body: `Auto-resolved ${structuralEvents.length} fields from the model catalog: ${structuralEvents
+      body: `Auto-resolved ${structuralEvents.length} fields from ${normalizationSourcePhrase(structuralEvents)}: ${structuralEvents
         .map((event) => fieldLabel(event.field))
         .join(', ')}.`,
     })
@@ -207,9 +247,43 @@ function summarizeNormalizations(
     summary.push({
       id: field,
       label: fieldLabel(field),
-      body: `${formatUnknownValue(event.input)} -> ${formatUnknownValue(event.normalized_to)}. ${event.reason}`,
+      body: formatNormalizationSummaryBody(event),
     })
     seen.add(field)
+  }
+
+  const remainingEvents = events.filter((event, index) => {
+    if (seen.has(event.field)) {
+      return false
+    }
+    return events.findIndex((candidate) => candidate.field === event.field) === index
+  })
+
+  if (remainingEvents.length > 0) {
+    const shouldPromoteIndividually = summary.length === 0 || remainingEvents.length <= 2
+
+    if (shouldPromoteIndividually) {
+      for (const event of remainingEvents.slice(0, 4)) {
+        summary.push({
+          id: event.field,
+          label: fieldLabel(event.field),
+          body: formatNormalizationSummaryBody(event),
+        })
+        seen.add(event.field)
+      }
+    }
+
+    const groupedEvents = remainingEvents.filter((event) => !seen.has(event.field))
+    if (groupedEvents.length > 0) {
+      const previewLabels = groupedEvents.map((event) => fieldLabel(event.field))
+      const preview = previewLabels.slice(0, 3).join(', ')
+      const remainder = previewLabels.length > 3 ? `, and ${previewLabels.length - 3} more` : ''
+      summary.push({
+        id: 'additional_adjustments',
+        label: 'Additional adjusted fields',
+        body: `${preview}${remainder}.`,
+      })
+    }
   }
 
   return {

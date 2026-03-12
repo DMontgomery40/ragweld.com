@@ -75,7 +75,7 @@ test('ann confounder evidence stays cautious and keeps the required model settin
     'expected ANN caution warning',
   );
   assert.deepEqual(DEMO_EVAL_ANALYSIS_MODEL, {
-    model: 'gpt-5.4',
+    model: 'gpt-5-mini',
     reasoningEffort: 'high',
     maxOutputTokens: 8192,
   });
