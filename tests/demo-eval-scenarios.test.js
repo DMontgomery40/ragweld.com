@@ -10,6 +10,8 @@ import {
   filterDatasetEntriesForEval,
   getSeededEvalDatasetEntries,
   getSeededEvalRuns,
+  hasDemoEvalSeedDrift,
+  isDemoEvalReadOnlyCorpus,
   validateComparableRuns,
 } from '../netlify/lib/demo-eval-scenarios.js';
 
@@ -31,6 +33,42 @@ test('default dataset selection stays pinned to the structured-doc scenario', ()
   const selected = filterDatasetEntriesForEval(entries, DEFAULT_DEMO_EVAL_DATASET_ID);
   assert.equal(selected.length, 10);
   assert.ok(selected.every((entry) => entry.tags.includes(`dataset:${DEFAULT_DEMO_EVAL_DATASET_ID}`)));
+});
+
+test('seeded eval dataset entries do not expose internal version tags', () => {
+  const entries = getSeededEvalDatasetEntries();
+  assert.ok(entries.length > 0);
+  assert.ok(
+    entries.every((entry) => entry.tags.every((tag) => !String(tag).startsWith('seed-version:'))),
+    'expected public tags to stay free of internal seed-version markers',
+  );
+});
+
+test('seed drift detection catches in-place dataset edits even when counts still match', () => {
+  const actualDatasetEntries = getSeededEvalDatasetEntries();
+  const actualRuns = getSeededEvalRuns();
+
+  assert.equal(
+    hasDemoEvalSeedDrift({ actualDatasetEntries, actualRuns }),
+    false,
+    'expected canonical seeded rows to be treated as current',
+  );
+
+  actualDatasetEntries[0] = {
+    ...actualDatasetEntries[0],
+    question: `${actualDatasetEntries[0].question} (edited)`,
+  };
+
+  assert.equal(
+    hasDemoEvalSeedDrift({ actualDatasetEntries, actualRuns }),
+    true,
+    'expected an edited seeded question to invalidate the cached seeded state',
+  );
+});
+
+test('demo eval corpus stays read-only while other corpora remain editable', () => {
+  assert.equal(isDemoEvalReadOnlyCorpus('epstein-files-1'), true);
+  assert.equal(isDemoEvalReadOnlyCorpus('custom-corpus'), false);
 });
 
 test('cross-scenario comparisons are rejected before analysis generation', () => {
