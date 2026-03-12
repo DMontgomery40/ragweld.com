@@ -2837,12 +2837,7 @@ export const handler = async (event) => {
     const userInput = buildEvalAnalysisUserInput({ currentRun, baselineRun, evidence });
     const modelOptions = DEMO_EVAL_ANALYSIS_MODEL;
     const promptHash = sha256Hex(systemPrompt);
-    const inputHash = sha256Hex(JSON.stringify({
-      payload,
-      currentRun,
-      baselineRun,
-      evidence,
-    }));
+    const inputHash = sha256Hex(JSON.stringify(evidence));
     const cacheKey = {
       currentRunId: String(currentRun.run_id || ''),
       baselineRunId: String(baselineRun.run_id || ''),

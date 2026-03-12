@@ -10,7 +10,7 @@ export const DEMO_EVAL_ANALYSIS_PROMPT = `Be rigorous:
 
 Format your response with clear sections using markdown headers.`;
 export const DEMO_EVAL_ANALYSIS_MODEL = Object.freeze({
-  model: 'gpt-5.4',
+  model: 'gpt-5-mini',
   reasoningEffort: 'high',
   maxOutputTokens: 8192,
 });
