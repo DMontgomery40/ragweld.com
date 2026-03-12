@@ -11,6 +11,9 @@ node_modules
 dist
 dist-ssr
 coverage
+.env
+.env.*
+.tmp_tooltip*
 *.local
 
 # Editor directories and files
