@@ -14,9 +14,9 @@ Crucible is the estimator workbench behind [ragweld.com/crucible](https://ragwel
 
 ## Public Mirror Note
 
-This repository is a public mirror of the `crucible/` subtree from a private monorepo.
+This repository is a public mirror of the `crucible/` subtree from the larger `ragweld.com` site repo.
 
-It includes the front-end app, estimator logic, data catalogs, and tests. The live production surface at `ragweld.com/crucible` also depends on Netlify Functions that live outside this subtree in the private deployment, so a fresh clone of this mirror is best treated as the public app source rather than a full reproduction of the hosted backend.
+It includes the front-end app, estimator logic, data catalogs, and tests. The live production surface at `ragweld.com/crucible` also depends on Netlify Functions that live outside this subtree in the larger Ragweld repo, so a fresh clone of this mirror is best treated as the public app source rather than a full reproduction of the hosted backend.
 
 ## Local Development
 
