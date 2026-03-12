@@ -85,9 +85,9 @@ export function useApplyButton() {
     const snapshot = JSON.stringify(configSnapshot);
     const dirty = snapshot !== baselineRef.current;
     setIsDirty(dirty);
-    if (dirty) {
-      setSaveError(null);
-    }
+    // Once the config changes, any previous save error is stale even if the form
+    // ends up back at the clean baseline state.
+    setSaveError(null);
   }, [configSnapshot]);
 
   // Ensure config is loaded on mount

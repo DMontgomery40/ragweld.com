@@ -1,6 +1,6 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
-test('demo apply footer clears stale save errors after the next config edit', async ({ page }) => {
+async function failFirstConfigSave(page: Page) {
   await page.addInitScript(() => {
     let failedOnce = false;
 
@@ -22,16 +22,22 @@ test('demo apply footer clears stale save errors after the next config edit', as
       return originalSend.apply(xhr, rest);
     };
   });
+}
 
+async function openDemoSettings(page: Page) {
   await page.goto('/demo/chat?subtab=settings&mock=1&corpus=epstein-files-1');
 
   await expect(page.locator('#tab-chat')).toBeVisible();
+  await expect(page.locator('#chat-prompt-system_prompt_base')).toBeVisible();
+}
+
+test('demo apply footer clears stale save errors after the next dirty config edit', async ({ page }) => {
+  await failFirstConfigSave(page);
+  await openDemoSettings(page);
 
   const promptField = page.locator('#chat-prompt-system_prompt_base');
   const saveButton = page.locator('#save-btn');
   const saveError = page.locator('.save-error-text');
-
-  await expect(promptField).toBeVisible();
 
   await promptField.fill('First edit to make the config dirty.');
   await expect(saveButton).toBeEnabled();
@@ -41,4 +47,24 @@ test('demo apply footer clears stale save errors after the next config edit', as
 
   await promptField.fill('Second edit should clear the stale footer error.');
   await expect(saveError).toHaveCount(0);
+});
+
+test('demo apply footer clears stale save errors after reverting back to the clean baseline', async ({ page }) => {
+  await failFirstConfigSave(page);
+  await openDemoSettings(page);
+
+  const promptField = page.locator('#chat-prompt-system_prompt_base');
+  const saveButton = page.locator('#save-btn');
+  const saveError = page.locator('.save-error-text');
+  const originalPrompt = await promptField.inputValue();
+
+  await promptField.fill('First edit to make the config dirty.');
+  await expect(saveButton).toBeEnabled();
+
+  await saveButton.click();
+  await expect(saveError).toContainText(/failed|500/i);
+
+  await promptField.fill(originalPrompt);
+  await expect(saveError).toHaveCount(0);
+  await expect(saveButton).toBeDisabled();
 });
