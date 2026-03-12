@@ -71,5 +71,5 @@ It is intentionally narrow: only rules that materially change normalization, sup
 
 1. Re-check every URL above.
 2. Update this file's `Last verified` date.
-3. Update `SOURCE_LEDGER_VERSION` in [compatibility.ts](/Users/davidmontgomery/ragweld.com/crucible/src/engine/compatibility.ts).
+3. Update `SOURCE_LEDGER_VERSION` in [compatibility.ts](../src/engine/compatibility.ts).
 4. Re-run `npm test` and confirm normalization events, support tiers, and warnings still match the documented rule set.

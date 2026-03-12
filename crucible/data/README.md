@@ -2,7 +2,7 @@
 
 This folder contains machine-consumable reference datasets used by Crucible's estimator and API fallback logic.
 
-For source-backed compatibility guardrails and refresh notes, see [docs/crucible-estimator-source-ledger.md](/Users/davidmontgomery/ragweld.com/crucible/docs/crucible-estimator-source-ledger.md).
+For source-backed compatibility guardrails and refresh notes, see [docs/crucible-estimator-source-ledger.md](../docs/crucible-estimator-source-ledger.md).
 
 ## Files
 
@@ -33,10 +33,8 @@ For source-backed compatibility guardrails and refresh notes, see [docs/crucible
   - Re-pull `config.json` from each mapped `unsloth_model_id` / `hf_repo_id`.
   - Recompute `module_shapes` from hidden size, head counts, head dim, and MLP dimensions.
   - Keep `params_billions` and MoE active/total expert fields aligned with model naming and release notes.
-  - Daily refresh automation:
-    - Workflow: `.github/workflows/refresh-crucible-models.yml`
-    - Script: `crucible/scripts/refresh-models-catalog.mjs`
-    - Seeds from this catalog plus `../ragweld/web/public/models.json` (or remote fallback) for Hugging Face repo ids.
+  - Refresh with `scripts/refresh-models-catalog.mjs --apply`.
+  - Seed Hugging Face repo ids from this catalog or another maintained model list before running the refresh script.
 
 - `static-pricing.json`
   - Refresh on-demand/spot/reserved values from instance pages.

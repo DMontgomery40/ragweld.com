@@ -1,73 +1,46 @@
-# React + TypeScript + Vite
+# Crucible
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+> Operator range planner for training cost, VRAM fit, and GPU availability.
 
-Currently, two official plugins are available:
+Crucible is the estimator workbench behind [ragweld.com/crucible](https://ragweld.com/crucible/). It combines model metadata, hardware reference data, provider pricing, and planning heuristics so you can compare likely training ranges before you commit a run.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## What This Mirror Contains
 
-## React Compiler
+- React + TypeScript + Vite application shell
+- estimator logic, normalization rules, and planner math in `src/engine/`
+- reference datasets in `data/`
+- unit tests for estimator logic, inputs, and sharing/export flows
+- the math code workbench route used to inspect the implementation behind the planner
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Public Mirror Note
 
-## Expanding the ESLint configuration
+This repository is a public mirror of the `crucible/` subtree from the larger `ragweld.com` site repo.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+It includes the front-end app, estimator logic, data catalogs, and tests. The live production surface at `ragweld.com/crucible` also depends on Netlify Functions that live outside this subtree in the larger Ragweld repo, so a fresh clone of this mirror is best treated as the public app source rather than a full reproduction of the hosted backend.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## Local Development
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Useful commands:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- `npm run build` builds the Vite app
+- `npm test` runs the Vitest suite
+- `npm run lint` runs ESLint
+- `npm run refresh:models` refreshes the model catalog with `--apply`
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## Project Layout
+
+- `src/` application UI, hooks, estimator logic, and tests
+- `data/` model catalogs, GPU specs, and pricing fallback data
+- `docs/` source ledgers and implementation notes
+- `scripts/` maintenance utilities
+- `netlify.toml` redirects for the hosted Crucible surface
+
+## Live Surface
+
+- Hosted estimator: [https://ragweld.com/crucible/](https://ragweld.com/crucible/)
+- Math code workbench: [https://ragweld.com/crucible/math-code](https://ragweld.com/crucible/math-code)

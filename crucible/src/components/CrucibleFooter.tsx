@@ -16,7 +16,7 @@ const LINK_GROUPS: FooterLinkGroup[] = [
       { label: 'ragweld main site', href: 'https://ragweld.com/', external: true },
       { label: 'workbench demo', href: 'https://ragweld.com/demo/', external: true },
       { label: 'crucible estimator', href: 'https://ragweld.com/crucible/', external: true },
-      { label: 'github org repo', href: 'https://github.com/DMontgomery40/ragweld', external: true },
+      { label: 'public source repo', href: 'https://github.com/DMontgomery40/ragweld-crucible', external: true },
     ],
   },
   {
@@ -40,7 +40,7 @@ const LINK_GROUPS: FooterLinkGroup[] = [
       { label: 'api health endpoint', href: '/crucible/api/v1/health' },
       { label: 'contact form', href: '#contact-form' },
       { label: 'bug report form', href: '#bug-report-form' },
-      { label: 'open issue on github', href: 'https://github.com/DMontgomery40/ragweld.com/issues/new', external: true },
+      { label: 'open issue on github', href: 'https://github.com/DMontgomery40/ragweld-crucible/issues/new', external: true },
     ],
   },
 ]

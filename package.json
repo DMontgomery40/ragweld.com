@@ -14,6 +14,7 @@
     "deps:crucible": "(npm --prefix crucible ci || npm --prefix crucible install)",
     "build:demo": "VITE_BUILD_BASE=/demo/ VITE_ROUTER_BASENAME=/demo VITE_DEMO_MSW_MODE=partial npm --prefix vendor/demo run build",
     "build:crucible": "npm --prefix crucible run build",
+    "sync:crucible-public": "node scripts/sync-crucible-public.cjs",
     "build": "npm run check:demo-parity:warn && npm run deps:demo && npm run deps:crucible && npm run build:demo && npm run build:crucible && astro build && node scripts/copy-demo.cjs && node scripts/copy-crucible.cjs",
     "test:e2e": "playwright test",
     "anti-slop:deps": "depcruise --config .dependency-cruiser.cjs src scripts netlify/functions crucible/src vendor/demo/src demo-overrides",

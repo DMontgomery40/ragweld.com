@@ -12,9 +12,9 @@ This file tracks the remaining work for Crucible's educational help system.
 
 ## Done
 
-- `InputPanel` help is centralized in [inputPanelHelp.ts](/Users/davidmontgomery/ragweld.com/crucible/src/help/inputPanelHelp.ts).
+- `InputPanel` help is centralized in [inputPanelHelp.ts](../src/help/inputPanelHelp.ts).
 - The form now references registry entries instead of inline tooltip strings.
-- The tooltip renderer in [InputPanel.tsx](/Users/davidmontgomery/ragweld.com/crucible/src/components/InputPanel.tsx) supports:
+- The tooltip renderer in [InputPanel.tsx](../src/components/InputPanel.tsx) supports:
   - short summaries
   - badges
   - structured sections
@@ -25,7 +25,7 @@ This file tracks the remaining work for Crucible's educational help system.
 
 Priority: highest
 
-Research and rewrite the centralized cards in [inputPanelHelp.ts](/Users/davidmontgomery/ragweld.com/crucible/src/help/inputPanelHelp.ts) by domain:
+Research and rewrite the centralized cards in [inputPanelHelp.ts](../src/help/inputPanelHelp.ts) by domain:
 
 1. Model and adapter concepts
 2. Quantization and QAT
@@ -40,10 +40,10 @@ Priority: high
 
 Components:
 
-- [ResultsPanel.tsx](/Users/davidmontgomery/ragweld.com/crucible/src/components/ResultsPanel.tsx)
-- [VRAMBreakdown.tsx](/Users/davidmontgomery/ragweld.com/crucible/src/components/VRAMBreakdown.tsx)
-- [CostComparison.tsx](/Users/davidmontgomery/ragweld.com/crucible/src/components/CostComparison.tsx)
-- [GPUAvailability.tsx](/Users/davidmontgomery/ragweld.com/crucible/src/components/GPUAvailability.tsx)
+- [ResultsPanel.tsx](../src/components/ResultsPanel.tsx)
+- [VRAMBreakdown.tsx](../src/components/VRAMBreakdown.tsx)
+- [CostComparison.tsx](../src/components/CostComparison.tsx)
+- [GPUAvailability.tsx](../src/components/GPUAvailability.tsx)
 
 Focus:
 
@@ -59,8 +59,8 @@ Priority: high
 
 Components:
 
-- [MathExplainer.tsx](/Users/davidmontgomery/ragweld.com/crucible/src/components/MathExplainer.tsx)
-- [MathCodeWorkbenchPage.tsx](/Users/davidmontgomery/ragweld.com/crucible/src/components/MathCodeWorkbenchPage.tsx)
+- [MathExplainer.tsx](../src/components/MathExplainer.tsx)
+- [MathCodeWorkbenchPage.tsx](../src/components/MathCodeWorkbenchPage.tsx)
 
 Focus:
 
@@ -75,7 +75,7 @@ Priority: medium
 
 Components:
 
-- [ShareExport.tsx](/Users/davidmontgomery/ragweld.com/crucible/src/components/ShareExport.tsx)
+- [ShareExport.tsx](../src/components/ShareExport.tsx)
 
 Focus:
 

@@ -193,7 +193,7 @@ export function MathCodeWorkbenchPage() {
             </a>
             <a
               className="ghost-link-button"
-              href="https://github.com/DMontgomery40/ragweld.com/tree/main/crucible"
+              href="https://github.com/DMontgomery40/ragweld-crucible"
               target="_blank"
               rel="noopener noreferrer"
             >
