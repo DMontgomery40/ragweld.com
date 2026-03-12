@@ -1106,7 +1106,7 @@ function buildSeededDatasetEntries() {
       question: entry.question,
       expected_paths: [...entry.expected_paths],
       expected_answer: entry.expected_answer,
-      tags: [...entry.tags, `seed-version:${DEMO_EVAL_SEED_VERSION}`],
+      tags: [...entry.tags],
       created_at: new Date(Date.UTC(2026, 2, 1 + scenarioIndex, 9, entryIndex, 0)).toISOString(),
     }))
   );
@@ -1155,6 +1155,92 @@ export function getSeededEvalRuns() {
 
 export function getSeededEvalRunMap() {
   return new Map(getSeededEvalRuns().map((run) => [run.run_id, run]));
+}
+
+export function isDemoEvalReadOnlyCorpus(corpusId) {
+  return String(corpusId || '').trim() === DEMO_EVAL_CORPUS_ID;
+}
+
+function normalizeStringList(values, { sort = false } = {}) {
+  const list = (Array.isArray(values) ? values : [])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  return sort ? [...list].sort((a, b) => a.localeCompare(b)) : list;
+}
+
+function normalizeIso(value) {
+  if (!value) return '';
+  const dt = new Date(value);
+  return Number.isNaN(dt.getTime()) ? '' : dt.toISOString();
+}
+
+function normalizeDatasetEntryForSeed(entry) {
+  return {
+    entry_id: String(entry?.entry_id || ''),
+    question: String(entry?.question || '').trim(),
+    expected_paths: normalizeStringList(entry?.expected_paths, { sort: true }),
+    expected_answer: entry?.expected_answer == null ? null : String(entry.expected_answer),
+    tags: normalizeStringList(entry?.tags, { sort: true }),
+    created_at: normalizeIso(entry?.created_at),
+  };
+}
+
+function stableStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    const obj = value;
+    const keys = Object.keys(obj).sort((a, b) => a.localeCompare(b));
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(obj[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function normalizeRunForSeed(run) {
+  return stableStringify(run ? JSON.parse(JSON.stringify(run)) : null);
+}
+
+function buildNormalizedSeedMap(items, getId, normalizeValue) {
+  const out = new Map();
+  for (const item of Array.isArray(items) ? items : []) {
+    const id = String(getId(item) || '').trim();
+    if (!id) continue;
+    out.set(id, stableStringify(normalizeValue(item)));
+  }
+  return out;
+}
+
+function normalizedSeedMapsMatch(expectedItems, actualItems, getId, normalizeValue) {
+  const expectedMap = buildNormalizedSeedMap(expectedItems, getId, normalizeValue);
+  const actualMap = buildNormalizedSeedMap(actualItems, getId, normalizeValue);
+  if (expectedMap.size !== actualMap.size) return false;
+  for (const [id, normalized] of expectedMap.entries()) {
+    if (actualMap.get(id) !== normalized) return false;
+  }
+  return true;
+}
+
+export function hasDemoEvalSeedDrift({
+  actualDatasetEntries,
+  actualRuns,
+  expectedDatasetEntries = getSeededEvalDatasetEntries(),
+  expectedRuns = getSeededEvalRuns(),
+}) {
+  const datasetMatches = normalizedSeedMapsMatch(
+    expectedDatasetEntries,
+    actualDatasetEntries,
+    (entry) => entry?.entry_id,
+    normalizeDatasetEntryForSeed,
+  );
+  if (!datasetMatches) return true;
+
+  return !normalizedSeedMapsMatch(
+    expectedRuns,
+    actualRuns,
+    (run) => run?.run_id,
+    normalizeRunForSeed,
+  );
 }
 
 function hasTag(tags, expectedTag) {
@@ -1496,28 +1582,30 @@ export async function seedDemoEvalScenarios(sql) {
 export async function ensureDemoEvalSeeded(sql) {
   const datasetEntries = getSeededEvalDatasetEntries();
   const seededRuns = getSeededEvalRuns();
-  const versionTag = `seed-version:${DEMO_EVAL_SEED_VERSION}`;
+  const datasetEntryIds = datasetEntries.map((entry) => String(entry.entry_id));
+  const runIds = seededRuns.map((run) => String(run.run_id));
 
-  const datasetCountRes = await sql.query(
-    `SELECT COUNT(*)::int AS n
+  const datasetRes = await sql.query(
+    `SELECT entry_id, question, expected_paths, expected_answer, tags, created_at
      FROM eval_dataset
      WHERE corpus_id = $1
-       AND tags @> $2::jsonb;`,
-    [DEMO_EVAL_CORPUS_ID, JSON.stringify([versionTag])],
+       AND entry_id = ANY($2::text[]);`,
+    [DEMO_EVAL_CORPUS_ID, datasetEntryIds],
   );
-  const runCountRes = await sql.query(
-    `SELECT COUNT(*)::int AS n
+  const runRes = await sql.query(
+    `SELECT run_json
      FROM eval_runs
      WHERE corpus_id = $1
-       AND COALESCE(run_json->>'demo_seed_kind', '') = 'scenario'
-       AND COALESCE(run_json->>'demo_seed_version', '') = $2;`,
-    [DEMO_EVAL_CORPUS_ID, DEMO_EVAL_SEED_VERSION],
+       AND run_id = ANY($2::text[]);`,
+    [DEMO_EVAL_CORPUS_ID, runIds],
   );
 
-  const datasetCount = Number(datasetCountRes.rows?.[0]?.n) || 0;
-  const runCount = Number(runCountRes.rows?.[0]?.n) || 0;
-
-  if (datasetCount === datasetEntries.length && runCount === seededRuns.length) {
+  if (!hasDemoEvalSeedDrift({
+    actualDatasetEntries: datasetRes.rows || [],
+    actualRuns: (runRes.rows || []).map((row) => row.run_json),
+    expectedDatasetEntries: datasetEntries,
+    expectedRuns: seededRuns,
+  })) {
     return;
   }
 

@@ -9,6 +9,7 @@ import {
   DEMO_EVAL_CORPUS_ID,
   ensureDemoEvalSeeded,
   filterDatasetEntriesForEval,
+  isDemoEvalReadOnlyCorpus,
   validateComparableRuns,
 } from '../lib/demo-eval-scenarios.js';
 
@@ -1327,6 +1328,9 @@ async function listEvalDataset(sql, corpusId) {
 }
 
 async function insertEvalDatasetEntry(sql, corpusId, payload) {
+  if (isDemoEvalReadOnlyCorpus(corpusId)) {
+    throw new Error('Demo eval dataset is read-only. Switch to another corpus to add, edit, or delete eval entries.');
+  }
   const entryId = String(payload?.entry_id || crypto.randomUUID());
   const question = String(payload?.question || '').trim();
   if (!question) throw new Error('Question is required');
@@ -1367,6 +1371,9 @@ async function insertEvalDatasetEntry(sql, corpusId, payload) {
 }
 
 async function updateEvalDatasetEntry(sql, corpusId, entryId, payload) {
+  if (isDemoEvalReadOnlyCorpus(corpusId)) {
+    throw new Error('Demo eval dataset is read-only. Switch to another corpus to add, edit, or delete eval entries.');
+  }
   const existing = await sql.query(
     `SELECT entry_id, created_at FROM eval_dataset WHERE corpus_id = $1 AND entry_id = $2;`,
     [corpusId, entryId]
@@ -1401,6 +1408,9 @@ async function updateEvalDatasetEntry(sql, corpusId, entryId, payload) {
 }
 
 async function deleteEvalDatasetEntry(sql, corpusId, entryId) {
+  if (isDemoEvalReadOnlyCorpus(corpusId)) {
+    throw new Error('Demo eval dataset is read-only. Switch to another corpus to add, edit, or delete eval entries.');
+  }
   const res = await sql.query(
     `DELETE FROM eval_dataset WHERE corpus_id = $1 AND entry_id = $2;`,
     [corpusId, entryId]
@@ -2694,9 +2704,13 @@ export const handler = async (event) => {
     }
 
     if (method === 'DELETE') {
-      const deleted = await deleteEvalDatasetEntry(sql, corpusId, entryId);
-      if (!deleted) return json(404, { detail: `entry_id=${entryId} not found` });
-      return json(200, { ok: true, deleted });
+      try {
+        const deleted = await deleteEvalDatasetEntry(sql, corpusId, entryId);
+        if (!deleted) return json(404, { detail: `entry_id=${entryId} not found` });
+        return json(200, { ok: true, deleted });
+      } catch (e) {
+        return json(400, { detail: String(e?.message || e) });
+      }
     }
   }
 
