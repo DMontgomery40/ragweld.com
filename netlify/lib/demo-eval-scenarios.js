@@ -211,6 +211,7 @@ function buildEvalRun({ scenario, stage, createdAt, completedAt, configSnapshot,
     scenario_id: scenario.scenarioId,
     demo_seed_kind: 'scenario',
     demo_seed_rank: demoSeedRank,
+    demo_seed_version: DEMO_EVAL_SEED_VERSION,
     config_snapshot: configSnapshot,
     config: flattenConfigSnapshot(configSnapshot),
     total: summary.total,
@@ -717,7 +718,7 @@ const SCENARIOS = [
       runId: 'epstein-files-1__20260308_074000',
       createdAt: '2026-03-08T07:37:00.000Z',
       completedAt: '2026-03-08T07:40:00.000Z',
-      demoSeedRank: 580,
+      demoSeedRank: 570,
       placements: [0, 1, 0, 1, 0, null, 1, 2, 0, 1],
       latencies: [141, 149, 144, 152, 158, 146, 143, 151, 139, 147],
       configSnapshot: {
@@ -745,7 +746,7 @@ const SCENARIOS = [
       runId: 'epstein-files-1__20260308_184500',
       createdAt: '2026-03-08T18:42:00.000Z',
       completedAt: '2026-03-08T18:45:00.000Z',
-      demoSeedRank: 570,
+      demoSeedRank: 580,
       placements: [null, null, 2, 2, null, 0, 1, null, 0, 1],
       latencies: [103, 107, 101, 109, 111, 97, 99, 108, 95, 102],
       configSnapshot: {
@@ -1026,7 +1027,7 @@ const SCENARIOS = [
       runId: 'epstein-files-1__20260306_083500',
       createdAt: '2026-03-06T08:32:00.000Z',
       completedAt: '2026-03-06T08:35:00.000Z',
-      demoSeedRank: 560,
+      demoSeedRank: 550,
       placements: [1, 2, 0, 1, 2, 0, null, null, 0, 1, 0, 2],
       latencies: [173, 181, 168, 176, 162, 170, 178, 184, 167, 179, 164, 172],
       configSnapshot: {
@@ -1056,7 +1057,7 @@ const SCENARIOS = [
       runId: 'epstein-files-1__20260307_064000',
       createdAt: '2026-03-07T06:37:00.000Z',
       completedAt: '2026-03-07T06:40:00.000Z',
-      demoSeedRank: 550,
+      demoSeedRank: 560,
       placements: [null, null, 1, null, 0, 0, 2, 2, 0, null, 0, 1],
       latencies: [119, 126, 111, 121, 104, 109, 115, 117, 102, 123, 106, 110],
       configSnapshot: {
@@ -1089,6 +1090,12 @@ const SCENARIOS = [
   },
 ];
 
+export const DEMO_EVAL_SEED_VERSION = crypto
+  .createHash('sha256')
+  .update(JSON.stringify(SCENARIOS))
+  .digest('hex')
+  .slice(0, 12);
+
 let seededDatasetCache = null;
 let seededRunsCache = null;
 
@@ -1099,7 +1106,7 @@ function buildSeededDatasetEntries() {
       question: entry.question,
       expected_paths: [...entry.expected_paths],
       expected_answer: entry.expected_answer,
-      tags: [...entry.tags],
+      tags: [...entry.tags, `seed-version:${DEMO_EVAL_SEED_VERSION}`],
       created_at: new Date(Date.UTC(2026, 2, 1 + scenarioIndex, 9, entryIndex, 0)).toISOString(),
     }))
   );
@@ -1388,12 +1395,30 @@ export function buildEvalAnalysisUserInput({ currentRun, baselineRun, evidence }
 export async function seedDemoEvalScenarios(sql) {
   const datasetEntries = getSeededEvalDatasetEntries();
   const seededRuns = getSeededEvalRuns();
+  const datasetEntryIds = datasetEntries.map((entry) => String(entry.entry_id));
+  const runIds = seededRuns.map((run) => String(run.run_id));
 
   await sql.query(
     `DELETE FROM eval_dataset
      WHERE corpus_id = $1
        AND entry_id ~ '^[0-9]+$';`,
     [DEMO_EVAL_CORPUS_ID],
+  );
+
+  await sql.query(
+    `DELETE FROM eval_dataset
+     WHERE corpus_id = $1
+       AND tags @> $2::jsonb
+       AND NOT (entry_id = ANY($3::text[]));`,
+    [DEMO_EVAL_CORPUS_ID, JSON.stringify(['seed:demo-eval-scenario']), datasetEntryIds],
+  );
+
+  await sql.query(
+    `DELETE FROM eval_runs
+     WHERE corpus_id = $1
+       AND COALESCE(run_json->>'demo_seed_kind', '') = 'scenario'
+       AND NOT (run_id = ANY($2::text[]));`,
+    [DEMO_EVAL_CORPUS_ID, runIds],
   );
 
   for (const entry of datasetEntries) {
@@ -1466,4 +1491,35 @@ export async function seedDemoEvalScenarios(sql) {
       ],
     );
   }
+}
+
+export async function ensureDemoEvalSeeded(sql) {
+  const datasetEntries = getSeededEvalDatasetEntries();
+  const seededRuns = getSeededEvalRuns();
+  const versionTag = `seed-version:${DEMO_EVAL_SEED_VERSION}`;
+
+  const datasetCountRes = await sql.query(
+    `SELECT COUNT(*)::int AS n
+     FROM eval_dataset
+     WHERE corpus_id = $1
+       AND tags @> $2::jsonb;`,
+    [DEMO_EVAL_CORPUS_ID, JSON.stringify([versionTag])],
+  );
+  const runCountRes = await sql.query(
+    `SELECT COUNT(*)::int AS n
+     FROM eval_runs
+     WHERE corpus_id = $1
+       AND COALESCE(run_json->>'demo_seed_kind', '') = 'scenario'
+       AND COALESCE(run_json->>'demo_seed_version', '') = $2;`,
+    [DEMO_EVAL_CORPUS_ID, DEMO_EVAL_SEED_VERSION],
+  );
+
+  const datasetCount = Number(datasetCountRes.rows?.[0]?.n) || 0;
+  const runCount = Number(runCountRes.rows?.[0]?.n) || 0;
+
+  if (datasetCount === datasetEntries.length && runCount === seededRuns.length) {
+    return;
+  }
+
+  await seedDemoEvalScenarios(sql);
 }

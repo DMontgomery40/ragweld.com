@@ -25,6 +25,7 @@ Current surfaces:
 - Keep CORS/auth behavior explicit for public endpoints.
 - Reuse `crucible-shared.ts` for shared crucible logic instead of duplicating constants/validation.
 - When changing deepseek MCP behavior, verify both host-based and path-based routes still work.
+- The hosted `/demo` Eval Analysis path intentionally uses backend-seeded synthetic eval datasets/runs plus cached real model analyses for the visual demo. Do not flag that compromise itself as a bug unless the user asks to change it; focus review on correctness, cache freshness, route behavior, and runtime viability.
 
 ## Validation Expectations
 - Run `netlify dev` from repo root and hit affected endpoints.
