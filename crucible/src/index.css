@@ -1124,6 +1124,36 @@ button:disabled {
   font-size: 0.75rem;
 }
 
+.results-disclosure {
+  margin-top: 0.72rem;
+  border-top: 1px solid rgba(100, 116, 139, 0.2);
+  padding-top: 0.68rem;
+}
+
+.results-disclosure-summary {
+  cursor: pointer;
+  list-style: none;
+  display: grid;
+  gap: 0.14rem;
+}
+
+.results-disclosure-summary::-webkit-details-marker {
+  display: none;
+}
+
+.results-disclosure-title {
+  color: #e2e8f0;
+  font-size: 0.73rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.results-disclosure-copy {
+  color: #94a3b8;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
 .chart-card,
 .availability-card,
 .math-card,
