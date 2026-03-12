@@ -51,6 +51,12 @@ This repository contains:
 - Warn-only parity check: `npm run check:demo-parity:warn`
 - For hosted-only UI differences, prefer `demo-overrides/` instead of direct edits in `vendor/demo/`.
 
+## Demo Eval Compromise
+- The hosted `/demo` Eval Analysis experience intentionally uses backend-seeded synthetic eval datasets/runs plus cached real model analyses.
+- This is an accepted visual-demo compromise, not an accidental parity bug.
+- Do not flag the synthetic nature of the hosted eval history itself as a defect unless the user explicitly asks to revisit that tradeoff.
+- Still flag real issues in that path: stale caches, broken route contracts, parity drift outside the allowlisted overlay, misleading UI behavior beyond the accepted compromise, or invalid model/runtime wiring.
+
 ## Edit Boundaries
 Avoid manual edits in generated directories:
 - `dist/`

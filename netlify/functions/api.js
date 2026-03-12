@@ -7,8 +7,8 @@ import {
   DEMO_EVAL_ANALYSIS_MODEL,
   DEMO_EVAL_ANALYSIS_PROMPT,
   DEMO_EVAL_CORPUS_ID,
+  ensureDemoEvalSeeded,
   filterDatasetEntriesForEval,
-  seedDemoEvalScenarios,
   validateComparableRuns,
 } from '../lib/demo-eval-scenarios.js';
 
@@ -937,7 +937,7 @@ async function ensureSchema(sql) {
       ON CONFLICT (corpus_id) DO NOTHING;
     `);
 
-    await seedDemoEvalScenarios(sql);
+    await ensureDemoEvalSeeded(sql);
   })();
   return schemaReady;
 }
@@ -1293,7 +1293,7 @@ async function seedEvalDatasetFromChunks(sql, corpusId, limit = 24) {
 
 async function ensureEvalDataset(sql, corpusId) {
   if (String(corpusId || '').trim() === DEMO_EVAL_CORPUS_ID) {
-    await seedDemoEvalScenarios(sql);
+    await ensureDemoEvalSeeded(sql);
     return null;
   }
   const countRes = await sql.query(
