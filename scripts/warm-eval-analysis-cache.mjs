@@ -155,8 +155,8 @@ async function fetchAnalysis(apiKey, currentRun, baselineRun) {
   };
 }
 
-async function cacheAnalysis(sql, currentRun, baselineRun, evidence, analysis, modelUsed) {
-  const key = {
+function buildCacheKey(currentRun, baselineRun, evidence) {
+  return {
     currentRunId: String(currentRun.run_id || ''),
     baselineRunId: String(baselineRun.run_id || ''),
     promptHash: sha256Hex(DEMO_EVAL_ANALYSIS_PROMPT),
@@ -165,6 +165,10 @@ async function cacheAnalysis(sql, currentRun, baselineRun, evidence, analysis, m
     maxOutputTokens: DEMO_EVAL_ANALYSIS_MODEL.maxOutputTokens,
     inputHash: sha256Hex(JSON.stringify(evidence)),
   };
+}
+
+async function cacheAnalysis(sql, currentRun, baselineRun, evidence, analysis, modelUsed) {
+  const key = buildCacheKey(currentRun, baselineRun, evidence);
   await sql.query(
     `INSERT INTO eval_analysis_cache (
       current_run_id,
@@ -203,7 +207,8 @@ async function cacheAnalysis(sql, currentRun, baselineRun, evidence, analysis, m
   );
 }
 
-async function findReusableAnalysis(sql, currentRun, baselineRun) {
+async function findReusableAnalysis(sql, currentRun, baselineRun, evidence) {
+  const key = buildCacheKey(currentRun, baselineRun, evidence);
   const res = await sql.query(
     `SELECT analysis_text, model_used
      FROM eval_analysis_cache
@@ -213,15 +218,17 @@ async function findReusableAnalysis(sql, currentRun, baselineRun) {
        AND model = $4
        AND reasoning_effort = $5
        AND max_output_tokens = $6
+       AND input_hash = $7
      ORDER BY created_at DESC
      LIMIT 1;`,
     [
-      String(currentRun.run_id || ''),
-      String(baselineRun.run_id || ''),
-      sha256Hex(DEMO_EVAL_ANALYSIS_PROMPT),
-      DEMO_EVAL_ANALYSIS_MODEL.model,
-      DEMO_EVAL_ANALYSIS_MODEL.reasoningEffort,
-      DEMO_EVAL_ANALYSIS_MODEL.maxOutputTokens,
+      key.currentRunId,
+      key.baselineRunId,
+      key.promptHash,
+      key.model,
+      key.reasoningEffort,
+      key.maxOutputTokens,
+      key.inputHash,
     ],
   );
   const row = res.rows?.[0];
@@ -263,9 +270,9 @@ async function main() {
 
     for (const pair of pairs) {
       console.log(`\n[${pair.current.scenario_id}] ${pair.baseline.run_id} -> ${pair.current.run_id}`);
-      const reusable = await findReusableAnalysis(sql, pair.current, pair.baseline);
+      const evidence = buildComparisonEvidence(pair.current, pair.baseline);
+      const reusable = await findReusableAnalysis(sql, pair.current, pair.baseline, evidence);
       if (reusable?.analysis) {
-        const evidence = buildComparisonEvidence(pair.current, pair.baseline);
         await cacheAnalysis(sql, pair.current, pair.baseline, evidence, reusable.analysis, reusable.modelUsed);
         console.log(`reused cached analysis for ${pair.current.scenario_id} using ${reusable.modelUsed}`);
         continue;
