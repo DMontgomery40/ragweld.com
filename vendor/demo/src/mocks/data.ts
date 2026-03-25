@@ -40,7 +40,6 @@ export const mockCorpora = [
 export const mockChatModels: ChatModelInfo[] = [
   {
     id: 'gpt-4o',
-    override: 'gpt-4o',
     provider: 'OpenAI',
     source: 'cloud_direct',
     provider_type: 'openai',
@@ -48,7 +47,6 @@ export const mockChatModels: ChatModelInfo[] = [
   },
   {
     id: 'gpt-4o-mini',
-    override: 'gpt-4o-mini',
     provider: 'OpenAI',
     source: 'cloud_direct',
     provider_type: 'openai',
@@ -56,7 +54,6 @@ export const mockChatModels: ChatModelInfo[] = [
   },
   {
     id: 'openai/gpt-4o-mini',
-    override: 'openai/gpt-4o-mini',
     provider: 'OpenAI (via OpenRouter)',
     source: 'openrouter',
     provider_type: 'openrouter',
@@ -65,7 +62,6 @@ export const mockChatModels: ChatModelInfo[] = [
   },
   {
     id: 'openai/gpt-4o',
-    override: 'openai/gpt-4o',
     provider: 'OpenAI (via OpenRouter)',
     source: 'openrouter',
     provider_type: 'openrouter',
@@ -74,7 +70,6 @@ export const mockChatModels: ChatModelInfo[] = [
   },
   {
     id: 'anthropic/claude-3.5-sonnet',
-    override: 'anthropic/claude-3.5-sonnet',
     provider: 'Anthropic (via OpenRouter)',
     source: 'openrouter',
     provider_type: 'openrouter',
@@ -83,7 +78,6 @@ export const mockChatModels: ChatModelInfo[] = [
   },
   {
     id: 'claude-3-5-sonnet-20241022',
-    override: 'claude-3-5-sonnet-20241022',
     provider: 'Anthropic',
     source: 'cloud_direct',
     provider_type: 'anthropic',
@@ -91,7 +85,6 @@ export const mockChatModels: ChatModelInfo[] = [
   },
   {
     id: 'claude-3-5-haiku-20241022',
-    override: 'claude-3-5-haiku-20241022',
     provider: 'Anthropic',
     source: 'cloud_direct',
     provider_type: 'anthropic',
@@ -99,7 +92,6 @@ export const mockChatModels: ChatModelInfo[] = [
   },
   {
     id: 'llama3.2:latest',
-    override: 'llama3.2:latest',
     provider: 'Ollama (Local)',
     source: 'local',
     provider_type: 'ollama',
@@ -384,9 +376,13 @@ export const mockConfig: TriBridConfig = {
     indexing_workers: 4,
     bm25_tokenizer: 'stemmer',
     bm25_stemmer_lang: 'english',
+    bm25_stopwords_lang: 'en',
     index_excluded_exts: '.png,.jpg,.gif,.ico,.svg,.woff,.ttf',
     index_max_file_size_mb: 10,
     skip_dense: 0,
+    out_dir_base: './out',
+    rag_out_base: '',
+    repos_file: './repos.json',
   },
   vector_search: {
     enabled: true,
@@ -433,6 +429,7 @@ export const mockConfig: TriBridConfig = {
     reranker_mode: 'none',
     reranker_cloud_provider: 'cohere',
     reranker_cloud_model: 'rerank-v3.5',
+    reranker_local_model: 'cross-encoder/ms-marco-MiniLM-L-12-v2',
     tribrid_reranker_alpha: 0.7,
     tribrid_reranker_topn: 50,
     reranker_cloud_top_n: 50,
@@ -442,6 +439,7 @@ export const mockConfig: TriBridConfig = {
     tribrid_reranker_reload_period_sec: 60,
     reranker_timeout: 10,
     rerank_input_snippet_chars: 700,
+    transformers_trust_remote_code: 1,
   },
   chat: {
     default_corpus_ids: ['epstein-files-1'],
