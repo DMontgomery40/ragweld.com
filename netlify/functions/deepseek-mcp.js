@@ -67,10 +67,8 @@ export async function handler(event) {
   }
 
   const baseUrl = process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com';
-  const defaultModel = process.env.DEEPSEEK_DEFAULT_MODEL ?? 'deepseek-chat';
+  const defaultModel = process.env.DEEPSEEK_DEFAULT_MODEL ?? 'deepseek-v4-flash';
   const timeoutMs = getPositiveInt('DEEPSEEK_REQUEST_TIMEOUT_MS', DEFAULT_REQUEST_TIMEOUT_MS);
-  const enableReasonerFallback = parseBoolean(process.env.DEEPSEEK_ENABLE_REASONER_FALLBACK, true);
-  const fallbackModel = process.env.DEEPSEEK_FALLBACK_MODEL ?? 'deepseek-chat';
   const { DeepSeekApiClient, createDeepSeekMcpServer, ConversationStore } = await loadDeepSeekRuntime();
 
   if (!sharedConversationStore) {
@@ -81,8 +79,6 @@ export async function handler(event) {
     apiKey,
     baseUrl,
     timeoutMs,
-    enableReasonerFallback,
-    fallbackModel,
   });
 
   const mcpServer = createDeepSeekMcpServer({
@@ -221,30 +217,15 @@ function buildCorsHeaders(origin, allowedOrigins) {
   return base;
 }
 
-function parseBoolean(value, fallback) {
-  if (value === undefined) {
-    return fallback;
-  }
-
-  const normalized = String(value).trim().toLowerCase();
-  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) {
-    return true;
-  }
-  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) {
-    return false;
-  }
-  return fallback;
-}
-
-function getPositiveInt(envName, fallback) {
+function getPositiveInt(envName, defaultValue) {
   const raw = process.env[envName];
   if (!raw) {
-    return fallback;
+    return defaultValue;
   }
 
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isInteger(parsed) || parsed <= 0) {
-    return fallback;
+    return defaultValue;
   }
 
   return parsed;

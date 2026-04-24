@@ -38,10 +38,10 @@
     "@astrojs/react": "^4.2.0",
     "@astrojs/sitemap": "^3.7.0",
     "@astrojs/tailwind": "^6.0.0",
-    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@netlify/neon": "^0.1.2",
     "astro": "^5.1.0",
-    "deepseek-mcp-server": "https://codeload.github.com/DMontgomery40/deepseek-mcp-server/tar.gz/a0cf6c46427397f5df69708c437c2db6023a2a92",
+    "deepseek-mcp-server": "0.5.0",
     "neo4j-driver": "^5.28.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
