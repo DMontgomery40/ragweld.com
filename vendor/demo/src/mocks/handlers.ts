@@ -10,7 +10,6 @@ import {
   mockCorpora,
   mockChatModels,
   mockConfig,
-  mockEvalDataset,
   mockPromptDefaults,
   mockPromptMetadata,
   mockChunkMatches,
@@ -83,12 +82,6 @@ export const handlersFull = [
 
   http.put('/api/config', async ({ request }) => {
     await delay(200);
-    if (request.headers.get('x-ragweld-test-fail-save') === '1') {
-      return HttpResponse.json(
-        { detail: 'Simulated save failure for regression coverage.' },
-        { status: 500 },
-      );
-    }
     const body = await request.json();
     return HttpResponse.json({ ...mockConfig, ...(body as object) });
   }),
@@ -851,7 +844,7 @@ export const handlersFull = [
   // Eval datasets (legacy alias)
   http.get('/api/eval/datasets', async () => {
     await delay(100);
-    return HttpResponse.json(mockEvalDataset);
+    return HttpResponse.json(evalDatasetEntries);
   }),
 
   // System prompts editor (used by Eval → System Prompts)
