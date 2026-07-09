@@ -5,6 +5,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useNavigate } from 'react-router-dom';
 import 'dockview/dist/styles/dockview.css';
 import { TooltipIcon } from '@/components/ui/TooltipIcon';
+import { LineageMeta } from '@/components/ui/LineageMeta';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useActiveRepo } from '@/stores/useRepoStore';
 import { useConfigField, useNotification, useReranker } from '@/hooks';
@@ -12,6 +13,7 @@ import { rerankerTrainingService, type RerankerTrainRunsScope } from '@/services
 import type {
   CorpusEvalProfile,
   RerankerScoreResponse,
+  RerankerTrainDiagnosticRecord,
   RerankerTrainMetricEvent,
   RerankerTrainRun,
   RerankerTrainRunMeta,
@@ -124,6 +126,7 @@ function metricEventKey(ev: RerankerTrainMetricEvent): string {
     epoch: ev.epoch ?? null,
     percent: ev.percent ?? null,
     message: ev.message ?? null,
+    operator_hint: ev.operator_hint ?? null,
     loss: ev.loss ?? null,
     lr: ev.lr ?? null,
     grad_norm: ev.grad_norm ?? null,
@@ -242,6 +245,8 @@ export function TrainingStudio() {
 
   const [logsLoading, setLogsLoading] = useState(false);
   const [logs, setLogs] = useState<any[]>([]);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<RerankerTrainDiagnosticRecord[]>([]);
 
   const [probeQuery, setProbeQuery] = useState('auth login flow');
   const [probeDocument, setProbeDocument] = useState('auth login token flow good');
@@ -562,6 +567,21 @@ export function TrainingStudio() {
 
   useEffect(() => {
     if (bottomTab !== 'logs') return;
+    if (selectedRunId) {
+      setDiagnosticsLoading(true);
+      void rerankerTrainingService
+        .getDiagnostics(selectedRunId, 1000)
+        .then((res) => {
+          setDiagnostics(res?.records || []);
+        })
+        .catch((e) => {
+          notifyError(e instanceof Error ? e.message : 'Failed to load diagnostics');
+        })
+        .finally(() => {
+          setDiagnosticsLoading(false);
+        });
+      return;
+    }
     setLogsLoading(true);
     void getLogs()
       .then((res) => {
@@ -573,7 +593,7 @@ export function TrainingStudio() {
       .finally(() => {
         setLogsLoading(false);
       });
-  }, [bottomTab, getLogs, notifyError]);
+  }, [bottomTab, getLogs, notifyError, selectedRunId]);
 
   const recommended = useMemo(() => {
     if (!profile) return null;
@@ -618,7 +638,8 @@ export function TrainingStudio() {
     if (!q) return events;
     return events.filter((ev) => {
       const msg = String(ev.message || '').toLowerCase();
-      return msg.includes(q) || ev.type.includes(q);
+      const hint = String(ev.operator_hint || '').toLowerCase();
+      return msg.includes(q) || hint.includes(q) || ev.type.includes(q);
     });
   }, [events, eventQuery]);
 
@@ -1178,31 +1199,42 @@ export function TrainingStudio() {
                 <h3 className="studio-panel-title">Run HUD</h3>
               </header>
               {selectedRun ? (
-                <div className="studio-keyvals">
-                  <div>
-                    <span>status</span>
-                    <span
-                      className="studio-run-status-pill studio-mono"
-                      data-status={hud?.status || 'unknown'}
-                      data-testid="studio-run-hud-status"
-                    >
-                      {hud?.status || 'unknown'}
-                    </span>
-                  </div>
-                  <div><span>backend</span><span className="studio-mono">{hud?.backend || '—'}</span></div>
-                  <div><span>base_model</span><span className="studio-mono studio-truncate" title={hud?.baseModel || ''}>{hud?.baseModel || '—'}</span></div>
-                  <div><span>active_path</span><span className="studio-mono studio-truncate" title={hud?.activePath || ''}>{hud?.activePath || '—'}</span></div>
-                  <div><span>duration</span><span className="studio-mono">{hud?.durationSec == null ? '—' : `${hud.durationSec.toFixed(1)}s`}</span></div>
-                  <div><span>step</span><span className="studio-mono">{hud?.last?.step ?? '—'}</span></div>
-                  <div><span>epoch</span><span className="studio-mono">{hud?.last?.epoch ?? '—'}</span></div>
-                  <div><span>progress</span><span className="studio-mono" data-testid="studio-run-hud-progress">{hud?.progressLabel || '—'}</span></div>
-                  {hud?.terminalMessage ? (
+                <>
+                  <div className="studio-keyvals">
                     <div>
-                      <span>{hud.status === 'cancelled' ? 'cancel_reason' : 'failure_reason'}</span>
-                      <span className="studio-mono studio-truncate" title={hud.terminalMessage}>{hud.terminalMessage}</span>
+                      <span>status</span>
+                      <span
+                        className="studio-run-status-pill studio-mono"
+                        data-status={hud?.status || 'unknown'}
+                        data-testid="studio-run-hud-status"
+                      >
+                        {hud?.status || 'unknown'}
+                      </span>
                     </div>
-                  ) : null}
-                </div>
+                    <div><span>backend</span><span className="studio-mono">{hud?.backend || '—'}</span></div>
+                    <div><span>base_model</span><span className="studio-mono studio-truncate" title={hud?.baseModel || ''}>{hud?.baseModel || '—'}</span></div>
+                    <div><span>active_path</span><span className="studio-mono studio-truncate" title={hud?.activePath || ''}>{hud?.activePath || '—'}</span></div>
+                    <div><span>duration</span><span className="studio-mono">{hud?.durationSec == null ? '—' : `${hud.durationSec.toFixed(1)}s`}</span></div>
+                    <div><span>step</span><span className="studio-mono">{hud?.last?.step ?? '—'}</span></div>
+                    <div><span>epoch</span><span className="studio-mono">{hud?.last?.epoch ?? '—'}</span></div>
+                    <div><span>progress</span><span className="studio-mono" data-testid="studio-run-hud-progress">{hud?.progressLabel || '—'}</span></div>
+                    {hud?.terminalMessage ? (
+                      <div>
+                        <span>{hud.status === 'cancelled' ? 'cancel_reason' : 'failure_reason'}</span>
+                        <span className="studio-mono studio-truncate" title={hud.terminalMessage}>{hud.terminalMessage}</span>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div>
+                    <LineageMeta
+                      bundleId={selectedRun.bundle_id}
+                      inputBundleId={selectedRun.input_bundle_id}
+                      lineageRef={selectedRun.lineage_ref}
+                      modelArtifactRef={selectedRun.model_artifact_ref}
+                      corpusId={activeCorpus}
+                    />
+                  </div>
+                </>
               ) : (
                 <p className="studio-empty">Select a run.</p>
               )}
@@ -1664,29 +1696,37 @@ export function TrainingStudio() {
   ]);
 
   const renderLogsBody = useCallback(() => {
+    const activeLogs = selectedRunId ? diagnostics : logs;
+    const activeLoading = selectedRunId ? diagnosticsLoading : logsLoading;
     if (logsRenderer === 'xterm') {
       return (
         <StudioLogTerminal
-          logs={logs}
-          loading={logsLoading}
-          onDownload={downloadLogs}
-          onClear={clearLogs}
+          logs={activeLogs}
+          loading={activeLoading}
+          onDownload={() => {
+            if (selectedRunId) rerankerTrainingService.downloadDiagnostics(selectedRunId);
+            else downloadLogs();
+          }}
+          onClear={() => {
+            if (!selectedRunId) void clearLogs();
+          }}
+          clearDisabled={Boolean(selectedRunId)}
         />
       );
     }
 
     return (
       <div className="studio-log-viewer" data-testid="studio-log-viewer">
-        {logsLoading ? (
-          <p className="studio-empty">Loading logs…</p>
-        ) : logs.length === 0 ? (
-          <p className="studio-empty">No logs.</p>
+        {activeLoading ? (
+          <p className="studio-empty">{selectedRunId ? 'Loading diagnostics…' : 'Loading logs…'}</p>
+        ) : activeLogs.length === 0 ? (
+          <p className="studio-empty">{selectedRunId ? 'No diagnostics.' : 'No logs.'}</p>
         ) : (
-          <pre className="studio-pre">{JSON.stringify(logs, null, 2)}</pre>
+          <pre className="studio-pre">{JSON.stringify(activeLogs, null, 2)}</pre>
         )}
       </div>
     );
-  }, [clearLogs, downloadLogs, logs, logsLoading, logsRenderer]);
+  }, [clearLogs, diagnostics, diagnosticsLoading, downloadLogs, logs, logsLoading, logsRenderer, selectedRunId]);
 
   const renderActivityPanel = useCallback(() => {
     return (
@@ -1704,13 +1744,23 @@ export function TrainingStudio() {
           {bottomTab === 'timeline' ? (
             <input
               className="studio-search"
-              placeholder="Filter events by type/message"
+              placeholder="Filter events by type/message/hint"
               value={eventQuery}
               onChange={(e) => setEventQuery(e.target.value)}
             />
           ) : <span className="studio-tab-spacer"></span>}
-          <button className="small-button" onClick={downloadLogs}>Download</button>
-          <button className="small-button" onClick={clearLogs}>Clear</button>
+          <button
+            className="small-button"
+            onClick={() => {
+              if (selectedRunId) rerankerTrainingService.downloadDiagnostics(selectedRunId);
+              else downloadLogs();
+            }}
+          >
+            Download
+          </button>
+          <button className="small-button" onClick={clearLogs} disabled={Boolean(selectedRunId)}>
+            Clear
+          </button>
         </div>
 
         <div className="studio-bottom-body">
@@ -1738,6 +1788,11 @@ export function TrainingStudio() {
                           {ev.percent != null ? <span className="studio-chip">{ev.percent}%</span> : null}
                         </header>
                         {ev.message ? <p className="studio-event-message">{ev.message}</p> : null}
+                        {ev.operator_hint ? (
+                          <p className="studio-event-message studio-event-operator-hint">
+                            operatorHint: {ev.operator_hint}
+                          </p>
+                        ) : null}
                         {ev.metrics ? (
                           <div className="studio-mini-grid">
                             {Object.entries(ev.metrics).map(([k, v]) => (
