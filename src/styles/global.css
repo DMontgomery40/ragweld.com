@@ -4,12 +4,16 @@
 
 html {
   scroll-behavior: smooth;
+  overflow-x: clip;
+  max-width: 100vw;
 }
 
 body {
   background-color: #09090b;
   color: #e4e4e7;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  overflow-x: clip;
+  max-width: 100vw;
 }
 
 /* Scrollbar styling */

@@ -1,17 +1,25 @@
 ---
+const demoBase = '/demo/?corpus=epstein-files-1';
+const evalAnalysisHref = '/demo/eval?corpus=epstein-files-1&subtab=analysis';
 ---
 <section class="bg-[#09090b] py-16 border-t border-[#27272a]">
   <div class="mx-auto max-w-5xl px-4 text-center">
-    <h2 class="text-3xl font-bold text-white">Ready to see ragweld in action?</h2>
+    <h2 class="text-3xl font-bold text-white">Deploy the platform once. Reuse it everywhere.</h2>
     <p class="mt-4 text-gray-400">
-      Explore the live demo, start from the API docs, then layer MCP integrations where they fit your agent stack.
+      Explore the full workbench, inspect the implementation, or talk with us about using Ragweld as the repeatable AI foundation for client deployments.
     </p>
     <div class="mt-8 flex items-center justify-center gap-4 flex-wrap">
       <a
-        href="/demo/?corpus=epstein-files-1"
-        class="px-6 py-3 border border-[#27272a] text-white font-semibold rounded-lg hover:bg-[#18181b] transition-colors"
+        href={demoBase}
+        class="px-6 py-3 bg-[#d4b17a] text-[#17120c] font-semibold rounded-lg hover:bg-[#e8c691] transition-colors"
       >
-        Launch demo
+        Launch live demo
+      </a>
+      <a
+        href={evalAnalysisHref}
+        class="px-6 py-3 border border-[#4b5563] text-white font-semibold rounded-lg hover:bg-[#18181b] transition-colors"
+      >
+        Open eval analysis
       </a>
       <a
         href="https://dmontgomery40.github.io/ragweld/latest/configuration/"
@@ -22,10 +30,10 @@
         Docs
       </a>
       <a
-        href="mailto:david@ragweld.com?subject=ragweld%20Enterprise%20Inquiry"
+        href="mailto:david@ragweld.com?subject=ragweld%20Deployment%20Inquiry"
         class="px-6 py-3 bg-[#94a3b8] text-[#18181b] font-semibold rounded-lg hover:bg-[#64748b] hover:text-white transition-colors"
       >
-        Contact enterprise
+        Talk about a deployment
       </a>
     </div>
   </div>
