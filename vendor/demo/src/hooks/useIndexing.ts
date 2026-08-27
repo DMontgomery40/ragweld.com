@@ -1,6 +1,12 @@
 import { useCallback, useState } from 'react';
 import { useAPI } from './useAPI';
-import type { IndexRequest, IndexStats, IndexStatus } from '@/types/generated';
+import type {
+  IndexRequest,
+  IndexStats,
+  IndexStatus,
+  IndexRunConflictResponse,
+  PersistedStateCorruptDetail,
+} from '@/types/generated';
 import { TerminalService } from '@/services/TerminalService';
 
 type UseIndexingState = {
@@ -31,6 +37,33 @@ type StopOptions = {
 /**
  * Shared indexing orchestration used by Dashboard + RAG tabs.
  */
+function describeIndexStartFailure(status: number, body: string): string {
+  if (status === 409) {
+    // Every fence conflict is the typed envelope (IndexRunConflictResponse); an
+    // unparseable 409 is a contract failure and is reported as such, never
+    // rendered from raw text.
+    let parsed: IndexRunConflictResponse | null = null;
+    try {
+      parsed = JSON.parse(body) as IndexRunConflictResponse;
+    } catch {
+      parsed = null;
+    }
+    const d = parsed?.detail;
+    if (d?.code === 'index_run_in_progress') {
+      return `${d.message} Run ${d.run_id} on ${d.owner} started ${new Date(d.started_at).toLocaleTimeString()} (last heartbeat ${new Date(d.heartbeat_at).toLocaleTimeString()}). ${d.operator_hint}`;
+    }
+    if (d?.code === 'index_fence_corrupt') {
+      return `${d.message} ${d.operator_hint}`;
+    }
+    const corrupt = parsed?.detail as PersistedStateCorruptDetail | undefined;
+    if (corrupt?.code === 'persisted_state_corrupt') {
+      return `${corrupt.message} ${corrupt.operator_hint}`;
+    }
+    return 'Index request conflicted (409) but the response was not a typed envelope; check the API contract.';
+  }
+  return body || `Index request failed (${status})`;
+}
+
 export function useIndexing() {
   const { api } = useAPI();
 
@@ -101,7 +134,10 @@ export function useIndexing() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(req),
         });
-        if (!r.ok) throw new Error((await r.text().catch(() => '')) || `Index request failed (${r.status})`);
+        if (!r.ok) {
+          const text = await r.text().catch(() => '');
+          throw new Error(describeIndexStartFailure(r.status, text));
+        }
         const data: IndexStatus = await r.json();
         setState((s) => ({ ...s, status: data, loading: false }));
         return data;
@@ -164,9 +200,9 @@ export function useIndexing() {
 
   const stopIndex = useCallback(
     async (corpusId: string, options: StopOptions = {}) => {
-      if (options.terminalId) {
-        TerminalService.disconnect(options.terminalId);
-      }
+      // The stream stays connected until the backend answers: the run's terminal
+      // event (`cancelled`, or `complete` when the stop landed after the commit)
+      // reaches the terminal, and the response status is the terminal authority.
       setState((s) => ({ ...s, loading: true, error: null }));
       try {
         const r = await fetch(api(`index/${encodeURIComponent(corpusId)}/stop`), {
@@ -175,6 +211,9 @@ export function useIndexing() {
         });
         if (!r.ok) throw new Error((await r.text().catch(() => '')) || `Stop request failed (${r.status})`);
         const data: IndexStatus = await r.json();
+        if (options.terminalId) {
+          TerminalService.disconnect(options.terminalId);
+        }
         setState((s) => ({ ...s, status: data, loading: false }));
         return data;
       } catch (e) {
