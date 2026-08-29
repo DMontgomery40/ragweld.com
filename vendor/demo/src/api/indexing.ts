@@ -7,4 +7,3 @@ export const indexingApi = {
     return data;
   },
 };
-
