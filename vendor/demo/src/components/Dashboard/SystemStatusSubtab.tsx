@@ -1,7 +1,7 @@
 // TriBridRAG - System Status Subtab
 // Real-time system health, status, and quick overview
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as DashAPI from '@/api/dashboard';
 import { QuickActions } from './QuickActions';
@@ -9,7 +9,54 @@ import { IndexDisplayPanels } from './IndexDisplayPanels';
 import { useDockerStore } from '@/stores/useDockerStore';
 import { StatusIndicator } from '@/components/ui/StatusIndicator';
 import { useRepoStore } from '@/stores/useRepoStore';
+import { useHealthStore } from '@/stores/useHealthStore';
 import { TooltipIcon } from '@/components/ui/TooltipIcon';
+import type { IndexRunSummary } from '@/types/generated';
+
+// M-80: this row reported `frontend_running` -- a probe for a Vite dev server on
+// :55173 -- so on the deployed topology, where a reverse proxy serves a built bundle,
+// it sat permanently red saying "stopped" about the very frontend rendering the page.
+// A red row must mean something is actually wrong. `frontend_mode` is the API's typed
+// answer to "how is the frontend served", and all three of its values are healthy or
+// honestly unhealthy on their own terms.
+type FrontendMode = 'dev_server' | 'built_bundle' | 'absent';
+
+function frontendPresentation(
+  mode: FrontendMode | undefined,
+  port: number,
+  bundlePath: string | null | undefined
+): { tone: 'online' | 'offline' | 'unknown'; label: string; title: string } {
+  // Narrowed, not cast. An absent field used to fall through to the `absent` branch and
+  // paint the row red "not built" -- the exact false-red M-80 exists to remove.
+  if (mode === undefined) {
+    return {
+      tone: 'unknown',
+      label: 'unknown',
+      title: 'The API did not report how the frontend is served.',
+    };
+  }
+  if (mode === 'dev_server') {
+    return {
+      tone: 'online',
+      label: `dev server :${port}`,
+      title: 'A Vite dev server is reachable on this host.',
+    };
+  }
+  if (mode === 'built_bundle') {
+    return {
+      tone: 'online',
+      label: 'built bundle',
+      title: bundlePath
+        ? `Served from the built bundle at ${bundlePath} (a reverse proxy serves it; there is no dev server on this host).`
+        : 'Served from a built bundle; a reverse proxy serves it, so there is no dev server on this host.',
+    };
+  }
+  return {
+    tone: 'offline',
+    label: 'not built',
+    title: 'No dev server is reachable and no built bundle exists on disk.',
+  };
+}
 
 export function SystemStatusSubtab() {
   const navigate = useNavigate();
@@ -19,9 +66,14 @@ export function SystemStatusSubtab() {
   const [containers, setContainers] = useState<string>('—');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [topFolders, setTopFolders] = useState<
-    Array<{ name: string; profile?: string; chunkCount: number; storageBytes: number }>
+  // One row per corpus: its latest persisted run, "never indexed" (404), or why it could not
+  // be read. `run: null` and `error` are different answers and the panel says which.
+  const [recentRuns, setRecentRuns] = useState<
+    Array<{ corpusId: string; name: string; run: IndexRunSummary | null; error: string | null }>
   >([]);
+  const [recentRunsLoading, setRecentRunsLoading] = useState(false);
+  // Guards the fan-out against out-of-order settles; see refreshRecentRuns.
+  const recentRunsGenerationRef = useRef(0);
 
   // Corpus-first state (Zustand store backed by Pydantic `Corpus`)
   const repos = useRepoStore((s) => s.repos);
@@ -47,26 +99,10 @@ export function SystemStatusSubtab() {
   const {
     devStackStatus,
     devStackLoading,
-    restartingFrontend,
-    restartingBackend,
-    restartingStack,
-    clearingCache,
     fetchDevStackStatus,
-    restartFrontend,
-    restartBackend,
-    restartStack,
-    clearCacheAndRestart,
   } = useDockerStore();
 
-  const formatBytes = (bytes: number) => {
-    if (!bytes || bytes <= 0) return '0 B';
-    const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
-    const idx = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
-    const value = bytes / Math.pow(1024, idx);
-    return `${value.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
-  };
-
-  const refreshStatus = async () => {
+  const refreshStatus = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -76,26 +112,23 @@ export function SystemStatusSubtab() {
         healthData,
         mcpData,
         // autotuneData, // HIDDEN - Pro feature
-        dockerData,
-        indexData
+        dockerData
       ] = await Promise.allSettled([
-        DashAPI.getHealth(),
+        // Health goes through the shared store, not a second `/health` client: the top
+        // bar probes health on the same mount, and two uncoordinated clients meant every
+        // dashboard load spent three round trips on one endpoint (M-129). The store
+        // shares an in-flight probe, so co-timed callers collapse to one request while a
+        // later poll or a click on Health still asks the server.
+        useHealthStore.getState().checkHealth(),
         DashAPI.getMCPStatus(),
         // DashAPI.getAutotuneStatus(), // HIDDEN - Pro feature
-        DashAPI.getDockerStatus(),
-        DashAPI.getIndexStatus()
+        DashAPI.getDockerStatus()
       ]);
 
       // Health
       if (healthData.status === 'fulfilled') {
-        const h = healthData.value;
-        setHealth(`${h.status}`);
-      }
-
-      if (indexData.status === 'fulfilled' && indexData.value.metadata) {
-        // DashboardIndexStatusMetadata does not expose a per-corpus repo breakdown.
-        // Keep this empty until the backend provides a deterministic schema.
-        setTopFolders([]);
+        const h = useHealthStore.getState().status;
+        setHealth(h ? `${h.status}` : (useHealthStore.getState().error ?? 'unknown'));
       }
 
       // MCP
@@ -128,10 +161,14 @@ export function SystemStatusSubtab() {
       if (dockerData.status === 'fulfilled') {
         const d = dockerData.value;
         if (d.status.running) {
-          const managed = d.containers.filter((c) => c.tribrid_managed);
-          const total = managed.length;
-          const running = managed.filter((c) => c.state === 'running').length;
-          setContainers(`${running}/${total}`);
+          if (d.inventoryAvailable) {
+            const managed = d.containers.filter((c) => c.managed);
+            const total = managed.length;
+            const running = managed.filter((c) => c.state === 'running').length;
+            setContainers(`${running}/${total}`);
+          } else {
+            setContainers('inventory unavailable');
+          }
         } else {
           setContainers('unavailable');
         }
@@ -143,7 +180,65 @@ export function SystemStatusSubtab() {
       setError(err instanceof Error ? err.message : String(err));
       setLoading(false);
     }
-  };
+  }, []);
+
+  /**
+   * The latest run of every corpus, one request each, in parallel.
+   *
+   * Deliberately NOT on the 30s status poll: nothing here changes without an indexing run,
+   * and N corpora x every 30 seconds is real load against an endpoint that flushes the run
+   * event queue. Mount and the explicit refresh action are enough.
+   */
+  const refreshRecentRuns = useCallback(async () => {
+    // Each fan-out claims a generation; only the newest one may publish. Corpus count varies
+    // and every request is a separate round trip, so an earlier slow fan-out can settle after
+    // a later fast one and repaint the panel with what the corpus list used to be.
+    const generation = recentRunsGenerationRef.current + 1;
+    recentRunsGenerationRef.current = generation;
+
+    // Internal corpora are registered by the runtime, not by an operator, and index through
+    // their own path: the chat Recall corpus has no persisted index run, so it sat in this
+    // panel reading "never indexed" forever. `internal` is the typed marker from `Corpus`.
+    const corpora = (Array.isArray(repos) ? repos : []).filter((corpus) => !corpus.internal);
+    if (corpora.length === 0) {
+      setRecentRuns([]);
+      setRecentRunsLoading(false);
+      return;
+    }
+    setRecentRunsLoading(true);
+    const settled = await Promise.allSettled(
+      corpora.map((corpus) => DashAPI.getLatestIndexRun(corpus.corpus_id))
+    );
+    if (recentRunsGenerationRef.current !== generation) return;
+    setRecentRuns(
+      corpora.map((corpus, i) => {
+        const outcome = settled[i];
+        return {
+          corpusId: corpus.corpus_id,
+          name: String(corpus.name || corpus.corpus_id),
+          run: outcome.status === 'fulfilled' ? outcome.value : null,
+          error:
+            outcome.status === 'rejected'
+              ? outcome.reason instanceof Error
+                ? outcome.reason.message
+                : String(outcome.reason)
+              : null,
+        };
+      })
+    );
+    setRecentRunsLoading(false);
+  }, [repos]);
+
+  useEffect(() => {
+    refreshRecentRuns();
+    const handleRefresh = () => {
+      refreshRecentRuns();
+    };
+    window.addEventListener('dashboard-refresh', handleRefresh);
+    return () => {
+      window.removeEventListener('dashboard-refresh', handleRefresh);
+    };
+  }, [refreshRecentRuns]);
 
   useEffect(() => {
     refreshStatus();
@@ -169,7 +264,7 @@ export function SystemStatusSubtab() {
       clearInterval(interval);
       window.removeEventListener('dashboard-refresh', handleRefresh);
     };
-  }, []); // Empty array - run once on mount, Zustand actions are stable
+  }, [fetchDevStackStatus, loadRepos, refreshStatus, reposInitialized, reposLoading]);
 
   // If the dashboard mounted while the backend was down, `loadRepos()` can fail and the store
   // intentionally marks itself initialized to avoid retry loops. When the backend comes back,
@@ -182,6 +277,14 @@ export function SystemStatusSubtab() {
       /* store owns error state */
     });
   }, [reposLoading, reposError, devStackStatus?.backend_running, loadRepos]);
+
+  const frontend = devStackStatus
+    ? frontendPresentation(
+        devStackStatus.frontend_mode,
+        devStackStatus.frontend_port,
+        devStackStatus.frontend_bundle_path
+      )
+    : null;
 
   return (
     <div
@@ -198,7 +301,7 @@ export function SystemStatusSubtab() {
               style={{
                 fontSize: '14px',
                 marginBottom: '16px',
-                color: 'var(--accent)',
+                color: 'var(--accent-text)',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px'
@@ -240,7 +343,10 @@ export function SystemStatusSubtab() {
                 <StatusItem
                   label={
                     <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      Total corpora <TooltipIcon name="SYS_STATUS_CORPUS" />
+                      {/* Its own entry: this is a registered-corpus COUNT, and pointing it
+                          at SYS_STATUS_CORPUS made the "?" explain active-corpus
+                          selection instead (M-132). */}
+                      Total corpora <TooltipIcon name="SYS_STATUS_CORPORA_TOTAL" />
                     </span>
                   }
                   value={corporaInfo.totalLabel}
@@ -388,7 +494,7 @@ export function SystemStatusSubtab() {
                         boxShadow: '0 0 6px var(--link)'
                       }}
                     />
-                    Dev Stack
+                    Local Runtime
                   </span>
 
                   {/* Status indicators */}
@@ -411,29 +517,33 @@ export function SystemStatusSubtab() {
                         fontFamily: "'SF Mono', monospace",
                         color: devStackLoading
                           ? 'var(--fg-muted)'
-                          : devStackStatus
-                            ? (devStackStatus.frontend_running ? 'var(--ok)' : 'var(--err)')
+                          : frontend
+                            ? (frontend.tone === 'online'
+                                ? 'var(--ok)'
+                                : frontend.tone === 'unknown'
+                                  ? 'var(--fg-muted)'
+                                  : 'var(--err)')
                             : 'var(--fg-muted)',
                       }}
+                      title={frontend?.title}
+                      data-testid="dash-frontend-status"
                     >
                       <StatusIndicator
                         status={
                           devStackLoading
                             ? 'loading'
-                            : devStackStatus
-                              ? (devStackStatus.frontend_running ? 'online' : 'offline')
+                            : frontend
+                              ? frontend.tone === 'unknown'
+                                ? 'idle'
+                                : frontend.tone
                               : 'idle'
                         }
                         showLabel={false}
                         size="sm"
                         pulse
-                        ariaLabel="Dev frontend status"
+                        ariaLabel="Frontend status"
                       />
-                      {devStackLoading
-                        ? 'checking'
-                        : devStackStatus
-                          ? (devStackStatus.frontend_running ? `running :${devStackStatus.frontend_port}` : 'stopped')
-                          : 'unknown'}
+                      {devStackLoading ? 'checking' : frontend ? frontend.label : 'unknown'}
                     </span>
                     </div>
                     <div
@@ -481,110 +591,6 @@ export function SystemStatusSubtab() {
                     </div>
                   </div>
 
-                  {/* Restart buttons */}
-                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                    <button
-                      onClick={restartFrontend}
-                      disabled={restartingFrontend || restartingStack || clearingCache}
-                      className="dev-stack-btn"
-                      style={{
-                        flex: 1,
-                        minWidth: '70px',
-                        padding: '6px 8px',
-                        background: 'var(--bg-elev2)',
-                        color: 'var(--fg)',
-                        border: '1px solid var(--line)',
-                        borderRadius: '4px',
-                        fontSize: '10px',
-                        fontWeight: 500,
-                        cursor: restartingFrontend || restartingStack || clearingCache ? 'wait' : 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '4px'
-                      }}
-                    >
-                      {restartingFrontend && <span className="loading-spinner" style={{ width: '10px', height: '10px' }} />}
-                      ↻ Frontend
-                    </button>
-
-                    <button
-                      onClick={restartBackend}
-                      disabled={restartingBackend || restartingStack || clearingCache}
-                      className="dev-stack-btn"
-                      style={{
-                        flex: 1,
-                        minWidth: '70px',
-                        padding: '6px 8px',
-                        background: 'var(--bg-elev2)',
-                        color: 'var(--fg)',
-                        border: '1px solid var(--line)',
-                        borderRadius: '4px',
-                        fontSize: '10px',
-                        fontWeight: 500,
-                        cursor: restartingBackend || restartingStack || clearingCache ? 'wait' : 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '4px'
-                      }}
-                    >
-                      {restartingBackend && <span className="loading-spinner" style={{ width: '10px', height: '10px' }} />}
-                      ↻ Backend
-                    </button>
-
-                    <button
-                      onClick={restartStack}
-                      disabled={restartingFrontend || restartingBackend || restartingStack || clearingCache}
-                      className="dev-stack-btn btn-primary"
-                      style={{
-                        flex: 1,
-                        minWidth: '80px',
-                        padding: '6px 8px',
-                        background: 'var(--accent)',
-                        color: 'var(--accent-contrast)',
-                        border: 'none',
-                        borderRadius: '4px',
-                        fontSize: '10px',
-                        fontWeight: 600,
-                        cursor: restartingFrontend || restartingBackend || restartingStack || clearingCache ? 'wait' : 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '4px'
-                      }}
-                    >
-                      {restartingStack && <span className="loading-spinner" style={{ width: '10px', height: '10px', borderTopColor: 'var(--accent-contrast)' }} />}
-                      ↻ Full Stack
-                    </button>
-
-                    <button
-                      onClick={clearCacheAndRestart}
-                      disabled={restartingFrontend || restartingBackend || restartingStack || clearingCache}
-                      className="dev-stack-btn"
-                      style={{
-                        flex: 1,
-                        minWidth: '120px',
-                        padding: '6px 8px',
-                        background: 'var(--warn)',
-                        color: 'var(--bg)',
-                        border: 'none',
-                        borderRadius: '4px',
-                        fontSize: '10px',
-                        fontWeight: 600,
-                        cursor: restartingFrontend || restartingBackend || restartingStack || clearingCache ? 'wait' : 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '4px'
-                      }}
-                    >
-                      {clearingCache && <span className="loading-spinner" style={{ width: '10px', height: '10px', borderTopColor: 'var(--bg)' }} />}
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                        🗑 Clear Bytecode <TooltipIcon name="DEV_STACK_CLEAR_PYTHON_BYTECODE" />
-                      </span>
-                    </button>
-                  </div>
                 </div>
               </div>
             )}
@@ -628,7 +634,7 @@ export function SystemStatusSubtab() {
         </div>
       </div>
 
-      {/* Top Accessed Folders Section */}
+      {/* Recent index runs: the latest persisted run of every corpus */}
       <div className="settings-section" style={{ background: 'var(--panel)', borderLeft: '3px solid var(--warn)' }}>
         <h3
           style={{
@@ -641,13 +647,14 @@ export function SystemStatusSubtab() {
           }}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v5l3 2" />
           </svg>
-          Top Folders (Last 5 Days)
+          Recent Index Runs
         </h3>
-        <div id="dash-top-folders-metrics" style={{ color: 'var(--fg-muted)', fontSize: '12px' }}>
-          {topFolders.length === 0 ? (
-            <span>No recent indexing metrics available.</span>
+        <div data-testid="dash-recent-runs" style={{ color: 'var(--fg-muted)', fontSize: '12px' }}>
+          {recentRuns.length === 0 ? (
+            <span>{recentRunsLoading ? 'Loading index runs…' : 'No corpora yet.'}</span>
           ) : (
             <table
               style={{
@@ -658,27 +665,36 @@ export function SystemStatusSubtab() {
               }}
             >
               <thead>
-                <tr style={{ textTransform: 'uppercase', fontSize: '10px', color: 'var(--fg-muted)' }}>
-                  <th style={{ textAlign: 'left', padding: '6px 0' }}>Folder</th>
-                  <th style={{ textAlign: 'left', padding: '6px 0' }}>Profile</th>
+                {/* 11.5px, not the 10px the deleted panel used: the operator's displays are
+                    dpr-1 at ~93 PPI, where 10px uppercase muted text is the exact combination
+                    that turns into grey mush. The legibility floor outranks style parity. */}
+                <tr style={{ textTransform: 'uppercase', fontSize: '11.5px', color: 'var(--fg-muted)' }}>
+                  <th style={{ textAlign: 'left', padding: '6px 0' }}>Corpus</th>
+                  <th style={{ textAlign: 'left', padding: '6px 0' }}>Status</th>
+                  <th style={{ textAlign: 'left', padding: '6px 0' }}>Completed</th>
                   <th style={{ textAlign: 'right', padding: '6px 0' }}>Chunks</th>
-                  <th style={{ textAlign: 'right', padding: '6px 0' }}>Storage</th>
+                  <th style={{ textAlign: 'right', padding: '6px 0' }}>Figures</th>
+                  <th style={{ textAlign: 'right', padding: '6px 0' }}>Cost</th>
                 </tr>
               </thead>
               <tbody>
-                {topFolders.map(folder => (
-                  <tr key={`${folder.profile || 'default'}-${folder.name}`}>
-                    <td style={{ padding: '4px 0', fontWeight: 600, color: 'var(--accent)' }}>
-                      {folder.name}
-                    </td>
+                {recentRuns.map((row) => (
+                  <tr key={row.corpusId} data-testid={`dash-recent-run-${row.corpusId}`}>
+                    <td style={{ padding: '4px 0', fontWeight: 600, color: 'var(--accent-text)' }}>{row.name}</td>
+                    <td style={{ padding: '4px 0', color: runStatusColor(row) }}>{runStatusLabel(row)}</td>
                     <td style={{ padding: '4px 0', color: 'var(--fg-muted)' }}>
-                      {folder.profile || 'default'}
+                      {row.run?.completed_at ? new Date(row.run.completed_at).toLocaleString() : '—'}
                     </td>
                     <td style={{ padding: '4px 0', textAlign: 'right', fontFamily: "'SF Mono', monospace" }}>
-                      {folder.chunkCount.toLocaleString()}
+                      {row.run ? Number(row.run.total_chunks || 0).toLocaleString() : '—'}
                     </td>
                     <td style={{ padding: '4px 0', textAlign: 'right', fontFamily: "'SF Mono', monospace" }}>
-                      {formatBytes(folder.storageBytes)}
+                      {formatRunFigures(row.run)}
+                    </td>
+                    <td style={{ padding: '4px 0', textAlign: 'right', fontFamily: "'SF Mono', monospace" }}>
+                      {row.run?.figure_description_cost_usd != null
+                        ? `\u2264 $${Number(row.run.figure_description_cost_usd).toFixed(4)}`
+                        : '\u2014'}
                     </td>
                   </tr>
                 ))}
@@ -689,6 +705,36 @@ export function SystemStatusSubtab() {
       </div>
     </div>
   );
+}
+
+type RecentRunRow = { corpusId: string; name: string; run: IndexRunSummary | null; error: string | null };
+
+/** "never indexed" (no run) and "could not be read" (request failed) are different answers. */
+function runStatusLabel(row: RecentRunRow): string {
+  if (row.error) return 'unavailable';
+  if (!row.run) return 'never indexed';
+  return String(row.run.status || 'unknown');
+}
+
+function runStatusColor(row: RecentRunRow): string {
+  if (row.error) return 'var(--err)';
+  if (!row.run) return 'var(--fg-muted)';
+  if (row.run.status === 'complete') return 'var(--ok)';
+  if (row.run.status === 'error') return 'var(--err)';
+  return 'var(--warn)';
+}
+
+/**
+ * Figures are shown only when the run actually had a figure phase: every corpus indexed
+ * before figures existed reports zeroes, and a column of "0/0" would be noise on the one
+ * panel meant to show what each run did.
+ */
+function formatRunFigures(run: IndexRunSummary | null): string {
+  if (!run) return '\u2014';
+  const described = Number(run.figures_described || 0);
+  const failed = Number(run.figures_failed || 0);
+  if (described <= 0 && failed <= 0) return '\u2014';
+  return failed > 0 ? `${described.toLocaleString()} (${failed.toLocaleString()} failed)` : described.toLocaleString();
 }
 
 type StatusItemProps = {
