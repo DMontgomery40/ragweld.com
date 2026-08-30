@@ -4,15 +4,11 @@ import type { TriBridConfig } from '@/types/generated';
 
 interface ConfigStore {
   config: TriBridConfig | null;
+  /** Last server-acknowledged config. `config !== persisted` means unsaved local edits. */
+  persisted: TriBridConfig | null;
   loading: boolean;
   error: string | null;
   saving: boolean;
-  /**
-   * Optional mapping of flat config keys -> UI categories.
-   * Used by Eval drill-down to group config snapshots.
-   */
-  evalKeyCategories: Record<string, string>;
-
   // Actions
   loadConfig: () => Promise<void>;
   saveConfig: (config: TriBridConfig) => Promise<void>;
@@ -27,10 +23,37 @@ interface ConfigStore {
   /** Immediately flush all pending debounced patches for the active corpus. */
   flushPendingPatches: () => Promise<void>;
   resetConfig: () => Promise<void>;
-  loadEvalKeyCategories: () => void;
 
   reset: () => void;
 }
+
+type PatchObject = Record<string, unknown>;
+
+const isPatchObject = (value: unknown): value is PatchObject =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * Merge a PATCH payload into a config section exactly the way the server does
+ * (`_deep_merge_dicts`, server/api/config.py): recurse into nested objects, replace
+ * arrays and scalars wholesale.
+ *
+ * A shallow spread is wrong for any nested config group (`indexing.figures`,
+ * `chat.recall`, `chat.multimodal`): `useConfigField('indexing.figures.enabled')`
+ * emits `{ figures: { enabled: true } }`, and spreading that over the section drops
+ * every sibling key of `figures` from the optimistic copy and from the aggregated
+ * pending patch — so a second nested edit inside the debounce window would never
+ * send the first one, and "Apply All Changes" would PUT a collapsed group.
+ */
+const deepMergePatch = (base: PatchObject, updates: PatchObject): PatchObject => {
+  const merged: PatchObject = { ...base };
+  for (const key of Object.keys(updates)) {
+    if (key === '__proto__') continue;
+    const current = merged[key];
+    const next = updates[key];
+    merged[key] = isPatchObject(current) && isPatchObject(next) ? deepMergePatch(current, next) : next;
+  }
+  return merged;
+};
 
 export const useConfigStore = create<ConfigStore>((set) => {
   // Debounce + aggregation per top-level section AND per corpus.
@@ -89,7 +112,11 @@ export const useConfigStore = create<ConfigStore>((set) => {
           const nextSection = (saved as any)?.[sectionKey];
           // Merge only the patched section to avoid clobbering other optimistic changes.
           const nextConfig = cur ? ({ ...cur, [sectionKey]: nextSection } as TriBridConfig) : saved;
-          return { config: nextConfig, saving: false, error: null };
+          const curPersisted = state.persisted as any;
+          const nextPersisted = curPersisted
+            ? ({ ...curPersisted, [sectionKey]: nextSection } as TriBridConfig)
+            : saved;
+          return { config: nextConfig, persisted: nextPersisted, saving: false, error: null };
         });
       } else {
         set({ saving: false, error: null });
@@ -134,16 +161,16 @@ export const useConfigStore = create<ConfigStore>((set) => {
       const cur = state.config as any;
       if (!cur) return {};
       const curSection = (cur as any)[sectionKey] || {};
-      const nextSection = { ...(curSection as any), ...(updates as any) };
+      const nextSection = deepMergePatch(curSection as PatchObject, updates);
       return { config: { ...cur, [sectionKey]: nextSection } as TriBridConfig, error: null };
     });
 
     // Merge into pending patch and debounce the network call.
     pendingByCorpus[corpusKey] = pendingByCorpus[corpusKey] || {};
-    pendingByCorpus[corpusKey][sectionKey] = {
-      ...(pendingByCorpus[corpusKey][sectionKey] || {}),
-      ...(updates || {})
-    };
+    pendingByCorpus[corpusKey][sectionKey] = deepMergePatch(
+      pendingByCorpus[corpusKey][sectionKey] || {},
+      updates || {}
+    );
     timersByCorpus[corpusKey] = timersByCorpus[corpusKey] || {};
     if (timersByCorpus[corpusKey][sectionKey]) clearTimeout(timersByCorpus[corpusKey][sectionKey]);
     timersByCorpus[corpusKey][sectionKey] = setTimeout(() => {
@@ -155,10 +182,10 @@ export const useConfigStore = create<ConfigStore>((set) => {
 
   return ({
   config: null,
+  persisted: null,
   loading: false,
   error: null,
   saving: false,
-  evalKeyCategories: {},
 
   loadConfig: async () => {
     // Critical: do NOT cancel optimistic patches here. Flush them before loading so
@@ -190,12 +217,12 @@ export const useConfigStore = create<ConfigStore>((set) => {
         for (const [sectionKey, updates] of Object.entries(optimisticUpdates)) {
           if (updates && Object.keys(updates).length > 0) {
             const curSection = mergedConfig[sectionKey] || {};
-            mergedConfig[sectionKey] = { ...curSection, ...updates };
+            mergedConfig[sectionKey] = deepMergePatch(curSection as PatchObject, updates);
           }
         }
       }
       
-      set({ config: mergedConfig as TriBridConfig, loading: false, error: flushError });
+      set({ config: mergedConfig as TriBridConfig, persisted: config, loading: false, error: flushError });
     } catch (error) {
       const loadError = error instanceof Error ? error.message : 'Failed to load configuration';
       set({
@@ -210,7 +237,7 @@ export const useConfigStore = create<ConfigStore>((set) => {
     try {
       const saved = await configApi.save(config);
       cancelPendingPatches(String(getActiveCorpusId() || ''));
-      set({ config: saved, saving: false, error: null });
+      set({ config: saved, persisted: saved, saving: false, error: null });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to save configuration';
       set({
@@ -232,7 +259,11 @@ export const useConfigStore = create<ConfigStore>((set) => {
           const cur = state.config as any;
           const nextSection = (saved as any)?.[sectionKey];
           const nextConfig = cur ? ({ ...cur, [sectionKey]: nextSection } as TriBridConfig) : saved;
-          return { config: nextConfig, saving: false, error: null };
+          const curPersisted = state.persisted as any;
+          const nextPersisted = curPersisted
+            ? ({ ...curPersisted, [sectionKey]: nextSection } as TriBridConfig)
+            : saved;
+          return { config: nextConfig, persisted: nextPersisted, saving: false, error: null };
         });
       } else {
         set({ saving: false, error: null });
@@ -256,7 +287,7 @@ export const useConfigStore = create<ConfigStore>((set) => {
     try {
       const saved = await configApi.reset();
       cancelPendingPatches(String(getActiveCorpusId() || ''));
-      set({ config: saved, saving: false, error: null });
+      set({ config: saved, persisted: saved, saving: false, error: null });
     } catch (error) {
       set({
         saving: false,
@@ -265,22 +296,15 @@ export const useConfigStore = create<ConfigStore>((set) => {
     }
   },
 
-  loadEvalKeyCategories: () => {
-    // Minimal implementation: keep empty mapping (everything groups as "Other").
-    // If/when we want richer grouping, we can populate this deterministically from
-    // `TriBridConfig.to_flat_dict()` key prefixes.
-    set({ evalKeyCategories: {} });
-  },
-
   reset: () =>
     (() => {
       cancelPendingPatches();
       set({
       config: null,
+      persisted: null,
       loading: false,
       error: null,
       saving: false,
-      evalKeyCategories: {},
       })
     })(),
 });
