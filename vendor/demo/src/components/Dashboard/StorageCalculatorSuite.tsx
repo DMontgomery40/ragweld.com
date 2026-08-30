@@ -1,5 +1,5 @@
 // TriBrid RAG Storage Calculator Suite v2.0 - TSX Component
-// Calculates storage for pgvector, Neo4j, and sparse indices
+// Calculates storage for Qdrant dense vectors, Neo4j, and sparse indices
 // Connected to Pydantic config for default values
 
 import { useState, useEffect, useCallback } from 'react';
@@ -103,7 +103,7 @@ export function StorageCalculatorSuite() {
     chunkUnit: 1024, // KiB
     embDim: 3072, // Default for text-embedding-3-large
     precision: 4, // float32
-    pgvectorOverhead: 1.15, // pgvector HNSW index overhead (lower than Qdrant)
+    pgvectorOverhead: 1.3, // Qdrant HNSW index overhead over raw dense vectors
     hydration: 100,
     replication: 3,
     // Neo4j defaults - estimated from typical entity extraction
@@ -159,7 +159,7 @@ export function StorageCalculatorSuite() {
     const hydrationPct = calc1.hydration / 100;
     const replFactor = calc1.replication;
 
-    // Vector storage (pgvector)
+    // Vector storage (Qdrant dense)
     const N = Math.ceil(R / C);
     const E = N * D * B;
     const PG_bytes = E * PG;
@@ -396,8 +396,8 @@ export function StorageCalculatorSuite() {
               <div className="input-group">
                 <label>
                   <div className="label-with-tooltip">
-                    pgvector Overhead
-                    <span className="tooltip" title="HNSW index overhead. Typically 1.1-1.2x for pgvector (lower than Qdrant)">?</span>
+                    Qdrant HNSW Overhead
+                    <span className="tooltip" title="HNSW index overhead over raw dense vectors. Typically 1.1-1.5x for Qdrant">?</span>
                   </div>
                 </label>
                 <input
@@ -446,7 +446,7 @@ export function StorageCalculatorSuite() {
 
             {/* Neo4j Graph Storage Inputs */}
             <div style={{ borderTop: '1px solid var(--line)', marginTop: '16px', paddingTop: '16px' }}>
-              <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--accent)', marginBottom: '12px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--accent-text)', marginBottom: '12px' }}>
                 📊 Neo4j Graph Storage
               </div>
               <div className="input-row">
@@ -528,7 +528,7 @@ export function StorageCalculatorSuite() {
                   <span className="result-value">{formatBytes(results1.embeddings)}</span>
                 </div>
                 <div className="result-item">
-                  <span className="result-label">pgvector Index</span>
+                  <span className="result-label">Qdrant Dense Index</span>
                   <span className="result-value">{formatBytes(results1.pgvectorSize)}</span>
                 </div>
                 <div className="result-item">
@@ -551,7 +551,7 @@ export function StorageCalculatorSuite() {
 
               {/* Neo4j Graph Storage Results */}
               <div style={{ borderTop: '1px solid var(--line)', marginTop: '16px', paddingTop: '16px' }}>
-                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--accent)', marginBottom: '8px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--accent-text)', marginBottom: '8px' }}>
                   📊 Neo4j Graph Storage
                 </div>
                 <div className="result-grid">
@@ -569,7 +569,7 @@ export function StorageCalculatorSuite() {
                   </div>
                   <div className="result-item">
                     <span className="result-label">Graph Total</span>
-                    <span className="result-value" style={{ color: 'var(--accent)' }}>{formatBytes(results1.neo4jTotal)}</span>
+                    <span className="result-value" style={{ color: 'var(--accent-text)' }}>{formatBytes(results1.neo4jTotal)}</span>
                   </div>
                 </div>
               </div>
@@ -774,7 +774,7 @@ export function StorageCalculatorSuite() {
                     <div className="plan-details" style={{ lineHeight: 1.8 }}>
                       <strong>Includes:</strong><br />
                       • Product Quantized vectors<br />
-                      • pgvector HNSW index<br />
+                      • Qdrant HNSW index<br />
                       • BM25 sparse search<br />
                       • Chunk summaries<br />
                       • Reranker cache<br />
@@ -788,7 +788,7 @@ export function StorageCalculatorSuite() {
                     <div className="plan-details" style={{ lineHeight: 1.8 }}>
                       <strong>Includes:</strong><br />
                       • float16 vectors<br />
-                      • pgvector HNSW index<br />
+                      • Qdrant HNSW index<br />
                       • BM25 sparse search<br />
                       • Chunk summaries<br />
                       • Reranker cache<br />
@@ -824,7 +824,7 @@ export function StorageCalculatorSuite() {
 
       <div className="storage-calc-footer">
         <p>TriBrid RAG • Enterprise Storage Calculator v2.0</p>
-        <p>Precision calculations for pgvector + Neo4j + BM25 infrastructure</p>
+        <p>Precision calculations for Qdrant + Neo4j + sparse BM25 infrastructure</p>
       </div>
     </div>
   );
