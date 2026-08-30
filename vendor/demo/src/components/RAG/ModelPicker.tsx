@@ -1,7 +1,8 @@
 /**
  * ModelPicker - Model dropdown from models.json
  *
- * Uses useModels hook to load models filtered by component type (EMB/GEN/RERANK).
+ * Uses useModels to load embedding/reranker catalog rows. Generation aliases
+ * come from the authenticated Chat model picker instead.
  * When `provider` is given, shows models for that provider only.
  * When `provider` is omitted, shows all providers grouped via <optgroup>.
  */
@@ -12,7 +13,9 @@ import { TooltipIcon } from '@/components/ui/TooltipIcon';
 
 interface ModelPickerProps {
   /** Component type filter */
-  componentType: 'EMB' | 'GEN' | 'RERANK';
+  componentType: 'EMB' | 'RERANK';
+  /** Optional runtime selection role filter */
+  selectionRole?: 'embedding_provider' | 'reranker_cloud';
   /** Provider to filter models by. When omitted, all providers shown grouped. */
   provider?: string;
   /** Current selected model name */
@@ -27,10 +30,13 @@ interface ModelPickerProps {
   allowCustom?: boolean;
   /** Disabled state */
   disabled?: boolean;
+  /** Optional model-level filter */
+  modelFilter?: (model: Model) => boolean;
 }
 
 export function ModelPicker({
   componentType,
+  selectionRole,
   provider,
   value,
   onChange,
@@ -38,27 +44,28 @@ export function ModelPicker({
   label,
   allowCustom = false,
   disabled = false,
+  modelFilter,
 }: ModelPickerProps) {
-  const { models, loading, error, providers, getModelsForProvider } = useModels(componentType);
+  const { models, loading, error, providers, getModelsForProvider } = useModels(componentType, { selectionRole });
   const [customMode, setCustomMode] = useState(false);
   const [customValue, setCustomValue] = useState('');
 
   // When provider is given, filter to that provider; otherwise use all models
   const providerModels = useMemo(() => {
-    if (provider) return getModelsForProvider(provider);
-    return models;
-  }, [getModelsForProvider, provider, models]);
+    const baseModels = provider ? getModelsForProvider(provider) : models;
+    return modelFilter ? baseModels.filter(modelFilter) : baseModels;
+  }, [getModelsForProvider, provider, models, modelFilter]);
 
   // Grouped models by provider (used when provider is omitted)
   const groupedModels = useMemo(() => {
     if (provider) return null;
     const groups: Array<{ provider: string; models: Model[] }> = [];
     for (const p of providers) {
-      const pModels = getModelsForProvider(p);
+      const pModels = modelFilter ? getModelsForProvider(p).filter(modelFilter) : getModelsForProvider(p);
       if (pModels.length > 0) groups.push({ provider: p, models: pModels });
     }
     return groups;
-  }, [provider, providers, getModelsForProvider]);
+  }, [provider, providers, getModelsForProvider, modelFilter]);
 
   // Check if current value is in the list (for custom detection)
   const isValueCustom = useMemo(() => {
