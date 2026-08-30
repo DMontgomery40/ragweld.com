@@ -6,12 +6,14 @@
  *
  * To regenerate: uv run scripts/generate_types.py
  *
- * ALL TypeScript types for API data MUST be imported from this file.
- * Hand-writing interfaces that should come from Pydantic is FORBIDDEN.
+ * Public wire types for the registered public API and configuration boundary
+ * MUST be imported from this file.
+ * Local UI state and view models may be handwritten near their owning feature;
+ * they must not duplicate a public wire payload.
  *
  * This file contains:
  * - Configuration interfaces (TriBridConfig and sub-configs)
- * - Domain model interfaces (ChunkMatch, SearchRequest, Entity, etc.)
+ * - Registered public API interfaces (ChunkMatch, SearchRequest, Entity, etc.)
  */
 
 /** What the user has checked in the data sources dropdown.  This is what the frontend sends. The backend passes corpus_ids straight into fusion. */
@@ -50,6 +52,14 @@ export interface AgentTrainRunMeta {
   completed_at?: string | null; // default: None
   primary_metric_best?: number | null; // default: None
   primary_metric_final?: number | null; // default: None
+  workflow_backend?: string; // default: "local"
+  tracking_backend?: string; // default: "local"
+  execution_backend?: string; // default: "mlx_qwen3"
+  workflow_run_id?: string | null; // default: None
+  workflow_phase?: string | null; // default: None
+  tracking_run_id?: string | null; // default: None
+  bundle_id?: string | null; // default: None
+  lineage_ref?: LineageRef | null; // default: None
 }
 
 export interface AgentTrainRunSummary {
@@ -62,6 +72,18 @@ export interface AgentTrainRunSummary {
   primary_goal?: "minimize" | "maximize"; // default: "minimize"
 }
 
+/** Per-phase benchmark timing delta. */
+export interface BenchmarkBreakdownDelta {
+  /** Benchmark breakdown phase. */
+  phase: string;
+  /** Latest average phase duration in ms. */
+  current_ms?: number | null; // default: None
+  /** Previous average phase duration in ms. */
+  previous_ms?: number | null; // default: None
+  /** Current minus previous duration in ms. */
+  delta_ms?: number | null; // default: None
+}
+
 /** Split-screen model comparison + pipeline profiling. */
 export interface BenchmarkConfig {
   enabled?: boolean; // default: True
@@ -72,10 +94,71 @@ export interface BenchmarkConfig {
   include_timing_breakdown?: boolean; // default: True
 }
 
+/** Per-model result from a benchmark run. */
+export interface BenchmarkResult {
+  /** Model override used for this result row. */
+  model: string;
+  /** Best-effort generated response. */
+  response?: string; // default: ""
+  /** End-to-end latency for this model in milliseconds. */
+  latency_ms?: number; // default: 0.0
+  /** Timing breakdown by phase. */
+  breakdown_ms?: Record<string, number>;
+  /** Error string when the model call failed. */
+  error?: string | null; // default: None
+  /** Retrieved chunks that fit this model's context window and were sent with the prompt. */
+  context_chunks_used?: number; // default: 0
+  /** Optional resolved model id. */
+  model_id?: string | null; // default: None
+  /** Optional human-readable model name. */
+  model_name?: string | null; // default: None
+}
+
+/** How a benchmark run grounded its prompt before generation. */
+export interface BenchmarkRetrieval {
+  /** Corpus the prompt was retrieved against; null when the run had no corpus scope. */
+  corpus_id?: string | null; // default: None
+  /** True when at least one retrieved chunk was offered to every model. */
+  grounded: boolean;
+  /** Chunks retrieved through the tri-brid lane for this prompt. */
+  chunk_count?: number; // default: 0
+  /** Why no retrieval context was available (no corpus scope, no matches); null when grounded. */
+  reason?: string | null; // default: None
+  /** Distinct source file paths of the retrieved chunks, best rank first. */
+  source_paths?: string[];
+}
+
+/** Persisted benchmark run record. */
+export interface BenchmarkRun {
+  /** Unique benchmark run identifier. */
+  run_id: string;
+  /** Optional corpus identifier when benchmarking within a corpus scope. */
+  corpus_id?: string | null; // default: None
+  /** Prompt benchmarked across models. */
+  prompt: string;
+  /** Requested model overrides. */
+  models?: string[];
+  /** Run start timestamp in milliseconds since epoch. */
+  started_at_ms?: number; // default: 0
+  /** Run completion timestamp in milliseconds since epoch. */
+  ended_at_ms?: number; // default: 0
+  /** Per-model benchmark results. */
+  results?: BenchmarkResult[];
+  /** Grounding used for this run; null on records persisted before retrieval-backed benchmarks. */
+  retrieval?: BenchmarkRetrieval | null; // default: None
+  /** Current bundle id captured before the run started. */
+  input_bundle_id?: string | null; // default: None
+  /** Bundle id after attaching this run to lineage. */
+  bundle_id?: string | null; // default: None
+  /** Immutable benchmark run version reference. */
+  lineage_ref?: LineageRef | null; // default: None
+}
+
 /** Top-level chat configuration. Lives at TriBridConfig.chat.  KEY CONCEPT: There are no modes. The user checks/unchecks data sources. Recall is always available and ON by default. Corpora are available when indexed. Everything composes freely. */
 export interface ChatConfig {
   /** Default checked user-facing corpus IDs for new conversations. */
-  default_corpus_ids?: string[]; // default: ["epstein-files-1"]
+  default_corpus_ids?: string[]; // default: ["recall_default"]
+  web?: ChatWebConfig;
   system_prompt_base?: string; // default: "You are a helpful assistant."
   system_prompt_recall_suffix?: string; // default: " You have access to conversation history. Refer..."
   system_prompt_rag_suffix?: string; // default: " Answer questions using the provided database i..."
@@ -91,24 +174,22 @@ export interface ChatConfig {
   recall_gate?: RecallGateConfig;
   multimodal?: ChatMultimodalConfig;
   image_gen?: ImageGenConfig;
-  local_models?: LocalModelConfig;
-  openrouter?: OpenRouterConfig;
+  vllm?: VLLMConfig;
+  litellm?: LiteLLMConfig;
   benchmark?: BenchmarkConfig;
-  /** Protocol for OpenAI cloud_direct calls. 'auto' routes codex-only models to Responses. */
-  openai_protocol?: "auto" | "responses" | "chat_completions"; // default: "auto"
   temperature?: number; // default: 0.3
   /** Temperature when nothing is checked (direct chat = more creative) */
   temperature_no_retrieval?: number; // default: 0.7
-  max_tokens?: number; // default: 4096
+  max_tokens?: number; // default: 512
   show_source_dropdown?: boolean; // default: True
   send_shortcut?: string; // default: "ctrl+enter"
 }
 
 /** Developer-facing debug metadata for a single chat answer. */
 export interface ChatDebugInfo {
-  /** Whether an LLM/provider response was used (false = retrieval-only fallback). */
+  /** Whether an LLM/provider response was successfully used for the answer. */
   llm_used?: boolean; // default: True
-  /** Short reason the LLM was not used (best-effort; never includes secrets). */
+  /** Short best-effort reason generation failed or was unavailable (never includes secrets). */
   llm_error?: string | null; // default: None
   /** Heuristic confidence score for this answer (0-1). */
   confidence?: number | null; // default: None
@@ -172,22 +253,32 @@ export interface ChatModelInfo {
   id: string;
   /** Canonical model_override value to send in chat requests */
   override: string;
-  /** Provider display name (e.g., OpenRouter, Ollama) */
+  /** Gateway display name */
   provider: string;
-  /** Provider key used in the model catalog */
+  /** Gateway key */
   provider_key?: string | null; // default: None
-  /** Catalog model identifier when sourced from /api/models */
+  /** Optional catalog identity */
   catalog_model?: string | null; // default: None
   /** Capabilities for this model option */
   components?: ("GEN" | "EMB" | "RERANK")[];
   /** Model source group for UI grouping. */
-  source: "cloud_direct" | "openrouter" | "local" | "ragweld";
-  /** Provider type (ollama, llamacpp, openrouter, etc) */
+  source: "litellm";
+  /** Gateway type */
   provider_type?: string | null; // default: None
-  /** Provider base URL (local/openrouter) */
+  /** LiteLLM base URL */
   base_url?: string | null; // default: None
   /** Whether this model is expected to support vision inputs */
   supports_vision?: boolean; // default: False
+  /** Upstream provider slug from the model catalog row behind this alias (for UI grouping). */
+  catalog_provider?: string | null; // default: None
+  /** Human-readable name from the catalog row, when known */
+  display_name?: string | null; // default: None
+  /** Maximum context tokens from the catalog row, when known */
+  context?: number | null; // default: None
+  /** Input cost per 1k tokens from the catalog row */
+  input_per_1k?: number | null; // default: None
+  /** Output cost per 1k tokens from the catalog row */
+  output_per_1k?: number | null; // default: None
 }
 
 /** Image upload + vision model configuration. */
@@ -204,14 +295,24 @@ export interface ChatMultimodalConfig {
 
 /** Selected provider route for a chat answer. */
 export interface ChatProviderInfo {
-  /** Provider kind (router selection) */
-  kind: "cloud_direct" | "openrouter" | "local" | "ragweld";
-  /** Provider display name (e.g., OpenAI, OpenRouter, Ollama) */
+  /** Application-visible generation boundary */
+  kind: "litellm";
+  /** Gateway display name */
   provider_name: string;
-  /** Model identifier sent to provider */
+  /** LiteLLM model alias */
   model: string;
-  /** Provider base URL (when applicable) */
+  /** LiteLLM OpenAI-compatible base URL */
   base_url?: string | null; // default: None
+}
+
+/** Server-owned OpenRouter web-search policy for ordinary chat. */
+export interface ChatWebConfig {
+  /** Allow opt-in web search in Chat. */
+  enabled?: boolean; // default: True
+  engine?: "auto" | "native" | "exa"; // default: "auto"
+  max_results?: number; // default: 5
+  max_total_results?: number; // default: 5
+  max_characters?: number; // default: 12000
 }
 
 /** Unified result shape for vector/sparse/graph retrieval. */
@@ -234,6 +335,20 @@ export interface ChunkMatch {
   source: "vector" | "sparse" | "graph";
   /** Additional match metadata */
   metadata?: Record<string, unknown>;
+  /** Extraction and page provenance; None for chunks indexed before provenance capture */
+  provenance?: ChunkProvenance | null; // default: None
+}
+
+/** Where a chunk came from in its source document: extraction method plus page regions.  Direct text/code extraction has line spans only (``regions`` empty, pages ``None``). Docling extraction carries one region per contributing layout item. */
+export interface ChunkProvenance {
+  /** How the source text was extracted */
+  extraction: "docling" | "direct";
+  /** First cited page (1-based) */
+  page_start?: number | null; // default: None
+  /** Last cited page (1-based) */
+  page_end?: number | null; // default: None
+  /** Layout regions the chunk text was taken from */
+  regions?: PageRegion[];
 }
 
 /** Metadata about the most recent chunk_summaries build. */
@@ -317,7 +432,7 @@ export interface ChunkingConfig {
   /** Chunking strategy (document + code) */
   chunking_strategy?: string; // default: "ast"
   /** Include imports in chunks */
-  preserve_imports?: number; // default: 1
+  preserve_imports?: boolean; // default: True
   /** Target tokens per chunk (token-based strategies) */
   target_tokens?: number; // default: 512
   /** Token overlap between chunks (token-based strategies) */
@@ -336,6 +451,64 @@ export interface ChunkingConfig {
   emit_chunk_ordinal?: boolean; // default: True
   /** Emit parent document id metadata for neighbor-window retrieval. */
   emit_parent_doc_id?: boolean; // default: True
+}
+
+/** Runtime capability matrix for chunking. */
+export interface ChunkingRuntimeCapabilities {
+  /** Chunking strategies implemented today. */
+  strategies?: RuntimeOption[];
+}
+
+/** Registry entry for one leaf config field in TriBridConfig. */
+export interface ConfigFieldDescriptor {
+  /** Dotted leaf path inside TriBridConfig. */
+  path: string;
+  /** Top-level TriBridConfig section. */
+  section: string;
+  /** Human-readable field label. */
+  label: string;
+  /** Normalized UI type for the field (string, integer, number, boolean, enum, array, object). */
+  type: string;
+  /** Default value from the Pydantic model, when serializable. */
+  default?: unknown | null; // default: None
+  /** Field description pulled from the source-of-truth model. */
+  description?: string | null; // default: None
+  /** Primary operator scope for the field. */
+  scope: "global" | "corpus";
+  /** Integration contract responsible for this field. */
+  integration: string;
+  /** Layered operator exposure tier for the field. */
+  exposure_level: "basic" | "advanced" | "expert";
+  /** Primary operator impact when the field changes. */
+  impact: "live" | "restart" | "reindex" | "redeploy";
+  /** Env-only secrets that may be required for this field to take effect. */
+  secret_dependency_ids?: string[];
+  /** Workbench configuration surface that owns this field. */
+  ui_surface: string;
+  /** Allowed enum values when the field is a closed choice. */
+  enum_values?: string[];
+  /** Whether the field is exposed for inspection only in the configuration center. */
+  read_only?: boolean; // default: False
+}
+
+/** Registry contract for one OSS integration or protected operator surface. */
+export interface ConfigIntegrationContract {
+  /** Stable integration identifier. */
+  id: string;
+  /** Human-readable integration label. */
+  label: string;
+  /** Short explanation of the subsystem boundary. */
+  summary: string;
+  /** Primary workbench surface that owns this contract. */
+  ui_surface: string;
+  /** High-signal config fields required to operate this integration. */
+  required_config_paths?: string[];
+  /** Env-only secret requirements that block this integration when missing. */
+  required_secret_ids?: string[];
+  /** Deterministic checks performed by /api/config/readiness for this integration. */
+  readiness_checks?: string[];
+  /** Operator surfaces that are misleading or blocked when this contract is not ready. */
+  blocked_surfaces?: string[];
 }
 
 export interface CorpusEvalProfile {
@@ -371,7 +544,7 @@ export interface DashboardIndexCosts {
   total_tokens?: number; // default: 0
   /** Estimated embedding cost (USD) when pricing data is available. */
   embedding_cost?: number | null; // default: None
-  /** Estimated semantic KG extraction cost (USD) when semantic_kg_mode='llm'. */
+  /** Estimated GraphRAG semantic extraction cost (USD) when enabled. */
   semantic_kg_cost?: number | null; // default: None
   /** Estimated total indexing cost (USD): embedding + semantic KG (when applicable). */
   total_cost?: number | null; // default: None
@@ -399,53 +572,58 @@ export interface DashboardIndexStatusMetadata {
   total_storage?: number; // default: 0
 }
 
-/** Storage breakdown for the Dashboard index summary (bytes).  NOTE: - Values are best-effort and may be allocated/estimated when a storage   component cannot be attributed to a single corpus directly (e.g., shared   Postgres indexes). */
+/** Storage breakdown for the Dashboard index summary (bytes).  NOTE: - Postgres and Neo4j values are measured; the Qdrant dense-vector figure is   an estimate because Qdrant does not expose per-collection disk usage. */
 export interface DashboardIndexStorageBreakdown {
-  /** Bytes used by chunk content + metadata in Postgres (corpus-scoped). */
+  /** Bytes used by chunk content + metadata rows in Postgres (corpus-scoped). */
   chunks_bytes?: number; // default: 0
-  /** Bytes used by stored embeddings in Postgres (corpus-scoped). */
-  embeddings_bytes?: number; // default: 0
-  /** Bytes used by pgvector index structures (0 if not created; may be allocated/estimated). */
-  pgvector_index_bytes?: number; // default: 0
-  /** Allocated bytes for Postgres full-text (BM25/FTS) index (may be allocated/estimated). */
-  bm25_index_bytes?: number; // default: 0
   /** Bytes used by chunk_summaries in Postgres (corpus-scoped). */
   chunk_summaries_bytes?: number; // default: 0
+  /** Points in the corpus Qdrant generation (one per chunk; dense and/or sparse vectors). */
+  qdrant_points?: number; // default: 0
+  /** Estimated bytes of dense vectors in Qdrant (dense points x dimensions x 4 bytes). */
+  qdrant_dense_vector_bytes?: number; // default: 0
   /** Total Neo4j store size for the resolved database (bytes). */
   neo4j_store_bytes?: number; // default: 0
-  /** Total Postgres bytes (sum of Postgres components, including allocations). */
+  /** Total Postgres bytes (chunk rows + chunk summaries). */
   postgres_total_bytes?: number; // default: 0
-  /** Total storage bytes across Postgres + Neo4j. */
+  /** Total storage bytes across Postgres + Qdrant (estimate) + Neo4j. */
   total_storage_bytes?: number; // default: 0
+}
+
+/** Public error detail returned when a required runtime dependency is unavailable. */
+export interface DependencyUnavailableDetail {
+  code?: "dependency_unavailable"; // default: "dependency_unavailable"
+  /** Unavailable required dependency */
+  dependency: "postgres" | "neo4j" | "qdrant" | "embedding_provider" | "ragas" | "promptfoo" | "feedback_log" | "lineage_store";
+  /** API operation that could not complete */
+  operation: string;
+  /** Stable, non-sensitive failure summary */
+  message: string;
+  /** Whether the caller may retry after operator remediation */
+  retryable?: boolean; // default: True
+  /** High-signal next step for the operator */
+  operator_hint: string;
 }
 
 /** Docker infrastructure configuration. */
 export interface DockerConfig {
-  /** Docker socket URL (e.g., unix:///var/run/docker.sock). Leave empty for auto-detection. */
-  docker_host?: string; // default: ""
   /** Timeout for Docker status check (seconds) */
   docker_status_timeout?: number; // default: 5
   /** Timeout for Docker container list (seconds) */
   docker_container_list_timeout?: number; // default: 10
   /** Timeout for Docker container actions (start/stop/restart) */
   docker_container_action_timeout?: number; // default: 30
-  /** Timeout for Docker infrastructure up command (seconds) */
-  docker_infra_up_timeout?: number; // default: 60
-  /** Timeout for Docker infrastructure down command (seconds) */
-  docker_infra_down_timeout?: number; // default: 30
   /** Default number of log lines to tail from containers */
   docker_logs_tail?: number; // default: 100
-  /** Include timestamps in Docker logs (1=yes, 0=no) */
-  docker_logs_timestamps?: number; // default: 1
+  /** Include timestamps in Docker logs */
+  docker_logs_timestamps?: boolean; // default: True
   /** Port for dev frontend (Vite) */
-  dev_frontend_port?: number; // default: 5173
+  dev_frontend_port?: number; // default: 55173
   /** Port for dev backend (Uvicorn) */
-  dev_backend_port?: number; // default: 8012
-  /** Timeout for dev stack restart operations (seconds) */
-  dev_stack_restart_timeout?: number; // default: 30
+  dev_backend_port?: number; // default: 58012
 }
 
-/** Normalized Docker container entry used by the Docker tab + dashboard. */
+/** Ragweld-owned Compose service exposed to the local Docker control surface. */
 export interface DockerContainer {
   /** Full container ID. */
   id: string;
@@ -461,12 +639,101 @@ export interface DockerContainer {
   status: string;
   /** Port mapping summary string (may be empty). */
   ports?: string | null; // default: None
-  /** Docker Compose project label (if present). */
-  compose_project?: string | null; // default: None
-  /** Docker Compose service label (if present). */
-  compose_service?: string | null; // default: None
-  /** Whether this container belongs to the TriBrid dev stack. */
-  tribrid_managed?: boolean; // default: False
+  /** Exact Docker Compose project label; always ragweld on this surface. */
+  compose_project: string;
+  /** Allowlisted Docker Compose service label. */
+  compose_service: string;
+  /** Whether exact Ragweld project and ownership labels authorize local control. */
+  managed: boolean;
+}
+
+/** Public error detail (HTTP 409): a rich document has no captured markdown to show. */
+export interface DocumentNotCapturedDetail {
+  code?: "document_not_captured"; // default: "document_not_captured"
+  /** Corpus the file belongs to */
+  corpus_id: string;
+  /** Corpus-root-relative POSIX path */
+  file_path: string;
+  /** Stable, non-sensitive summary */
+  message: string;
+  /** What the operator can do next */
+  operator_hint: string;
+}
+
+/** PDF document: pages are rendered on demand through the page endpoint. */
+export interface DocumentPdfView {
+  kind?: "pdf"; // default: "pdf"
+  /** Number of pages */
+  page_count: number;
+  /** Page sizes in points, index 0 = page 1 */
+  page_sizes: PageSize[];
+}
+
+/** The file has a provenance record from indexing. */
+export interface DocumentProvenanceCaptured {
+  state?: "captured"; // default: "captured"
+  /** How the file was extracted at index time */
+  extraction: "docling" | "direct";
+  /** SHA-256 of the file at index time */
+  sha256: string;
+  /** File size at index time */
+  byte_size: number;
+  /** When the provenance record was written */
+  indexed_at: string;
+  /** True when the file on disk no longer matches sha256 */
+  stale: boolean;
+}
+
+/** The file was indexed before provenance capture existed; re-index to enable it. */
+export interface DocumentProvenanceNotCaptured {
+  state?: "not_captured"; // default: "not_captured"
+  /** Stable, non-sensitive summary */
+  message: string;
+  /** What the operator can do next */
+  operator_hint: string;
+}
+
+/** Rich document (docx/pptx/xlsx/html) shown as the Docling markdown the chunks were cut from. */
+export interface DocumentRichView {
+  kind?: "rich"; // default: "rich"
+  /** Docling markdown export captured at index time */
+  markdown: string;
+}
+
+/** Plain text/code document content for the viewer. */
+export interface DocumentTextView {
+  kind?: "text"; // default: "text"
+  /** Full file text decoded exactly as the indexer decoded it */
+  text: string;
+  /** Number of lines in text */
+  line_count: number;
+}
+
+/** Public error detail (HTTP 413): a text document exceeds the viewer size limit. */
+export interface DocumentTooLargeDetail {
+  code?: "document_too_large"; // default: "document_too_large"
+  /** Corpus the file belongs to */
+  corpus_id: string;
+  /** Corpus-root-relative POSIX path */
+  file_path: string;
+  /** Current file size on disk */
+  byte_size: number;
+  /** Configured document_viewer.max_text_bytes */
+  max_text_bytes: number;
+  /** Stable, non-sensitive summary */
+  message: string;
+  /** What the operator can do next */
+  operator_hint: string;
+}
+
+/** Source document evidence viewer: how cited files are rendered back to the user. */
+export interface DocumentViewerConfig {
+  /** PDF page raster scale for the viewer (1.0 = 72 dpi; 2.0 = 144 dpi) */
+  page_render_scale?: number; // default: 2.0
+  /** PDF page raster scale for citation thumbnails in chat */
+  thumbnail_render_scale?: number; // default: 0.5
+  /** Largest text/code file the viewer will serve in full */
+  max_text_bytes?: number; // default: 5000000
 }
 
 /** Embedding generation and caching configuration. */
@@ -494,7 +761,7 @@ export interface EmbeddingConfig {
   /** Voyage embedding model */
   voyage_model?: string; // default: "voyage-code-3"
   /** Local SentenceTransformer model */
-  embedding_model_local?: string; // default: "all-MiniLM-L6-v2"
+  embedding_model_local?: string; // default: "BAAI/bge-small-en-v1.5"
   /** MLX-optimized embedding model (used when embedding_type=mlx) */
   embedding_model_mlx?: string; // default: "mlx-community/all-MiniLM-L6-v2-4bit"
   /** Batch size for embedding generation */
@@ -502,21 +769,45 @@ export interface EmbeddingConfig {
   /** Max tokens per embedding chunk */
   embedding_max_tokens?: number; // default: 8000
   /** Enable embedding cache */
-  embedding_cache_enabled?: number; // default: 1
+  embedding_cache_enabled?: boolean; // default: True
   /** Embedding API timeout (seconds) */
   embedding_timeout?: number; // default: 30
   /** Max retries for embedding API */
   embedding_retry_max?: number; // default: 3
 }
 
+/** Runtime capability matrix for embeddings. */
+export interface EmbeddingRuntimeCapabilities {
+  /** Dense embedding backends supported today. */
+  backends?: RuntimeOption[];
+  /** Embedding providers supported for embedding_backend='provider'. */
+  providers?: EmbeddingRuntimeProviderCapability[];
+}
+
+/** Embedding provider capability exposed by the runtime. */
+export interface EmbeddingRuntimeProviderCapability {
+  /** Embedding provider identifier */
+  provider: string;
+  /** Human-readable provider label */
+  label: string;
+  /** Short explanation of the provider runtime path */
+  description: string;
+  /** UI badge hint for the provider */
+  badge: "local" | "cloud";
+  /** Config field that stores the effective model id for this provider */
+  model_config_field: string;
+  /** Tokenizer strategies required or supported for this provider runtime path. */
+  tokenizer_strategies?: string[];
+}
+
 /** Code enrichment and chunk_summary generation configuration. */
 export interface EnrichmentConfig {
   /** Enable chunk_summary enrichment by default */
-  chunk_summaries_enrich_default?: number; // default: 1
+  chunk_summaries_enrich_default?: boolean; // default: True
   /** Max chunk_summaries to generate */
   chunk_summaries_max?: number; // default: 100
   /** Enable chunk enrichment */
-  enrich_code_chunks?: number; // default: 1
+  enrich_code_chunks?: boolean; // default: True
   /** Min chars for enrichment */
   enrich_min_chars?: number; // default: 50
   /** Max chars for enrichment prompt */
@@ -590,6 +881,8 @@ export interface EvalMetrics {
   latency_p50_ms: number;
   /** 95th percentile latency in ms */
   latency_p95_ms: number;
+  /** Mean Ragas scores by metric name when Ragas scoring ran for this run. */
+  ragas?: Record<string, number>;
 }
 
 /** Per-entry evaluation result. */
@@ -622,6 +915,12 @@ export interface EvalResult {
   docs?: EvalDoc[];
   /** Per-query retrieval debug (best-effort, for explaining empty results). */
   debug?: Record<string, unknown>;
+  /** The dataset entry's expected answer at evaluation time (kept with the trace for triplet mining). */
+  expected_answer?: string | null; // default: None
+  /** Gateway-generated answer scored by Ragas when Ragas scoring ran. */
+  generated_answer?: string | null; // default: None
+  /** Per-entry Ragas scores by metric name when Ragas scoring ran. */
+  ragas?: Record<string, number>;
 }
 
 /** Summary metadata for listing eval runs. */
@@ -640,6 +939,10 @@ export interface EvalRunMeta {
   duration_secs: number;
   /** Whether config snapshot is present */
   has_config?: boolean; // default: True
+  /** Bundle id associated with this eval run. */
+  bundle_id?: string | null; // default: None
+  /** Immutable eval run version reference. */
+  lineage_ref?: LineageRef | null; // default: None
 }
 
 /** Evaluation dataset configuration. */
@@ -660,15 +963,38 @@ export interface EvaluationConfig {
   ndcg_at_10_k?: number; // default: 10
   /** Multi-query variants for evaluation */
   eval_multi_m?: number; // default: 10
+  /** Run Ragas generation-quality scoring (faithfulness, answer relevancy) during eval runs. Each entry is answered through the LiteLLM gateway and judged by the configured judge alias. */
+  ragas_enabled?: boolean; // default: False
+  /** LiteLLM alias used as the Ragas judge; empty uses the chat default alias. */
+  ragas_judge_model?: string; // default: ""
+  /** Ragas metrics to compute per eval entry (faithfulness, answer_relevancy). */
+  ragas_metrics?: string[];
+  /** LiteLLM alias used by Promptfoo llm-rubric assertions; empty uses the chat default alias. */
+  promptfoo_grader_model?: string; // default: ""
+  /** Per-request timeout for Ragas judge calls through LiteLLM. Local CPU serving needs minutes; a timeout fails the eval run closed rather than skipping scores. */
+  ragas_judge_timeout_s?: number; // default: 600
+  /** Output token budget for eval judges: the Ragas judge alias and the Promptfoo llm-rubric grader. Independent of chat.max_tokens because faithfulness statement lists and reasoning-capable aliases need more room than a chat answer; a truncated verdict fails the run closed. */
+  judge_max_tokens?: number; // default: 4096
+}
+
+/** Public error detail (HTTP 409) when indexing.figures.vision_model cannot be used. */
+export interface FigureRouteConflictDetail {
+  code?: "figure_vision_alias"; // default: "figure_vision_alias"
+  /** The configured indexing.figures.vision_model alias */
+  alias: string;
+  /** Stable, non-sensitive summary */
+  message: string;
+  /** What the operator can do next */
+  operator_hint: string;
 }
 
 /** Configuration for tri-brid fusion of vector + sparse + graph results. */
 export interface FusionConfig {
   /** Fusion method: 'rrf' (Reciprocal Rank Fusion) or 'weighted' (score-based) */
   method?: "rrf" | "weighted"; // default: "rrf"
-  /** Weight for vector search results (pgvector) */
+  /** Weight for vector search results (Qdrant dense) */
   vector_weight?: number; // default: 0.4
-  /** Weight for sparse BM25/FTS search results */
+  /** Weight for sparse (Qdrant/bm25) search results */
   sparse_weight?: number; // default: 0.3
   /** Weight for graph search results (Neo4j) */
   graph_weight?: number; // default: 0.3
@@ -680,46 +1006,75 @@ export interface FusionConfig {
 
 /** LLM generation configuration. */
 export interface GenerationConfig {
-  /** Primary generation model */
-  gen_model?: string; // default: "gpt-4o-mini"
+  /** Primary LiteLLM model alias */
+  gen_model?: string; // default: "ragweld-local"
   /** Generation temperature */
   gen_temperature?: number; // default: 0.0
   /** Max tokens for generation */
-  gen_max_tokens?: number; // default: 2048
+  gen_max_tokens?: number; // default: 512
   /** Nucleus sampling threshold */
   gen_top_p?: number; // default: 1.0
-  /** Generation timeout (seconds) */
-  gen_timeout?: number; // default: 60
-  /** Max retries for generation */
-  gen_retry_max?: number; // default: 2
-  /** Model for code enrichment */
-  enrich_model?: string; // default: "gpt-4o-mini"
-  /** Provider backend for gen_model and channel overrides */
-  gen_backend?: string; // default: "openai"
-  /** Enrichment backend */
-  enrich_backend?: string; // default: "openai"
+  /** Generation timeout in seconds for non-chat generation calls (eval analysis, synthetic data); sized for single-stream CPU serving of the local model */
+  gen_timeout?: number; // default: 600
+  /** LiteLLM alias for code enrichment */
+  enrich_model?: string; // default: "ragweld-local"
   /** Disable code enrichment */
-  enrich_disabled?: number; // default: 0
-  /** Context window for Ollama */
-  ollama_num_ctx?: number; // default: 8192
-  /** CLI generation model */
-  gen_model_cli?: string; // default: "qwen3-coder:14b"
-  /** Ollama generation model */
-  gen_model_ollama?: string; // default: "qwen3-coder:30b"
+  enrich_disabled?: boolean; // default: False
+  /** Optional LiteLLM alias for CLI requests */
+  gen_model_cli?: string; // default: ""
   /** HTTP transport generation model override */
   gen_model_http?: string; // default: ""
   /** MCP transport generation model override */
   gen_model_mcp?: string; // default: ""
-  /** Ollama enrichment model */
-  enrich_model_ollama?: string; // default: ""
-  /** Ollama API URL */
-  ollama_url?: string; // default: "http://127.0.0.1:11434/api"
-  /** OpenAI API base URL override (for proxies) */
-  openai_base_url?: string; // default: ""
-  /** Maximum total time to wait for a local (Ollama) generation request to complete (seconds) */
-  ollama_request_timeout?: number; // default: 300
-  /** Maximum idle time allowed between streamed chunks from local (Ollama) during generation (seconds) */
-  ollama_stream_idle_timeout?: number; // default: 60
+}
+
+/** Runtime capability matrix for generation routing and serving. */
+export interface GenerationRuntimeCapabilities {
+  /** Gateway/routing backends that can dispatch generation requests. */
+  routing_backends?: RuntimeOption[];
+  /** Serving runtimes that can execute generation models today. */
+  serving_backends?: RuntimeOption[];
+  /** Provider route selected by the current config/env for a default chat request. */
+  default_route?: ChatProviderInfo | null; // default: None
+}
+
+/** Public error detail returned when the generation gateway cannot complete. */
+export interface GenerationUnavailableDetail {
+  code?: "generation_unavailable"; // default: "generation_unavailable"
+  /** Generation operation that could not complete */
+  operation: string;
+  /** Stable, non-sensitive failure summary */
+  message: string;
+  /** Whether the caller may retry after remediation */
+  retryable?: boolean; // default: True
+  /** High-signal next step for the operator */
+  operator_hint: string;
+}
+
+/** Best-effort git context captured when minting lineage versions. */
+export interface GitSnapshot {
+  /** Resolved HEAD commit SHA when available. */
+  commit_sha?: string | null; // default: None
+  /** Whether the worktree had tracked or untracked changes. */
+  dirty?: boolean; // default: False
+  /** Dirty file paths from git status --porcelain. */
+  dirty_paths?: string[];
+  /** Per-file digests for dirty paths so dirty worktrees remain reproducible. */
+  tracked_files?: GitTrackedFile[];
+}
+
+/** Digest snapshot for a dirty tracked or untracked worktree file. */
+export interface GitTrackedFile {
+  /** Repo-relative path when known. */
+  path: string;
+  /** Git porcelain status code or synthetic status label. */
+  status: string;
+  /** Whether the path existed when the snapshot was taken. */
+  exists?: boolean; // default: True
+  /** Best-effort SHA-256 digest of file bytes. */
+  sha256?: string | null; // default: None
+  /** Best-effort file size in bytes. */
+  bytes?: number | null; // default: None
 }
 
 /** Configuration for building/persisting graph data during indexing. */
@@ -728,9 +1083,11 @@ export interface GraphIndexingConfig {
   enabled?: boolean; // default: True
   /** Build lexical graph (Document/Chunk nodes + NEXT_CHUNK relationships) */
   build_lexical_graph?: boolean; // default: True
+  /** Build an AST code graph during indexing: module, class and function entities with contains/inherits/imports/calls relationships (tree-sitter; Python, TypeScript, JavaScript), each linked to the chunk that defines it */
+  build_code_graph?: boolean; // default: False
   /** Store chunk embeddings on Chunk nodes for Neo4j vector search (requires dense embeddings) */
   store_chunk_embeddings?: boolean; // default: True
-  /** Build semantic knowledge graph (concept entities + relations) linked to chunks during indexing */
+  /** Build an official Neo4j GraphRAG semantic graph with typed entities and relationships linked to chunks during indexing */
   semantic_kg_enabled?: boolean; // default: False
   /** Edge weight for AST containment relationships (module->class/function, class->method). */
   ast_contains_weight?: number; // default: 1.0
@@ -740,13 +1097,15 @@ export interface GraphIndexingConfig {
   ast_imports_weight?: number; // default: 1.0
   /** Edge weight for AST call relationships (function->callee). */
   ast_calls_weight?: number; // default: 1.0
-  /** Semantic KG extraction mode. 'heuristic' is deterministic and test-friendly; 'llm' uses an LLM to extract entities + relations. */
-  semantic_kg_mode?: "heuristic" | "llm"; // default: "heuristic"
-  /** When true, semantic KG extraction preserves/uses typed entities (person, org, location, event, concept). */
-  semantic_kg_typed_entities_enabled?: boolean; // default: False
+  /** Semantic KG extraction mode. This branch targets the official Neo4j GraphRAG LLM path; 'heuristic' is a stale legacy setting. */
+  semantic_kg_mode?: "heuristic" | "llm"; // default: "llm"
+  /** When true, semantic KG extraction preserves typed entities (person, org, location, event, concept). */
+  semantic_kg_typed_entities_enabled?: boolean; // default: True
   /** Allowed semantic KG entity types produced by extraction. */
-  semantic_kg_allowed_entity_types?: ("person" | "org" | "location" | "event" | "concept")[]; // default: ["concept"]
-  /** When true in LLM mode, fail semantic KG extraction for a chunk if LLM extraction fails instead of falling back. */
+  semantic_kg_allowed_entity_types?: ("person" | "org" | "location" | "event" | "concept")[]; // default: ["person", "org", "location", "event", "concept"]
+  /** Allowed semantic KG relationship types produced by extraction. */
+  semantic_kg_allowed_relation_types?: ("associated_with" | "met_with" | "communicated_with" | "works_for" | "member_of" | "founded" | "owns" | "funded" | "participated_in" | "located_in" | "references" | "related_to")[]; // default: ["associated_with", "met_with", "communicated_w...
+  /** When true, fail the indexing run if GraphRAG semantic extraction fails for a chunk. */
   semantic_kg_require_llm_success?: boolean; // default: False
   /** Reasoning effort for semantic KG extraction when using OpenAI Responses-compatible models. */
   semantic_kg_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh"; // default: "medium"
@@ -758,11 +1117,11 @@ export interface GraphIndexingConfig {
   semantic_kg_max_concepts_per_chunk?: number; // default: 8
   /** Minimum length for semantic concept tokens */
   semantic_kg_min_concept_len?: number; // default: 4
-  /** Maximum semantic relations to create per chunk (heuristic mode) */
+  /** Maximum semantic relations to retain per chunk during GraphRAG extraction */
   semantic_kg_max_relations_per_chunk?: number; // default: 12
   /** Maximum chunks to process for semantic KG extraction per indexing run (0 = disabled) */
-  semantic_kg_max_chunks?: number; // default: 200
-  /** LLM model name for semantic KG extraction when semantic_kg_mode='llm' (empty = use generation.enrich_model) */
+  semantic_kg_max_chunks?: number; // default: 40000
+  /** Optional LiteLLM alias for GraphRAG semantic extraction; empty uses the gateway default */
   semantic_kg_llm_model?: string; // default: ""
   /** Timeout (seconds) for semantic KG LLM extraction per chunk */
   semantic_kg_llm_timeout_s?: number; // default: 30
@@ -826,8 +1185,6 @@ export interface GraphStorageConfig {
   neo4j_uri?: string; // default: "bolt://localhost:7687"
   /** Neo4j username */
   neo4j_user?: string; // default: "neo4j"
-  /** Neo4j password (defaults to NEO4J_PASSWORD env var when unset) */
-  neo4j_password?: string;
   /** Neo4j database name */
   neo4j_database?: string; // default: "neo4j"
   /** Database isolation mode: 'shared' uses a single Neo4j database (Community-compatible), 'per_corpus' uses a separate Neo4j database per corpus (Enterprise multi-database). */
@@ -836,8 +1193,6 @@ export interface GraphStorageConfig {
   neo4j_database_prefix?: string; // default: "tribrid_"
   /** Automatically create per-corpus Neo4j databases when missing (Enterprise). */
   neo4j_auto_create_databases?: boolean; // default: True
-  /** Neo4j chunk-vector query mode. 'auto' prefers runtime-safe defaults and only uses SEARCH where supported. */
-  neo4j_vector_query_mode?: "auto" | "procedure" | "search"; // default: "auto"
   /** Maximum traversal hops for graph search */
   max_hops?: number; // default: 2
   /** Include community detection in graph analysis */
@@ -892,6 +1247,53 @@ export interface ImageGenConfig {
   default_resolution?: string; // default: "1024x1024"
 }
 
+/** Public error detail (HTTP 503) while a corpus's de-index tombstone is still being cleaned up. */
+export interface IndexDeletionIncompleteDetail {
+  code?: "index_deletion_incomplete"; // default: "index_deletion_incomplete"
+  /** Corpus whose external index cleanup has not completed */
+  corpus_id: string;
+  /** Collections still to drop */
+  qdrant_collections?: string[];
+  /** Neo4j graphs still to drop */
+  graph_repo_ids?: string[];
+  /** When the deletion tombstone was written */
+  created_at: string;
+  /** Stable, non-sensitive summary */
+  message: string;
+  /** What the operator can do next */
+  operator_hint: string;
+}
+
+/** Public error detail returned (HTTP 409) when a corpus carries a malformed index-run fence. */
+export interface IndexFenceCorruptDetail {
+  code?: "index_fence_corrupt"; // default: "index_fence_corrupt"
+  /** Corpus whose index-run fence is malformed */
+  corpus_id: string;
+  /** Stable, non-sensitive summary */
+  message: string;
+  /** What the operator can do next */
+  operator_hint: string;
+}
+
+/** Public error detail returned (HTTP 409) when a corpus is fenced by a running index run. */
+export interface IndexRunConflictDetail {
+  code?: "index_run_in_progress"; // default: "index_run_in_progress"
+  /** Corpus whose index-run fence is held */
+  corpus_id: string;
+  /** Index run that holds the fence */
+  run_id: string;
+  /** Worker that holds the fence (host:pid) */
+  owner: string;
+  /** When the holding run started */
+  started_at: string;
+  /** Last heartbeat of the holding run */
+  heartbeat_at: string;
+  /** Stable, non-sensitive conflict summary */
+  message: string;
+  /** What the operator can do next */
+  operator_hint: string;
+}
+
 /** Statistics about an indexed repository. */
 export interface IndexStats {
   /** Corpus identifier */
@@ -916,15 +1318,19 @@ export interface IndexStats {
 
 /** Indexing and vector storage configuration. */
 export interface IndexingConfig {
-  /** PostgreSQL connection string (DSN) for pgvector + FTS storage */
+  /** PostgreSQL connection string (DSN) for corpus control/state storage (chunk rows, summaries, caches) */
   postgres_url?: string; // default: "postgresql://postgres:postgres@localhost:5432/t..."
   /** Batch size for indexing */
   indexing_batch_size?: number; // default: 100
+  /** How long a replaced index generation (its Qdrant collection and Neo4j graph) stays readable after a promotion before it is retired. Must cover the longest request that can still hold the old manifest; 0 retires it at the next commit. */
+  generation_retention_seconds?: number; // default: 600
+  /** Lease on the per-corpus index-run fence. A running index heartbeats the fence; a fence whose last heartbeat is older than this is treated as a crashed worker and may be taken over by a new run. */
+  index_run_lease_seconds?: number; // default: 600
   /** Parallel workers for indexing */
   indexing_workers?: number; // default: 4
-  /** BM25 tokenizer type */
+  /** Sparse (Qdrant/bm25) tokenization: 'stemmer' applies the Snowball stemmer for bm25_stemmer_lang; 'lowercase' and 'whitespace' disable stemming. Part of the sparse index contract (re-index on change). */
   bm25_tokenizer?: string; // default: "stemmer"
-  /** Stemmer language */
+  /** Snowball stemmer language for the sparse (Qdrant/bm25) index. Part of the sparse index contract. */
   bm25_stemmer_lang?: string; // default: "english"
   /** Excluded file extensions (comma-separated) */
   index_excluded_exts?: string; // default: ".png,.jpg,.gif,.ico,.svg,.woff,.ttf"
@@ -941,13 +1347,78 @@ export interface IndexingConfig {
   /** Max characters per extracted Parquet cell (best-effort) */
   parquet_extract_max_cell_chars?: number; // default: 20000
   /** Extract only text/string-like columns from Parquet files when possible */
-  parquet_extract_text_columns_only?: number; // default: 1
+  parquet_extract_text_columns_only?: boolean; // default: True
   /** Include column headers when extracting Parquet text */
-  parquet_extract_include_column_names?: number; // default: 1
+  parquet_extract_include_column_names?: boolean; // default: True
   /** Skip dense vector indexing */
-  skip_dense?: number; // default: 0
+  skip_dense?: boolean; // default: False
   /** Optional local embedding throughput override for index-time estimates (tokens/sec). */
   estimated_tokens_per_second_local?: number | null; // default: None
+  figures?: IndexingFiguresConfig;
+}
+
+/** Figure/chart/drawing description during indexing (Docling picture enrichment via the gateway). */
+export interface IndexingFiguresConfig {
+  /** Describe and classify figures inside Docling-converted PDFs so they become retrievable chunks */
+  enabled?: boolean; // default: False
+  /** Send each figure to the vision alias for a structured description */
+  describe?: boolean; // default: True
+  /** Run Docling's local figure classifier (chart, diagram, logo, photo) before describing */
+  classify?: boolean; // default: True
+  /** Gateway alias used to describe figures; must be vision-capable in the model catalog */
+  vision_model?: string; // default: "z-ai.glm-5.3-flash"
+  /** Prompt template for figure descriptions: technical figures or engineering schematics */
+  prompt_profile?: "technical_figure" | "schematic"; // default: "technical_figure"
+  /** Docling raster scale for figure crops (2.0 is about 144 DPI) */
+  images_scale?: number; // default: 2.0
+  /** Skip figures smaller than this fraction of the page area (icons, logos) */
+  min_area_fraction?: number; // default: 0.02
+  /** Classifier classes that are never sent for description */
+  skip_classes?: string[];
+  /** Output token budget per figure description; includes any reasoning tokens a reasoning model spends before the JSON reply */
+  max_completion_tokens?: number; // default: 2500
+  /** Parallel vision calls while converting one document */
+  concurrency?: number; // default: 4
+  /** Per-figure vision call timeout in seconds */
+  timeout_s?: number; // default: 90
+}
+
+/** Runtime capability matrix for indexing backends. */
+export interface IndexingRuntimeCapabilities {
+  /** Dense indexing execution paths used during indexing. */
+  dense_backends?: RuntimeOption[];
+  /** Storage/index backends populated during indexing. */
+  storage_backends?: RuntimeOption[];
+}
+
+/** Current readiness state for one integration contract. */
+export interface IntegrationReadiness {
+  /** Integration identifier. */
+  id: string;
+  /** Human-readable integration label. */
+  label: string;
+  /** Primary workbench surface for the integration. */
+  ui_surface: string;
+  /** Current readiness state. */
+  state: "ready" | "degraded" | "unconfigured" | "disabled";
+  /** Whether the integration is selected or expected by the current config. */
+  enabled: boolean;
+  /** Whether the required config is present. */
+  configured: boolean;
+  /** Whether runtime reachability checks passed, when applicable. */
+  reachable?: boolean | null; // default: None
+  /** Required config paths that are currently empty or unset. */
+  missing_config_paths?: string[];
+  /** Required env-only secrets that are currently missing. */
+  missing_secret_ids?: string[];
+  /** Named readiness checks that are currently failing. */
+  failing_checks?: string[];
+  /** Protected surfaces blocked or degraded by this readiness state. */
+  blocked_surfaces?: string[];
+  /** High-signal next-step guidance for operators. */
+  operator_hint?: string | null; // default: None
+  /** Useful deep links for debugging or operating the integration. */
+  links?: TraceExternalLink[];
 }
 
 /** Discriminative keywords configuration. */
@@ -959,7 +1430,7 @@ export interface KeywordsConfig {
   /** Score boost for keyword matches */
   keywords_boost?: number; // default: 1.3
   /** Auto-generate keywords */
-  keywords_auto_generate?: number; // default: 1
+  keywords_auto_generate?: boolean; // default: True
   /** Hours between keyword refresh */
   keywords_refresh_hours?: number; // default: 24
 }
@@ -980,28 +1451,101 @@ export interface LayerBonusConfig {
   intent_matrix?: Record<string, Record<string, number>>;
 }
 
-/** Supports MULTIPLE simultaneous local providers.  P0: Ollama + llama.cpp. All use OpenAI-compatible API. */
-export interface LocalModelConfig {
-  providers?: LocalProviderEntry[]; // default: [{"name": "Ollama", "provider_type": "ollama", ...
-  auto_detect?: boolean; // default: True
-  health_check_interval?: number; // default: 30
-  fallback_to_cloud?: boolean; // default: True
-  gpu_memory_limit_gb?: number; // default: 0
-  default_chat_model?: string; // default: "qwen3:8b"
-  default_vision_model?: string; // default: "qwen3-vl:8b"
-  default_embedding_model?: string; // default: "nomic-embed-text"
+/** Mutable operator alias that points to an immutable bundle. */
+export interface LineageAlias {
+  /** Operator alias name. */
+  alias: "current" | "promoted" | "baseline" | "canary";
+  /** Corpus identifier for the alias. */
+  corpus_id: string;
+  /** Target immutable bundle identifier. */
+  bundle_id: string;
+  /** When the alias was last updated. */
+  updated_at: string;
 }
 
-/** A single local inference provider endpoint. */
-export interface LocalProviderEntry {
-  /** Display name */
-  name: string;
-  provider_type: string;
-  /** Provider API endpoint */
-  base_url: string;
+/** Immutable version record for one quality-loop asset. */
+export interface LineageAssetVersion {
+  /** Immutable version identifier. */
+  version_id: string;
+  /** Asset kind. */
+  kind: "prompt_set" | "config_snapshot" | "spec_snapshot" | "model_catalog_snapshot" | "runtime_model_set" | "eval_dataset" | "benchmark_run" | "eval_run" | "synthetic_run" | "synthetic_artifact" | "published_artifact" | "reranker_train_run" | "reranker_model_artifact" | "agent_train_run" | "agent_model_artifact";
+  /** Optional corpus identifier when the version is corpus-scoped. */
+  corpus_id?: string | null; // default: None
+  /** When this version record was created. */
+  created_at: string;
+  /** Canonical SHA-256 digest used to dedupe identical content. */
+  digest: string;
+  /** How this version was captured. */
+  source: "runtime" | "git" | "generated" | "published";
+  /** Underlying file or directory paths. */
+  source_paths?: string[];
+  /** Git context captured when the version was minted. */
+  git?: GitSnapshot | null; // default: None
+  /** Small searchable metadata for lists and UI. */
+  metadata?: Record<string, unknown>;
+  /** Canonical asset payload snapshot. */
+  payload?: Record<string, unknown>;
+  /** Other immutable versions this asset was derived from. */
+  upstream_refs?: LineageRef[];
+}
+
+/** Top-level immutable bundle pinning the exact versions used together. */
+export interface LineageBundle {
+  /** Immutable bundle identifier. */
+  bundle_id: string;
+  /** Corpus identifier for this quality-loop bundle. */
+  corpus_id: string;
+  /** When this bundle was created. */
+  created_at: string;
+  /** Pinned prompt-set version. */
+  prompt_set?: LineageRef | null; // default: None
+  /** Pinned config snapshot version. */
+  config_snapshot?: LineageRef | null; // default: None
+  /** Pinned spec snapshot version. */
+  spec_snapshot?: LineageRef | null; // default: None
+  /** Pinned model catalog snapshot version. */
+  model_catalog_snapshot?: LineageRef | null; // default: None
+  /** Pinned resolved runtime model-set version. */
+  runtime_model_set?: LineageRef | null; // default: None
+  /** Pinned eval dataset version when available. */
+  eval_dataset?: LineageRef | null; // default: None
+  /** Attached benchmark run versions. */
+  benchmark_runs?: LineageRef[];
+  /** Attached eval run versions. */
+  eval_runs?: LineageRef[];
+  /** Attached synthetic run versions. */
+  synthetic_runs?: LineageRef[];
+  /** Attached synthetic artifact versions. */
+  synthetic_artifacts?: LineageRef[];
+  /** Attached published artifact versions. */
+  published_artifacts?: LineageRef[];
+  /** Attached reranker training run versions. */
+  reranker_train_runs?: LineageRef[];
+  /** Attached reranker model artifact versions. */
+  reranker_model_artifacts?: LineageRef[];
+  /** Attached agent training run versions. */
+  agent_train_runs?: LineageRef[];
+  /** Attached agent model artifact versions. */
+  agent_model_artifacts?: LineageRef[];
+  /** Bundle metadata for UI and audit notes. */
+  metadata?: Record<string, unknown>;
+}
+
+/** Compact immutable reference to a lineage version. */
+export interface LineageRef {
+  /** Kind of immutable version being referenced. */
+  kind: "prompt_set" | "config_snapshot" | "spec_snapshot" | "model_catalog_snapshot" | "runtime_model_set" | "eval_dataset" | "benchmark_run" | "eval_run" | "synthetic_run" | "synthetic_artifact" | "published_artifact" | "reranker_train_run" | "reranker_model_artifact" | "agent_train_run" | "agent_model_artifact";
+  /** Immutable version identifier. */
+  version_id: string;
+  /** Optional human-readable label for UI display. */
+  label?: string | null; // default: None
+}
+
+/** Gateway configuration for an OpenAI-compatible LiteLLM proxy. */
+export interface LiteLLMConfig {
   enabled?: boolean; // default: True
-  /** Lower = higher priority when multiple have same model. */
-  priority?: number; // default: 0
+  base_url?: string; // default: "http://127.0.0.1:54000/v1"
+  default_model?: string; // default: "ragweld-local"
 }
 
 /** Inbound MCP (Model Context Protocol) server configuration.  This config controls TriBridRAG's embedded MCP Streamable HTTP endpoint. */
@@ -1040,16 +1584,12 @@ export interface MCPHTTPTransportStatus {
   running: boolean;
 }
 
-/** Compact result shape for legacy /api/mcp/rag_search (debug UI). */
-export interface MCPRagSearchResult {
-  /** Matched file path. */
-  file_path: string;
-  /** Start line for the matched span. */
-  start_line: number;
-  /** End line for the matched span. */
-  end_line: number;
-  /** Legacy field: score for the match (post-fusion). */
-  rerank_score: number;
+/** One tool registered on the embedded MCP server. */
+export interface MCPToolInfo {
+  /** Tool name as advertised to MCP clients. */
+  name: string;
+  /** Tool description as advertised to MCP clients. */
+  description?: string; // default: ""
 }
 
 /** Chat message in a conversation. */
@@ -1092,6 +1632,20 @@ export interface ModelCatalogEntry {
   base_url?: string | null; // default: None
   /** Freeform notes */
   notes?: string | null; // default: None
+  /** Human-readable model name when the upstream feed provides one */
+  display_name?: string | null; // default: None
+  /** LiteLLM gateway alias that serves this generation row. Set only on GEN rows that are rendered into infra/litellm-config.yaml; selectable as litellm:<gateway_alias>. */
+  gateway_alias?: string | null; // default: None
+  /** LiteLLM litellm_params.model for gateway_alias (for example openrouter/openai/gpt-5.4-mini or openai/ragweld-local for the vLLM serving path). */
+  gateway_upstream?: string | null; // default: None
+  /** Whether the upstream route accepts image inputs (OpenRouter input_modalities includes image). */
+  supports_vision?: boolean; // default: False
+  /** Runtime selection surfaces that should expose this row. */
+  selection_roles?: ("embedding_provider" | "reranker_cloud")[];
+  /** Whether this row is currently selectable in the runtime product surface. */
+  selection_status?: "runtime_selectable" | "catalog_only"; // default: "catalog_only"
+  /** Why the row is catalog-only when not runtime selectable. */
+  selection_reason?: string | null; // default: None
 }
 
 /** A single soft warning about a model assignment in the config. */
@@ -1104,14 +1658,230 @@ export interface ModelValidationWarning {
   message: string;
 }
 
-/** Unified gateway to 400+ cloud models. OpenAI-compatible.  MANDATORY P0 provider. */
-export interface OpenRouterConfig {
-  enabled?: boolean; // default: False
-  api_key?: string; // default: ""
-  base_url?: string; // default: "https://openrouter.ai/api/v1"
-  default_model?: string; // default: "anthropic/claude-sonnet-4"
-  site_name?: string; // default: "TriBridRAG"
-  fallback_models?: string[]; // default: ["openai/gpt-4o", "google/gemini-2.0-flash"]
+/** One alerting rule as Prometheus currently evaluates it. */
+export interface ObservabilityAlertRule {
+  /** Rule group name from the Prometheus rules file. */
+  group: string;
+  /** Alert name. */
+  name: string;
+  /** Prometheus rule state; 'unknown' when Prometheus reported a state this build does not model. */
+  state: "inactive" | "pending" | "firing" | "unknown";
+  /** severity label on the rule, when set. */
+  severity?: string | null; // default: None
+  /** PromQL expression the rule evaluates. */
+  query: string;
+  /** 'for' duration before the alert fires. */
+  duration_seconds?: number; // default: 0.0
+  /** summary annotation, when set. */
+  summary?: string | null; // default: None
+  /** description annotation, when set. */
+  description?: string | null; // default: None
+  /** Prometheus rule health: ok, err, or unknown. */
+  health?: string; // default: "unknown"
+  /** Alert instances currently pending or firing for this rule. */
+  active_alerts?: number; // default: 0
+}
+
+/** Status for one observability component or backend. */
+export interface ObservabilityComponentStatus {
+  /** Stable component identifier. */
+  id: string;
+  /** Human-readable component label. */
+  label: string;
+  /** Operator grouping for this component. */
+  group?: string; // default: "observability"
+  /** Whether the component is enabled by config. */
+  enabled: boolean;
+  /** Whether the component has the minimum config required to operate. */
+  configured: boolean;
+  /** Whether the component endpoint was reachable, when checked. */
+  reachable?: boolean | null; // default: None
+  /** Short operator-facing detail or error message. */
+  detail?: string | null; // default: None
+  /** Configured URL for the component when applicable. */
+  url?: string | null; // default: None
+  /** Computed incident/severity state for the component. */
+  severity?: "healthy" | "info" | "warning" | "critical"; // default: "info"
+  /** Service-level state inferred for this component. */
+  slo_state?: "healthy" | "at_risk" | "breached" | "unknown"; // default: "unknown"
+  /** Component-local operator hint. */
+  operator_hint?: string | null; // default: None
+  /** Curated deep links relevant to this component. */
+  links?: TraceExternalLink[];
+}
+
+/** Catalog entry for one Grafana dashboard family. */
+export interface ObservabilityDashboardFamily {
+  /** Stable dashboard family identifier. */
+  id: string;
+  /** Dashboard title shown to operators. */
+  title: string;
+  /** Short explanation of what this dashboard is for. */
+  description: string;
+  /** Provisioned Grafana dashboard UID. */
+  uid: string;
+  /** Provisioned Grafana dashboard slug. */
+  slug: string;
+  /** High-level grouping such as oncall, quality, or cost. */
+  category: string;
+  /** Whether this is the default landing dashboard. */
+  default?: boolean; // default: False
+  /** Dashboard tags from provisioning metadata. */
+  tags?: string[];
+  /** Declared dashboard variables expected to be available in Grafana. */
+  variables?: ObservabilityDashboardVariable[];
+  /** External links for this dashboard. */
+  links?: TraceExternalLink[];
+  /** Related in-product workbench destinations. */
+  workbench_links?: ObservabilityWorkbenchLink[];
+}
+
+/** Declared Grafana/dashboard variable surfaced in the catalog. */
+export interface ObservabilityDashboardVariable {
+  /** Stable variable identifier. */
+  id: string;
+  /** Human-readable variable label. */
+  label: string;
+  /** Grafana variable kind. */
+  kind?: "textbox" | "custom" | "time_range"; // default: "textbox"
+  /** Default value used for the variable. */
+  default_value?: string; // default: "*"
+  /** Operator hint for the variable. */
+  description?: string | null; // default: None
+  /** Explicit choices for custom variables. */
+  values?: string[];
+}
+
+/** Unified observability incident entry. */
+export interface ObservabilityIncident {
+  /** Stable incident identifier. */
+  id: string;
+  /** Short incident title. */
+  title: string;
+  /** High-signal incident summary. */
+  summary: string;
+  /** Incident source family such as infrastructure, workflow, or eval. */
+  source: string;
+  /** Severity used for wake-up and prioritization. */
+  severity?: "healthy" | "info" | "warning" | "critical"; // default: "warning"
+  /** Current lifecycle state for the incident. */
+  status?: "firing" | "warning" | "resolved"; // default: "firing"
+  /** When the incident started or was detected. */
+  started_at?: string | null; // default: None
+  /** Suggested on-call owner or team. */
+  owner?: string | null; // default: None
+  /** Affected component ids. */
+  component_ids?: string[];
+  /** Relevant dashboard family ids. */
+  dashboard_ids?: string[];
+  /** External links for triage. */
+  links?: TraceExternalLink[];
+  /** In-product destinations for the incident. */
+  workbench_links?: ObservabilityWorkbenchLink[];
+  /** Whether the incident is muted/silenced. */
+  muted?: boolean; // default: False
+  /** Associated SLO state for the incident. */
+  slo_state?: "healthy" | "at_risk" | "breached" | "unknown"; // default: "unknown"
+  /** Recommended next operator action. */
+  operator_hint?: string | null; // default: None
+  /** Changes correlated against the incident. */
+  change_correlation?: ObservabilityIncidentChange[];
+}
+
+/** Correlated change item attached to an incident. */
+export interface ObservabilityIncidentChange {
+  /** Change kind such as prompt_set, config, model_route, or dataset. */
+  kind: string;
+  /** Human-readable change label. */
+  label: string;
+  /** Prior value when known. */
+  previous_value?: string | null; // default: None
+  /** Current value when known. */
+  current_value?: string | null; // default: None
+  /** Operator-facing context for the change. */
+  detail?: string | null; // default: None
+}
+
+/** Current/previous metric values and their delta. */
+export interface ObservabilityMetricDelta {
+  /** Latest metric value. */
+  current_value?: number | null; // default: None
+  /** Previous metric value when available. */
+  previous_value?: number | null; // default: None
+  /** Current minus previous. */
+  absolute_delta?: number | null; // default: None
+  /** Percentage delta vs previous when available. */
+  percent_delta?: number | null; // default: None
+}
+
+/** Workbench deep link for an observability workflow. */
+export interface ObservabilityWorkbenchLink {
+  /** Short user-facing label. */
+  label: string;
+  /** Application path or URL for this destination. */
+  path: string;
+  /** Whether this is in-product or external. */
+  kind?: "route" | "external"; // default: "route"
+  /** Optional workbench subtab identifier. */
+  subtab?: string | null; // default: None
+  /** Operator-facing explanation for the destination. */
+  description?: string | null; // default: None
+}
+
+/** One cited region on a page: top-left origin, normalized to the page size (0..1). */
+export interface PageRegion {
+  /** 1-based page number */
+  page: number;
+  /** Left edge as a fraction of page width */
+  left: number;
+  /** Top edge as a fraction of page height */
+  top: number;
+  /** Right edge as a fraction of page width */
+  right: number;
+  /** Bottom edge as a fraction of page height */
+  bottom: number;
+}
+
+/** PDF page size in points (72 per inch). */
+export interface PageSize {
+  /** Page width in points */
+  width: number;
+  /** Page height in points */
+  height: number;
+}
+
+/** Public error detail (HTTP 409) when a corpus's persisted index state does not validate. */
+export interface PersistedStateCorruptDetail {
+  code?: "persisted_state_corrupt"; // default: "persisted_state_corrupt"
+  /** Corpus whose persisted state is malformed */
+  corpus_id: string;
+  /** Which persisted key is malformed (generation, index_tombstone, index_run, reclaim_backlog) */
+  key: string;
+  /** Stable, non-sensitive summary */
+  message: string;
+  /** The repair action (de-index the corpus, then re-index) */
+  operator_hint: string;
+}
+
+/** Public error detail (HTTP 413 / typed stream error) when a request cannot fit the alias's context window. */
+export interface PromptBudgetExceededDetail {
+  code?: "prompt_budget_exceeded"; // default: "prompt_budget_exceeded"
+  /** Generation operation that was refused before reaching the gateway */
+  operation: string;
+  /** Stable, non-sensitive failure summary */
+  message: string;
+  /** Retrying without changing the request or config will fail again */
+  retryable?: boolean; // default: False
+  /** High-signal next step for the operator */
+  operator_hint: string;
+  /** Gateway alias whose context window was exceeded */
+  alias: string;
+  /** Catalog context window of the alias in tokens (0 = unknown, refused) */
+  context_window: number;
+  /** Output allowance reserved for the response */
+  max_tokens: number;
+  /** Counted prompt tokens (system prompt, context, message, template margin) */
+  prompt_tokens: number;
 }
 
 /** Metadata describing how a prompt is used and edited in the UI. */
@@ -1130,12 +1900,59 @@ export interface PromptMetadata {
   link_label?: string | null; // default: None
 }
 
+/** A persisted Promptfoo regression run over the eval dataset. */
+export interface PromptfooRun {
+  /** Unique identifier for this run */
+  run_id: string;
+  /** Corpus identifier */
+  corpus_id: string;
+  /** LiteLLM alias that answered the prompts */
+  provider_alias: string;
+  /** LiteLLM alias that graded llm-rubric assertions */
+  grader_alias: string;
+  /** Promptfoo CLI version that produced the run */
+  promptfoo_version: string;
+  /** Tests executed */
+  total: number;
+  /** Tests that passed */
+  passed: number;
+  /** Tests that failed */
+  failed: number;
+  /** Dataset entries skipped because they have no expected_answer */
+  skipped_entries: number;
+  /** When the run started */
+  started_at: string;
+  /** When the run completed */
+  completed_at: string;
+  results?: PromptfooRunResult[];
+}
+
+/** One Promptfoo test outcome (a dataset entry answered through the gateway). */
+export interface PromptfooRunResult {
+  /** Eval dataset entry id */
+  entry_id: string;
+  /** Prompt sent to the gateway alias */
+  question: string;
+  /** Rubric the grader scored the response against */
+  expected_answer: string;
+  /** Gateway response text */
+  response?: string; // default: ""
+  /** Whether every assertion passed */
+  passed: boolean;
+  /** Promptfoo aggregate score for this test */
+  score: number;
+  /** Grader reason for the first failing or passing assertion */
+  reason?: string; // default: ""
+  /** Provider latency reported by Promptfoo */
+  latency_ms?: number; // default: 0.0
+}
+
 /** Health status for a configured provider endpoint. */
 export interface ProviderHealth {
   /** Provider display name */
   provider: string;
-  /** Provider kind */
-  kind: "openrouter" | "local" | "ragweld";
+  /** Gateway kind */
+  kind: "litellm";
   /** Provider base URL */
   base_url: string;
   /** Whether the provider endpoint is reachable */
@@ -1144,12 +1961,30 @@ export interface ProviderHealth {
   detail?: string | null; // default: None
 }
 
-/** Persistent chat memory. ON by default.  Indexes every conversation into a lightweight pgvector corpus. Self-hosted, local, zero privacy risk, negligible storage. */
+/** Qdrant vector-store connection for the canonical dense + sparse retrieval lane. */
+export interface QdrantConfig {
+  /** Base URL of the Compose-owned Qdrant service that stores every corpus's dense and sparse chunk vectors */
+  url?: string; // default: "http://127.0.0.1:56333"
+}
+
+/** Sanitized readiness state for one required runtime dependency. */
+export interface ReadinessDependencyStatus {
+  ok?: boolean; // default: False
+  /** Stable, non-sensitive failure summary. */
+  error?: string | null; // default: None
+  /** High-signal next step for the operator. */
+  operator_hint?: string | null; // default: None
+  /** Resolved logical database name when applicable. */
+  database?: string | null; // default: None
+  database_exists?: boolean | null; // default: None
+  /** Sanitized dependency readiness metadata. */
+  info?: Record<string, unknown> | null; // default: None
+}
+
+/** Persistent chat memory. ON by default.  Indexes every conversation into a lightweight corpus (chunk rows in Postgres, dense + sparse vectors in Qdrant). Self-hosted, local, negligible storage. */
 export interface RecallConfig {
   /** Enable Recall. ON by default. */
   enabled?: boolean; // default: True
-  /** pgvector recommended (already running). */
-  vector_backend?: string; // default: "pgvector"
   auto_index?: boolean; // default: True
   index_delay_seconds?: number; // default: 5
   /** 'turn'=one chunk per message, 'sentence'=split by sentence. */
@@ -1270,6 +2105,21 @@ export interface Relationship {
   properties?: Record<string, unknown>;
 }
 
+/** Public error detail returned when a requested retrieval leg fails. */
+export interface RequiredRetrievalLegFailureDetail {
+  code?: "required_retrieval_leg_failed"; // default: "required_retrieval_leg_failed"
+  /** Requested retrieval leg */
+  leg: "vector" | "sparse" | "graph";
+  /** Retrieval operation that could not complete */
+  operation: string;
+  /** Stable, non-sensitive failure summary */
+  message: string;
+  /** Whether the caller may retry after remediation */
+  retryable?: boolean; // default: True
+  /** High-signal next step for the operator */
+  operator_hint: string;
+}
+
 /** Reranker status for a single retrieval run (best-effort). */
 export interface RerankDebugInfo {
   /** Whether reranking was enabled for this run. */
@@ -1302,10 +2152,39 @@ export interface RerankerLegacyTaskResult {
   output?: string | null; // default: None
   /** Error message (if any) */
   error?: string | null; // default: None
+  /** High-signal implementation hint for the next debugger. */
+  operator_hint?: string | null; // default: None
   /** Evaluation metrics (if any) */
   metrics?: Record<string, number> | null; // default: None
   /** Training run id (if applicable) */
   run_id?: string | null; // default: None
+}
+
+/** Runtime capability matrix for reranking. */
+export interface RerankerRuntimeCapabilities {
+  /** Reranker modes exposed by the product. */
+  modes?: RuntimeOption[];
+  /** Cloud reranker providers that execute in the current runtime. */
+  cloud_providers?: RuntimeOption[];
+  /** Learning reranker backends supported by the runtime. */
+  learning_backends?: RuntimeOption[];
+}
+
+export interface RerankerTrainDiagnosticRecord {
+  /** UTC timestamp */
+  ts: string;
+  /** Training run identifier */
+  run_id: string;
+  /** Structured diagnostic level */
+  level: "debug" | "info" | "warning" | "error";
+  /** Stable low-cardinality diagnostic event name */
+  event: string;
+  /** Human-readable summary */
+  message: string;
+  /** High-signal implementation hint for the next debugger. */
+  operator_hint?: string | null; // default: None
+  /** Additional low-cardinality diagnostic fields */
+  fields?: Record<string, unknown>;
 }
 
 export interface RerankerTrainMetricEvent {
@@ -1316,6 +2195,8 @@ export interface RerankerTrainMetricEvent {
   step?: number | null; // default: None
   epoch?: number | null; // default: None
   message?: string | null; // default: None
+  /** High-signal implementation hint for the next debugger. */
+  operator_hint?: string | null; // default: None
   percent?: number | null; // default: None
   metrics?: Record<string, number> | null; // default: None
   status?: "queued" | "running" | "completed" | "failed" | "cancelled" | null; // default: None
@@ -1356,6 +2237,16 @@ export interface RerankerTrainRun {
   warmup_ratio: number;
   max_length: number;
   summary?: RerankerTrainRunSummary;
+  /** Current bundle id captured before training started. */
+  input_bundle_id?: string | null; // default: None
+  /** Bundle id after this run was attached to lineage. */
+  bundle_id?: string | null; // default: None
+  /** Bundle id created when this run was promoted. */
+  promoted_bundle_id?: string | null; // default: None
+  /** Immutable reranker training run version reference. */
+  lineage_ref?: LineageRef | null; // default: None
+  /** Immutable reranker model artifact version produced by this run. */
+  model_artifact_ref?: LineageRef | null; // default: None
 }
 
 export interface RerankerTrainRunMeta {
@@ -1368,6 +2259,8 @@ export interface RerankerTrainRunMeta {
   primary_k: number;
   primary_metric_best?: number | null; // default: None
   primary_metric_final?: number | null; // default: None
+  bundle_id?: string | null; // default: None
+  lineage_ref?: LineageRef | null; // default: None
 }
 
 export interface RerankerTrainRunSummary {
@@ -1381,12 +2274,12 @@ export interface RerankerTrainRunSummary {
 
 /** Reranking configuration for result refinement. */
 export interface RerankingConfig {
-  /** Reranker mode: 'cloud' (Cohere/Voyage/Jina API), 'learning' (MLX Qwen3 LoRA learning reranker), 'none' (disabled). Legacy values 'local'/'hf' normalize to 'learning'. */
+  /** Reranker mode: 'cloud' (LiteLLM gateway alias or Cohere API), 'learning' (MLX Qwen3 LoRA learning reranker), 'none' (disabled). Stale values such as 'local'/'hf' fail validation and must be migrated. */
   reranker_mode?: string; // default: "none"
-  /** Cloud reranker provider when mode=cloud (cohere, voyage, jina) */
-  reranker_cloud_provider?: string; // default: "cohere"
-  /** Cloud reranker model name when mode=cloud (Cohere: rerank-v3.5) */
-  reranker_cloud_model?: string; // default: "rerank-v3.5"
+  /** Cloud reranker provider when mode=cloud: 'litellm' scores candidates listwise through a LiteLLM gateway alias (no local model, no extra credential); 'cohere' calls the Cohere rerank API (COHERE_API_KEY). */
+  reranker_cloud_provider?: string; // default: "litellm"
+  /** Cloud reranker model when mode=cloud: a LiteLLM gateway alias for provider 'litellm' (a cheap non-reasoning instruct model is ideal), or a Cohere rerank model id for provider 'cohere'. */
+  reranker_cloud_model?: string; // default: "openai.gpt-4.1-nano"
   /** Blend weight for reranker scores */
   tribrid_reranker_alpha?: number; // default: 0.7
   /** Number of candidates to rerank (learning mode) */
@@ -1398,7 +2291,7 @@ export interface RerankingConfig {
   /** Max token length for reranker */
   tribrid_reranker_maxlen?: number; // default: 512
   /** Hot-reload on model change */
-  tribrid_reranker_reload_on_change?: number; // default: 0
+  tribrid_reranker_reload_on_change?: boolean; // default: False
   /** Reload check period (seconds) */
   tribrid_reranker_reload_period_sec?: number; // default: 60
   /** Reranker API timeout (seconds) */
@@ -1430,19 +2323,15 @@ export interface RetrievalConfig {
   /** Minimum confidence threshold */
   conf_any?: number; // default: 0.55
   /** Enable multi-query in eval */
-  eval_multi?: number; // default: 1
+  eval_multi?: boolean; // default: True
   /** Enable synonym expansion */
-  query_expansion_enabled?: number; // default: 1
+  query_expansion_enabled?: boolean; // default: True
   /** Weight for BM25 in hybrid search */
   bm25_weight?: number; // default: 0.3
-  /** BM25 term frequency saturation parameter (higher = more weight to term frequency) */
-  bm25_k1?: number; // default: 1.2
-  /** BM25 length normalization (0=no penalty, 1=full penalty, 0.3-0.5 recommended for code) */
-  bm25_b?: number; // default: 0.4
   /** Weight for vector search */
   vector_weight?: number; // default: 0.7
   /** Enable chunk_summary-based retrieval */
-  chunk_summary_search_enabled?: number; // default: 1
+  chunk_summary_search_enabled?: boolean; // default: True
   /** Max chunks to return per file_path (document-aware result shaping). */
   max_chunks_per_file?: number; // default: 3
   /** Dedup key for final results. */
@@ -1462,7 +2351,7 @@ export interface RetrievalConfig {
   /** Query variants for multi-query */
   multi_query_m?: number; // default: 4
   /** Enable semantic synonym expansion */
-  use_semantic_synonyms?: number; // default: 1
+  use_semantic_synonyms?: boolean; // default: True
   /** Custom path to semantic_synonyms.json (default: data/semantic_synonyms.json) */
   tribrid_synonyms_path?: string; // default: ""
   /** Top-K for dense vector search */
@@ -1473,6 +2362,32 @@ export interface RetrievalConfig {
   hydration_mode?: string; // default: "lazy"
   /** Max characters for result hydration */
   hydration_max_chars?: number; // default: 2000
+}
+
+/** Public error detail returned when a stored index contract blocks a retrieval request. */
+export interface RetrievalContractMismatchDetail {
+  /** Stable mismatch code, e.g. embedding_contract_mismatch */
+  code: string;
+  /** Corpus whose stored index contract conflicts with the current configuration */
+  corpus_id: string;
+  /** Retrieval leg governed by the mismatched contract */
+  leg: "vector" | "sparse" | "graph";
+  /** Contract recorded when the corpus was indexed */
+  expected_contract: Record<string, unknown>;
+  /** Contract implied by the current runtime configuration */
+  current_contract: Record<string, unknown>;
+  /** Exact operator action required to resolve the mismatch */
+  required_action: string;
+}
+
+/** Generic runtime capability option. */
+export interface RuntimeOption {
+  /** Stable identifier for the capability */
+  id: string;
+  /** Human-readable label */
+  label: string;
+  /** Short explanation of what the runtime supports */
+  description: string;
 }
 
 /** Configuration for result scoring and boosting. */
@@ -1489,10 +2404,48 @@ export interface ScoringConfig {
   path_boosts?: string; // default: "/gui,/server,/indexer,/retrieval"
 }
 
+/** Runtime capability matrix for retrieval/search backends. */
+export interface SearchRuntimeCapabilities {
+  /** Vector search backends. */
+  vector_backends?: RuntimeOption[];
+  /** Sparse search backends. */
+  sparse_backends?: RuntimeOption[];
+  /** Graph search backends. */
+  graph_backends?: RuntimeOption[];
+}
+
+/** Env-only secret or credential required by one or more operator surfaces. */
+export interface SecretRequirement {
+  /** Stable secret identifier used by field descriptors and readiness responses. */
+  id: string;
+  /** Backing environment variable name. */
+  env_var: string;
+  /** Human-readable label for operators. */
+  label: string;
+  /** Short explanation of where the secret is used. */
+  description: string;
+  /** Integration contracts that may depend on this secret. */
+  integrations?: string[];
+  /** Whether the secret is optional and therefore not always a readiness blocker. */
+  optional?: boolean; // default: False
+  /** Primary operator surface where this secret is configured or inspected. */
+  ui_surface?: string | null; // default: None
+}
+
+/** Current status for one env-only secret requirement. */
+export interface SecretRequirementStatus {
+  /** Static requirement metadata. */
+  requirement: SecretRequirement;
+  /** Whether the env var is present and non-empty in the current process. */
+  configured: boolean;
+  /** Integrations currently blocked by this missing secret. */
+  blocker_for_integrations?: string[];
+}
+
 /** Configuration for semantic caching across search/answer/chat endpoints. */
 export interface SemanticCacheConfig {
-  /** Enable semantic cache reads/writes (0=off, 1=on). */
-  enabled?: number; // default: 0
+  /** Enable semantic cache reads/writes. */
+  enabled?: boolean; // default: False
   /** Cache mode when enabled. */
   mode?: "read_write" | "read_only" | "write_only"; // default: "read_write"
   /** Maximum cache rows to retain per scope/endpoint. */
@@ -1514,34 +2467,20 @@ export interface SemanticCacheConfig {
   /** Number of prior conversation turns included in chat cache fingerprint. */
   chat_history_window?: number; // default: 6
   /** Bypass chat generation cache when images are attached. */
-  bypass_if_images?: number; // default: 1
+  bypass_if_images?: boolean; // default: True
   /** Skip generation-cache writes when temperature exceeds this value. */
   max_temperature_for_write?: number; // default: 0.5
 }
 
-/** Configuration for sparse (BM25) search. */
+/** Configuration for the sparse (IDF-modified BM25 sparse vectors in Qdrant) leg. */
 export interface SparseSearchConfig {
-  /** Sparse retrieval engine. 'postgres_fts' uses built-in FTS; 'pg_search_bm25' uses ParadeDB pg_search. */
-  engine?: "postgres_fts" | "pg_search_bm25"; // default: "postgres_fts"
-  /** How to interpret the sparse query string. */
-  query_mode?: "plain" | "phrase" | "boolean"; // default: "plain"
-  /** Enable sparse highlight payloads when supported (UI later). */
-  highlight?: boolean; // default: False
-  /** If sparse retrieval returns empty, retry with a relaxed OR-style query (best-effort). */
-  relax_on_empty?: boolean; // default: True
-  /** Max extracted query terms used for relaxed sparse fallback. */
-  relax_max_terms?: number; // default: 8
-  /** If sparse retrieval returns empty, run a file_path-based fallback ranking (best-effort). */
-  file_path_fallback?: boolean; // default: True
-  /** Max extracted query terms used for file_path fallback. */
-  file_path_max_terms?: number; // default: 6
-  /** Enable sparse BM25 search in tri-brid retrieval */
+  /** Enable the sparse (Qdrant/bm25) leg in tri-brid retrieval */
   enabled?: boolean; // default: True
-  /** Number of results to retrieve from sparse search */
+  /** Number of results to retrieve from the sparse leg */
   top_k?: number; // default: 50
-  /** BM25 term frequency saturation (higher = more weight to term frequency) */
+  /** BM25 term-frequency saturation for the Qdrant/bm25 sparse vectors (higher = more weight to term frequency). Part of the sparse index contract (re-index on change). */
   bm25_k1?: number; // default: 1.2
-  /** BM25 length normalization (0 = no penalty, 1 = full penalty) */
+  /** BM25 length normalization for the Qdrant/bm25 sparse vectors (0 = no penalty, 1 = full penalty). Part of the sparse index contract (re-index on change). */
   bm25_b?: number; // default: 0.4
 }
 
@@ -1552,6 +2491,50 @@ export interface SyntheticArtifactRef {
   created_at: string;
 }
 
+/** Top-level synthetic data pipeline configuration. */
+export interface SyntheticConfig {
+  /** Quality gate thresholds for synthetic data evaluation */
+  quality_gate?: SyntheticQualityGateConfig;
+  /** LLM generation parameters for synthetic pipeline */
+  generator?: SyntheticGeneratorConfig;
+  /** LLM judge parameters for synthetic curation */
+  judge?: SyntheticJudgeConfig;
+}
+
+/** LLM generation parameters for the synthetic pipeline. */
+export interface SyntheticGeneratorConfig {
+  /** Temperature for synthetic generator LLM calls */
+  temperature?: number; // default: 0.0
+  /** Max tokens for generator LLM response */
+  max_tokens?: number; // default: 1200
+  /** Max characters for generated question text */
+  question_max_chars?: number; // default: 180
+  /** Max characters for evidence quote field */
+  evidence_quote_max_chars?: number; // default: 200
+  /** Max characters for expected answer field */
+  expected_answer_max_chars?: number; // default: 400
+  /** Max lines of source chunk content sent as context to generator/judge */
+  source_excerpt_max_lines?: number; // default: 80
+  /** Concurrent generator/judge requests sent to the LiteLLM gateway per synthetic run. Forced to 1 when the selected alias is the single-stream local vLLM serving row. */
+  concurrency?: number; // default: 4
+}
+
+/** LLM judge parameters for synthetic curation. */
+export interface SyntheticJudgeConfig {
+  /** Temperature for synthetic judge LLM calls */
+  temperature?: number; // default: 0.0
+  /** Max tokens for judge LLM response */
+  max_tokens?: number; // default: 400
+}
+
+/** Quality gate thresholds for synthetic data evaluation. */
+export interface SyntheticQualityGateConfig {
+  /** Minimum top-1 retrieval accuracy to pass quality gate */
+  top1_min?: number; // default: 0.4
+  /** Number of eval items to sample for quality gate evaluation */
+  sample_size?: number; // default: 50
+}
+
 export interface SyntheticRunMeta {
   run_id: string;
   corpus_id: string;
@@ -1559,13 +2542,15 @@ export interface SyntheticRunMeta {
   started_at: string;
   completed_at?: string | null; // default: None
   recipe: "eval_dataset" | "semantic_cards" | "keywords" | "triplets" | "autotune_retrieval" | "full_stack";
-  provider: "internal_ragweld" | "synthetic_data_kit";
+  provider: "grounded_qa";
   items_generated?: number | null; // default: None
+  bundle_id?: string | null; // default: None
+  lineage_ref?: LineageRef | null; // default: None
 }
 
 export interface SyntheticRunStartRequest {
   corpus_id: string;
-  provider?: "internal_ragweld" | "synthetic_data_kit"; // default: "internal_ragweld"
+  provider?: "grounded_qa"; // default: "grounded_qa"
   recipe?: "eval_dataset" | "semantic_cards" | "keywords" | "triplets" | "autotune_retrieval" | "full_stack"; // default: "eval_dataset"
   max_source_chunks?: number | null; // default: 300
   max_pairs?: number | null; // default: 200
@@ -1581,9 +2566,18 @@ export interface SyntheticRunStartRequest {
 
 export interface SyntheticRunSummary {
   sources_used?: number; // default: 0
+  /** Rows the generator emitted before any check. */
   items_generated?: number; // default: 0
+  /** Rows dropped because their evidence_quote was not found verbatim in the source excerpt. */
+  items_rejected_ungrounded?: number; // default: 0
+  /** Rows dropped for unparseable output, self-referential questions, or exceeding configured limits. */
+  items_rejected_malformed?: number; // default: 0
+  /** Grounded rows handed to the judge. */
   items_curated_in?: number; // default: 0
+  /** Rows kept after the judge. */
   items_curated_out?: number; // default: 0
+  /** Reranker triplets mined from the quality-gate retrieval results (triplets/full_stack recipes). */
+  triplets_mined?: number; // default: 0
   avg_judge_score?: number | null; // default: None
   quality_top1_accuracy?: number | null; // default: None
   quality_topk_accuracy?: number | null; // default: None
@@ -1592,6 +2586,16 @@ export interface SyntheticRunSummary {
   quality_gate_threshold?: number | null; // default: None
   quality_gate_passed?: boolean | null; // default: None
   quality_failure_reason?: string | null; // default: None
+}
+
+/** A run directory whose run.json no longer validates (e.g. produced by a provider that was replaced). */
+export interface SyntheticUnreadableRun {
+  /** Run directory name. */
+  run_id: string;
+  /** Why the run could not be loaded. */
+  reason: string;
+  /** The corpus the malformed payload still names, when readable; None when unknown. */
+  corpus_id?: string | null; // default: None
 }
 
 /** System prompts for LLM interactions - affects RAG pipeline behavior.  These prompts control how LLMs behave during query processing, code analysis, and result generation. Changes here can significantly impact RAG accuracy. */
@@ -1612,6 +2616,10 @@ export interface SystemPromptsConfig {
   eval_analysis?: string; // default: "You are an expert RAG (Retrieval-Augmented Gene..."
   /** Judge prompt for synthetic eval row curation and quality filtering */
   synthetic_judge?: string; // default: "You are a strict evaluator for synthetic retrie..."
+  /** Generator prompt for grounded synthetic eval rows. Tokens {num_pairs}, {question_max_chars}, {expected_answer_max_chars} and {evidence_quote_max_chars} are filled from the request and synthetic.generator. */
+  synthetic_generator?: string; // default: "You write retrieval-evaluation questions for a ..."
+  /** System prompt for the LiteLLM-gateway listwise reranker (reranking.reranker_cloud_provider=litellm). */
+  gateway_rerank?: string; // default: "You are a retrieval reranker.\n\nYou receive a ..."
   /** Lightweight chunk_summary generation prompt for faster indexing */
   lightweight_chunk_summaries?: string; // default: "Extract key information from this database: sym..."
 }
@@ -1644,8 +2652,44 @@ export interface Trace {
   started_at_ms: number;
   /** Run end time (epoch milliseconds) */
   ended_at_ms?: number | null; // default: None
+  /** Canonical trace id for the request when available. */
+  trace_id?: string | null; // default: None
+  /** Root span id for the request when available. */
+  root_span_id?: string | null; // default: None
+  /** Stable correlation id propagated across the request. */
+  correlation_id?: string | null; // default: None
+  /** Operator-facing route summary for the request. */
+  route_summary?: TraceRouteSummary | null; // default: None
+  /** External observability links associated with this trace. */
+  external_links?: TraceExternalLink[];
+  /** Best-effort cost attribution for the request. */
+  cost_summary?: TraceCostSummary | null; // default: None
   /** Ordered trace events */
   events?: TraceEvent[];
+}
+
+/** Cost attribution summary for one online request. */
+export interface TraceCostSummary {
+  /** Provider/gateway used for the generation call. */
+  provider?: string | null; // default: None
+  /** Model identifier used for the generation call. */
+  model?: string | null; // default: None
+  /** Currency for the attributed cost. */
+  currency?: string; // default: "USD"
+  /** Prompt/input tokens when available. */
+  input_tokens?: number | null; // default: None
+  /** Completion/output tokens when available. */
+  output_tokens?: number | null; // default: None
+  /** Total tokens when available. */
+  total_tokens?: number | null; // default: None
+  /** Best-effort USD cost for this request when available. */
+  estimated_cost_usd?: number | null; // default: None
+  /** Whether cost came from provider/gateway truth, catalog fallback, or was unavailable. */
+  cost_source?: "provider" | "catalog" | "unavailable"; // default: "unavailable"
+  /** Whether the cost value came directly from provider/gateway response data. */
+  authoritative?: boolean; // default: False
+  /** Short note about how the cost was derived. */
+  detail?: string | null; // default: None
 }
 
 /** Single trace event (local tracing). */
@@ -1660,42 +2704,114 @@ export interface TraceEvent {
   data?: Record<string, unknown>;
 }
 
+/** External observability link associated with a trace. */
+export interface TraceExternalLink {
+  /** Human-readable link label. */
+  label: string;
+  /** Link target type. */
+  kind?: "grafana" | "tempo" | "langfuse" | "custom"; // default: "custom"
+  /** Absolute URL for the external observability surface. */
+  url: string;
+  /** Short operator-facing note about the link. */
+  detail?: string | null; // default: None
+}
+
+/** Operator-facing route summary for one online request. */
+export interface TraceRouteSummary {
+  /** Logical route name, such as chat or search. */
+  route_name: string;
+  /** HTTP path for the request. */
+  path: string;
+  /** HTTP method for the request. */
+  method: string;
+  /** Selected provider route when applicable. */
+  provider?: ChatProviderInfo | null; // default: None
+  /** Corpus ids involved in the request. */
+  corpus_ids?: string[];
+  /** Whether vector retrieval was requested. */
+  include_vector?: boolean | null; // default: None
+  /** Whether sparse retrieval was requested. */
+  include_sparse?: boolean | null; // default: None
+  /** Whether graph retrieval was requested. */
+  include_graph?: boolean | null; // default: None
+  /** Vector leg results returned. */
+  vector_results?: number | null; // default: None
+  /** Sparse leg results returned. */
+  sparse_results?: number | null; // default: None
+  /** Graph leg hydrated chunks returned. */
+  graph_results?: number | null; // default: None
+  /** Final results returned to the caller. */
+  final_results?: number | null; // default: None
+  /** Whether an LLM/provider response was used. */
+  llm_used?: boolean | null; // default: None
+  /** Short reason generation failed or was unavailable. */
+  llm_error?: string | null; // default: None
+  /** Whether the caller enabled web search. */
+  web_requested?: boolean; // default: False
+  /** Whether validated web citations support the response. */
+  web_grounded?: boolean; // default: False
+  /** Provider-reported web-search request count; unknown when omitted. */
+  web_search_requests?: number | null; // default: None
+}
+
 /** Observability and tracing configuration. */
 export interface TracingConfig {
   /** Enable distributed tracing */
-  tracing_enabled?: number; // default: 1
+  tracing_enabled?: boolean; // default: True
   /** Trace sampling rate (0.0-1.0) */
   trace_sampling_rate?: number; // default: 1.0
-  /** Prometheus metrics port */
-  prometheus_port?: number; // default: 9090
   /** Enable metrics collection */
-  metrics_enabled?: number; // default: 1
+  metrics_enabled?: boolean; // default: True
   /** Include resolved alerts */
-  alert_include_resolved?: number; // default: 1
+  alert_include_resolved?: boolean; // default: True
   /** Alert webhook timeout (seconds) */
   alert_webhook_timeout?: number; // default: 5
   /** Logging level */
   log_level?: string; // default: "INFO"
-  /** Tracing backend mode */
-  tracing_mode?: string; // default: "langsmith"
-  /** Auto-enable LangSmith tracing */
-  trace_auto_ls?: number; // default: 1
+  /** Observability mode */
+  tracing_mode?: string; // default: "local"
   /** Number of traces to retain */
   trace_retention?: number; // default: 50
+  /** Persistent workbench trace-store JSON path; empty keeps the store in memory only */
+  trace_store_path?: string; // default: ""
   /** Query log file path */
   tribrid_log_path?: string; // default: "data/logs/queries.jsonl"
   /** Alert severities to notify */
   alert_notify_severities?: string; // default: "critical,warning"
-  /** LangChain/LangSmith API endpoint */
-  langchain_endpoint?: string; // default: "https://api.smith.langchain.com"
-  /** LangChain project name */
-  langchain_project?: string; // default: "tribrid"
-  /** Enable LangChain v2 tracing */
-  langchain_tracing_v2?: number; // default: 0
-  /** LangTrace API host */
-  langtrace_api_host?: string; // default: ""
-  /** LangTrace project ID */
-  langtrace_project_id?: string; // default: ""
+  /** Enable OTLP export for traces */
+  otel_export_enabled?: boolean; // default: True
+  /** OTLP HTTP endpoint for trace export */
+  otlp_endpoint?: string; // default: ""
+  /** Comma-separated OTLP headers (k=v) for the exporter */
+  otlp_headers?: string; // default: ""
+  /** Service name used for emitted OTel spans */
+  otel_service_name?: string; // default: "ragweld-api"
+  /** Enable Langfuse generation observations */
+  langfuse_enabled?: boolean; // default: False
+  /** Langfuse base URL */
+  langfuse_base_url?: string; // default: ""
+  /** Public Langfuse URL used for browser-facing operator deep links */
+  langfuse_public_base_url?: string; // default: "http://127.0.0.1:53000"
+  /** Langfuse project label for traces and generations */
+  langfuse_project?: string; // default: "ragweld"
+  /** Tempo or Grafana explore base URL used for trace deep links */
+  tempo_base_url?: string; // default: ""
+  /** Grafana Alloy base URL used for collector status checks */
+  alloy_base_url?: string; // default: ""
+  /** Grafana Mimir base URL used for metrics backend status checks */
+  mimir_base_url?: string; // default: ""
+  /** Prometheus base URL used for the alert-rule feed and operator deep links (Prometheus scrapes and remote-writes to Mimir) */
+  prometheus_base_url?: string; // default: ""
+  /** Grafana Pyroscope base URL used for profiling status checks */
+  pyroscope_base_url?: string; // default: ""
+  /** Grafana Faro or collector base URL used for frontend telemetry status checks */
+  faro_base_url?: string; // default: ""
+  /** OpenCost base URL used for cost and capacity status checks */
+  opencost_base_url?: string; // default: ""
+  /** Alertmanager base URL used for wake-up path status checks */
+  alertmanager_base_url?: string; // default: ""
+  /** Enable online request cost attribution in traces */
+  cost_tracking_enabled?: boolean; // default: True
 }
 
 /** Reranker training configuration. */
@@ -1712,15 +2828,15 @@ export interface TrainingConfig {
   triplets_min_count?: number; // default: 100
   /** Triplet mining mode */
   triplets_mine_mode?: string; // default: "replace"
-  /** Active learning reranker artifact path (MLX adapter directory). */
-  tribrid_reranker_model_path?: string; // default: "models/learning-reranker-epstein-files-1"
+  /** Root of the learning reranker's versioned artifact store (versions/ + ACTIVE.json pointer). Readers resolve the pointer to the active immutable MLX adapter version; promotions switch it atomically. */
+  tribrid_reranker_model_path?: string; // default: "models/learning-reranker-active"
   /** Triplet mining mode */
   tribrid_reranker_mine_mode?: string; // default: "replace"
   /** Reset triplets file before mining */
-  tribrid_reranker_mine_reset?: number; // default: 0
+  tribrid_reranker_mine_reset?: boolean; // default: False
   /** Training triplets file path */
-  tribrid_triplets_path?: string; // default: "data/training/triplets__epstein-files-1.jsonl"
-  /** Learning reranker backend: auto (prefer MLX Qwen3 on Apple Silicon), mlx_qwen3 (force). Legacy values 'transformers'/'hf' normalize to 'auto'. */
+  tribrid_triplets_path?: string; // default: "data/training/triplets.jsonl"
+  /** Learning reranker backend: auto (prefer MLX Qwen3 on Apple Silicon), mlx_qwen3 (force). Stale values such as 'transformers'/'hf'/'mlx' fail validation and must be migrated. */
   learning_reranker_backend?: "auto" | "mlx_qwen3"; // default: "auto"
   /** Base model to fine-tune for MLX Qwen3 learning reranker */
   learning_reranker_base_model?: string; // default: "Qwen/Qwen3-Reranker-0.6B"
@@ -1737,23 +2853,23 @@ export interface TrainingConfig {
   /** Gradient accumulation steps per optimizer update for MLX Qwen3 learning reranker training */
   learning_reranker_grad_accum_steps?: number; // default: 8
   /** Promote trained learning artifact to active path only if primary metric improves */
-  learning_reranker_promote_if_improves?: number; // default: 1
+  learning_reranker_promote_if_improves?: boolean; // default: True
   /** Minimum improvement required to auto-promote (primary metric delta) */
   learning_reranker_promote_epsilon?: number; // default: 0.0
   /** Unload MLX learning reranker model after idle seconds (0 = never) */
   learning_reranker_unload_after_sec?: number; // default: 0
   /** Emit trainer telemetry every N optimizer steps (plus first/final) */
   learning_reranker_telemetry_interval_steps?: number; // default: 2
-  /** Ragweld agent backend (in-process chat model). Currently: mlx_qwen3 */
+  /** Learning Agent LoRA training backend (training-only artifact; chat generation is served through LiteLLM). Currently: mlx_qwen3 */
   ragweld_agent_backend?: string; // default: "mlx_qwen3"
-  /** Shipped base model for the ragweld agent (MLX). */
-  ragweld_agent_base_model?: string; // default: "mlx-community/Qwen3-1.7B-4bit"
-  /** Active ragweld agent adapter artifact path (directory containing adapter.npz + adapter_config.json). */
-  ragweld_agent_model_path?: string; // default: "models/learning-agent-epstein-files-1"
-  /** Unload ragweld agent model after idle seconds (0 = never). */
-  ragweld_agent_unload_after_sec?: number; // default: 0
-  /** Adapter reload check period (seconds). 0 = check every request. */
-  ragweld_agent_reload_period_sec?: number; // default: 60
+  /** Workflow/orchestration backend for Learning Agent runs. */
+  ragweld_agent_workflow_backend?: "local" | "flyte"; // default: "local"
+  /** Run/artifact tracking backend for Learning Agent runs. */
+  ragweld_agent_tracking_backend?: "local" | "mlflow"; // default: "local"
+  /** MLX base model the Learning Agent LoRA adapters are trained on. Artifacts trained for another base are not promotable. */
+  ragweld_agent_base_model?: string; // default: "mlx-community/Qwen3-4B-Instruct-2507-4bit"
+  /** Root of the Learning Agent's versioned adapter store (versions/ + ACTIVE.json pointer); each version holds adapter.npz + adapter_config.json + manifest.json. Training-only: the baseline for later runs and lineage; never served by the chat gateway. */
+  ragweld_agent_model_path?: string; // default: "models/learning-agent-active"
   /** Training dataset path for the ragweld agent (empty = use evaluation.eval_dataset_path). */
   ragweld_agent_train_dataset_path?: string; // default: ""
   /** LoRA rank for ragweld agent MLX fine-tuning. */
@@ -1769,45 +2885,82 @@ export interface TrainingConfig {
   /** Emit ragweld agent trainer telemetry every N optimizer steps (plus first/final). */
   ragweld_agent_telemetry_interval_steps?: number; // default: 2
   /** Auto-promote trained ragweld agent adapter only if eval_loss improves. */
-  ragweld_agent_promote_if_improves?: number; // default: 1
+  ragweld_agent_promote_if_improves?: boolean; // default: True
   /** Minimum eval_loss improvement required to auto-promote (baseline_loss - new_loss >= epsilon). */
   ragweld_agent_promote_epsilon?: number; // default: 0.0
+  /** Base URL for Flyte Admin HTTP access (used for readiness checks and operator links). */
+  ragweld_agent_flyte_admin_base_url?: string; // default: ""
+  /** Base URL for Flyte Console (used for operator deep links). */
+  ragweld_agent_flyte_console_base_url?: string; // default: ""
+  /** Flyte project that owns Learning Agent executions. */
+  ragweld_agent_flyte_project?: string; // default: "ragweld"
+  /** Flyte domain/environment that owns Learning Agent executions. */
+  ragweld_agent_flyte_domain?: string; // default: "development"
+  /** Flyte launch plan name for the Learning Agent workflow lane. */
+  ragweld_agent_flyte_launchplan?: string; // default: ""
+  /** Base URL of this Ragweld API as reachable from Flyte task pods (the workflow task hands the run to this API's execute boundary and tracks it). On Colima the host is the VM gateway, for example http://192.168.5.2:58012. */
+  ragweld_agent_flyte_callback_base_url?: string; // default: ""
+  /** Base URL of the Compose-owned MLflow Tracking server used by Learning Agent runs. */
+  ragweld_agent_mlflow_tracking_url?: string; // default: "http://127.0.0.1:55500"
+  /** Public MLflow console URL used for browser-facing operator deep links. */
+  ragweld_agent_mlflow_console_base_url?: string; // default: "http://127.0.0.1:55500"
+  /** MLflow experiment name for Learning Agent runs. */
+  ragweld_agent_mlflow_experiment_name?: string; // default: "ragweld-learning-agent"
+  /** Container image or artifact reference used by the Flyte task to run Unsloth training. */
+  ragweld_agent_unsloth_image?: string; // default: ""
+}
+
+export interface TrainingControlPlaneComponentStatus {
+  /** Control-plane component kind. */
+  kind: "flyte" | "mlflow" | "unsloth";
+  /** Human-readable component label. */
+  label: string;
+  /** Whether this component is intended for the active target lane. */
+  enabled?: boolean; // default: False
+  /** Whether required config values are present. */
+  configured?: boolean; // default: False
+  /** Operator-facing component state. */
+  state?: "disabled" | "unconfigured" | "ready" | "degraded"; // default: "disabled"
+  /** Short status note for operators. */
+  detail?: string | null; // default: None
+  /** Relevant control-plane links for this component. */
+  links?: TraceExternalLink[];
 }
 
 /** User interface configuration. */
 export interface UIConfig {
   /** Enable streaming responses */
-  chat_streaming_enabled?: number; // default: 1
+  chat_streaming_enabled?: boolean; // default: True
   /** Max chat history messages */
   chat_history_max?: number; // default: 50
   /** Include reasoning/thinking in streamed responses when supported by model */
-  chat_stream_include_thinking?: number; // default: 1
+  chat_stream_include_thinking?: boolean; // default: True
   /** Show confidence badge on chat answers */
-  chat_show_confidence?: number; // default: 0
+  chat_show_confidence?: boolean; // default: False
   /** Show citations list on chat answers */
-  chat_show_citations?: number; // default: 1
+  chat_show_citations?: boolean; // default: True
   /** Show routing trace panel by default */
-  chat_show_trace?: number; // default: 1
+  chat_show_trace?: boolean; // default: True
   /** Show dev/debug footer under chat answers */
-  chat_show_debug_footer?: number; // default: 1
+  chat_show_debug_footer?: boolean; // default: True
   /** Default model for chat if not specified in request */
-  chat_default_model?: string; // default: "gpt-4o-mini"
-  /** Streaming response timeout in seconds */
-  chat_stream_timeout?: number; // default: 120
+  chat_default_model?: string; // default: "ragweld-local"
+  /** Streaming response timeout in seconds (sized for single-stream CPU serving of the local model) */
+  chat_stream_timeout?: number; // default: 600
   /** Max thinking tokens for Anthropic extended thinking */
   chat_thinking_budget_tokens?: number; // default: 10000
   /** Embedded editor port */
   editor_port?: number; // default: 4440
   /** Default Grafana dashboard UID */
-  grafana_dashboard_uid?: string; // default: "tribrid-overview"
+  grafana_dashboard_uid?: string; // default: "ragweld-oncall-overview"
   /** Grafana dashboard slug */
-  grafana_dashboard_slug?: string; // default: "tribrid-overview"
+  grafana_dashboard_slug?: string; // default: "on-call-overview"
   /** Grafana base URL */
-  grafana_base_url?: string; // default: "http://127.0.0.1:3001"
+  grafana_base_url?: string; // default: "http://127.0.0.1:3301"
   /** Grafana authentication mode */
   grafana_auth_mode?: string; // default: "anonymous"
   /** Enable Grafana embedding */
-  grafana_embed_enabled?: number; // default: 1
+  grafana_embed_enabled?: boolean; // default: True
   /** Grafana kiosk mode */
   grafana_kiosk?: string; // default: "tv"
   /** Grafana organization ID */
@@ -1817,27 +2970,27 @@ export interface UIConfig {
   /** Editor bind mode */
   editor_bind?: string; // default: "local"
   /** Enable editor embedding */
-  editor_embed_enabled?: number; // default: 1
+  editor_embed_enabled?: boolean; // default: True
   /** Enable embedded editor */
-  editor_enabled?: number; // default: 1
+  editor_enabled?: boolean; // default: True
   /** Editor Docker image */
   editor_image?: string; // default: "codercom/code-server:latest"
   /** UI theme mode */
   theme_mode?: string; // default: "dark"
   /** Auto-open browser on start */
-  open_browser?: number; // default: 1
+  open_browser?: boolean; // default: True
   /** Runtime environment mode (development uses localhost, production uses deployed URLs) */
   runtime_mode?: "development" | "production"; // default: "development"
   /** Enable Learning Reranker Studio V2 layout and controls */
-  learning_reranker_studio_v2_enabled?: number; // default: 1
+  learning_reranker_studio_v2_enabled?: boolean; // default: True
   /** Use immersive full-height studio mode for Learning Reranker */
-  learning_reranker_studio_immersive?: number; // default: 1
+  learning_reranker_studio_immersive?: boolean; // default: True
   /** Learning Reranker Studio layout engine selection */
   learning_reranker_layout_engine?: "dockview" | "panels"; // default: "dockview"
   /** Default pane layout preset applied when opening Learning Reranker Studio */
   learning_reranker_default_preset?: "balanced" | "focus_viz" | "focus_logs" | "focus_inspector"; // default: "balanced"
-  /** Show setup summary row above studio dock layout (1=show, 0=collapsed) */
-  learning_reranker_show_setup_row?: number; // default: 0
+  /** Show setup summary row above studio dock layout instead of collapsing it */
+  learning_reranker_show_setup_row?: boolean; // default: False
   /** Preferred logs renderer for Learning Reranker Studio */
   learning_reranker_logs_renderer?: "json" | "xterm"; // default: "xterm"
   /** Serialized Dockview layout JSON for Learning Reranker Studio pane persistence */
@@ -1863,14 +3016,21 @@ export interface UIConfig {
   /** Global motion intensity multiplier for Neural Visualizer effects */
   learning_reranker_visualizer_motion_intensity?: number; // default: 1.0
   /** Render animated vector field accents in Neural Visualizer */
-  learning_reranker_visualizer_show_vector_field?: number; // default: 1
+  learning_reranker_visualizer_show_vector_field?: boolean; // default: True
   /** Reduce Neural Visualizer motion for accessibility/performance */
-  learning_reranker_visualizer_reduce_motion?: number; // default: 0
+  learning_reranker_visualizer_reduce_motion?: boolean; // default: False
 }
 
-/** Configuration for vector (dense) search using pgvector. */
+/** Reference configuration for the self-hosted vLLM serving layer. */
+export interface VLLMConfig {
+  enabled?: boolean; // default: True
+  base_url?: string; // default: "http://127.0.0.1:58080/v1"
+  default_model?: string; // default: "mlx-community/Qwen3.8-27B-4bit"
+}
+
+/** Configuration for the vector (dense) leg served by Qdrant. */
 export interface VectorSearchConfig {
-  /** Enable vector search in tri-brid retrieval */
+  /** Enable the dense vector (Qdrant) leg in tri-brid retrieval */
   enabled?: boolean; // default: True
   /** Number of results to retrieve from vector search */
   top_k?: number; // default: 50
@@ -1878,12 +3038,44 @@ export interface VectorSearchConfig {
   similarity_threshold?: number; // default: 0.0
 }
 
-/** A single term in the Postgres FTS vocabulary preview. */
-export interface VocabPreviewTerm {
-  /** Tokenized lexeme */
-  term: string;
-  /** Number of chunks containing this term */
-  doc_count: number;
+/** One validated URL citation returned by the generation gateway. */
+export interface WebCitation {
+  /** Provider-supplied citation title. */
+  title?: string; // default: ""
+  /** Validated HTTP(S) citation URL. */
+  url: string;
+  /** Inclusive character offset in the final answer. */
+  start_index: number;
+  /** Exclusive character offset in the final answer. */
+  end_index: number;
+}
+
+/** Terminal web-grounding facts; never inferred from inline answer text. */
+export interface WebGroundingMetadata {
+  web_requested?: boolean; // default: False
+  web_grounded?: boolean; // default: False
+  web_search_requests?: number | null; // default: None
+  citations?: WebCitation[];
+}
+
+export interface AgentTrainControlPlaneStatusResponse {
+  ok?: boolean;
+  /** Resolved target lane for the Learning Agent Training Center surface. */
+  lane?: "legacy_local" | "flyte_mlflow_unsloth";
+  /** Whether the Flyte + MLflow + Unsloth control plane is fully configured and reachable. */
+  ready?: boolean;
+  /** Configured workflow backend target. */
+  workflow_backend?: string;
+  /** Configured tracking backend target. */
+  tracking_backend?: string;
+  /** Configured execution backend target. */
+  execution_backend?: string;
+  /** Per-component readiness details for the target control plane. */
+  components?: TrainingControlPlaneComponentStatus[];
+  /** Top-level Learning Agent control-plane links. */
+  links?: TraceExternalLink[];
+  /** High-signal next-step guidance for operators. */
+  operator_hint?: string | null;
 }
 
 export interface AgentTrainDiffRequest {
@@ -1908,11 +3100,19 @@ export interface AgentTrainDiffResponse {
   delta_stability_stddev?: number | null;
   /** Whether the current run improved vs baseline (respects primary_goal). */
   improved?: boolean | null;
+  /** Baseline event records that no longer validate. */
+  baseline_unreadable_events?: number;
+  /** Current event records that no longer validate. */
+  current_unreadable_events?: number;
 }
 
 export interface AgentTrainMetricsResponse {
   ok?: boolean;
   events?: AgentTrainMetricEvent[];
+  /** Persisted event records that no longer validate (reported, never silently dropped). */
+  unreadable_events?: number;
+  /** Why the first unreadable record failed. */
+  unreadable_reason?: string | null;
 }
 
 export interface AgentTrainRun {
@@ -1940,7 +3140,37 @@ export interface AgentTrainRun {
   lr: number;
   warmup_ratio: number;
   max_length: number;
+  /** Workflow state backend used for this run (for example local or flyte). */
+  workflow_backend?: string;
+  /** Run/artifact truth backend used for this run (for example local or mlflow). */
+  tracking_backend?: string;
+  /** Execution backend used for this run (for example mlx_qwen3 or unsloth). */
+  execution_backend?: string;
+  /** External workflow execution identifier when orchestration is delegated. */
+  workflow_run_id?: string | null;
+  /** Last observed external workflow execution phase (for example Flyte RUNNING/SUCCEEDED/ABORTED). */
+  workflow_phase?: string | null;
+  /** External run identifier in the tracking system when available. */
+  tracking_run_id?: string | null;
+  /** External experiment identifier in the tracking system when available. */
+  tracking_experiment_id?: string | null;
+  /** Artifact URI or storage path for the run outputs when available. */
+  artifacts_uri?: string | null;
+  /** Direct operator links for workflow, tracking, or artifact surfaces. */
+  external_links?: TraceExternalLink[];
+  /** High-signal next-step guidance for operators inspecting this run. */
+  operator_hint?: string | null;
   summary?: AgentTrainRunSummary;
+  /** Current bundle id captured before training started. */
+  input_bundle_id?: string | null;
+  /** Bundle id after this run was attached to lineage. */
+  bundle_id?: string | null;
+  /** Bundle id created when this run was promoted. */
+  promoted_bundle_id?: string | null;
+  /** Immutable agent training run version reference. */
+  lineage_ref?: LineageRef | null;
+  /** Immutable agent model artifact version produced by this run. */
+  model_artifact_ref?: LineageRef | null;
 }
 
 export interface AgentTrainRunsResponse {
@@ -2007,6 +3237,57 @@ export interface AnswerResponse {
   debug?: ChatDebugInfo | null;
 }
 
+/** Corpus-scoped benchmark observability summary. */
+export interface BenchmarkObservabilitySummaryResponse {
+  ok?: boolean;
+  /** Optional corpus identifier for the summary. */
+  corpus_id?: string | null;
+  /** Most recent benchmark run id. */
+  latest_run_id?: string | null;
+  /** Previous benchmark run id when available. */
+  previous_run_id?: string | null;
+  /** Start time for the latest benchmark run. */
+  latest_started_at?: string | null;
+  /** Model count in the latest benchmark run. */
+  latest_model_count?: number;
+  /** Error count in the latest benchmark run. */
+  latest_error_count?: number;
+  /** Error count in the previous benchmark run. */
+  previous_error_count?: number;
+  /** Provider/model routes used in the latest run. */
+  provider_routes?: string[];
+  average_latency_ms?: ObservabilityMetricDelta;
+  p95_latency_ms?: ObservabilityMetricDelta;
+  response_length_mean?: ObservabilityMetricDelta;
+  success_rate?: ObservabilityMetricDelta;
+  /** Timing shifts by benchmark breakdown phase. */
+  breakdown_deltas?: BenchmarkBreakdownDelta[];
+  /** Latest bundle id tied to the benchmark run. */
+  latest_bundle_id?: string | null;
+  /** Prompt set used by the latest benchmark run. */
+  latest_prompt_set_ref?: LineageRef | null;
+  /** Prompt set used by the previous benchmark run. */
+  previous_prompt_set_ref?: LineageRef | null;
+  /** Suggested next step for benchmark triage. */
+  operator_hint?: string | null;
+}
+
+/** Request payload for POST /api/benchmark/run. */
+export interface BenchmarkRunRequest {
+  /** Prompt to run against multiple models. */
+  prompt: string;
+  /** Two to four model overrides to compare. */
+  models: string[];
+}
+
+/** Response payload for listing benchmark runs. */
+export interface BenchmarkRunsResponse {
+  /** Whether the request succeeded. */
+  ok?: boolean;
+  /** Recent benchmark run records. */
+  runs?: BenchmarkRun[];
+}
+
 /** Response payload for GET /api/chat/models. */
 export interface ChatModelsResponse {
   models?: ChatModelInfo[];
@@ -2026,6 +3307,8 @@ export interface ChatRequest {
   conversation_id?: string | null;
   /** Stream the response */
   stream?: boolean;
+  /** Allow the server-owned web-search tool for this message. */
+  web_enabled?: boolean;
   /** Optional images for vision. Max 10 by schema; server further limits by config.chat.multimodal.max_images_per_message. */
   images?: ImageAttachment[];
   /** Override chat model for this request (empty=default) */
@@ -2060,6 +3343,7 @@ export interface ChatResponse {
   sources: ChunkMatch[];
   /** Tokens consumed */
   tokens_used: number;
+  web_grounding?: WebGroundingMetadata;
 }
 
 /** A code chunk from the indexed repository. */
@@ -2084,6 +3368,8 @@ export interface Chunk {
   summary?: string | null;
   /** Arbitrary chunk metadata */
   metadata?: Record<string, unknown>;
+  /** Extraction and page provenance; None only for rows indexed before provenance capture */
+  provenance?: ChunkProvenance | null;
 }
 
 /** Request to build chunk_summaries for a repository. */
@@ -2118,6 +3404,28 @@ export interface Community {
   member_ids: string[];
   /** Hierarchy level (0 = top level) */
   level: number;
+}
+
+/** Response payload for GET /api/config/readiness. */
+export interface ConfigReadinessResponse {
+  /** Whether the current configuration control plane is ready enough for the protected surfaces. */
+  ok?: boolean;
+  /** Integration readiness states for the current config and environment. */
+  integrations?: IntegrationReadiness[];
+  /** Configured/missing env-only secrets relevant to the current control plane. */
+  secrets?: SecretRequirementStatus[];
+  /** Top-level next-step guidance for operators. */
+  operator_hint?: string | null;
+}
+
+/** Response payload for GET /api/config/registry. */
+export interface ConfigRegistryResponse {
+  /** Leaf config descriptors derived from TriBridConfig plus manual operator metadata. */
+  fields?: ConfigFieldDescriptor[];
+  /** Integration contracts required by the OSS composition branch. */
+  integrations?: ConfigIntegrationContract[];
+  /** Env-only secret requirements surfaced by the control plane. */
+  secrets?: SecretRequirement[];
 }
 
 /** User-managed corpus (formerly "repo" in earlier versions).  A corpus is the unit of isolation for: - indexing storage (Postgres) - graph storage (Neo4j) - configuration (per-corpus TriBridConfig) */
@@ -2228,18 +3536,9 @@ export interface DashboardIndexStatusResponse {
   current_file?: string | null;
 }
 
-/** Response payload for a dev stack restart operation. */
-export interface DevStackRestartResponse {
-  /** Whether the operation was accepted and executed successfully. */
-  success: boolean;
-  /** Human-readable success message. */
-  message?: string | null;
-  /** Error message (if success=false). */
-  error?: string | null;
-  /** Frontend port (if applicable). */
-  frontend_port?: number | null;
-  /** Backend port (if applicable). */
-  backend_port?: number | null;
+/** FastAPI response envelope for a dependency-unavailable detail. */
+export interface DependencyUnavailableResponse {
+  detail: DependencyUnavailableDetail;
 }
 
 /** Status of the local dev stack (frontend + backend). */
@@ -2260,10 +3559,20 @@ export interface DevStackStatusResponse {
   details?: string[];
 }
 
-/** Response payload for /api/docker/containers (and /api/docker/containers/all). */
+/** Response payload for the project-scoped /api/docker/services endpoint. */
 export interface DockerContainersResponse {
   /** List of Docker containers. */
   containers?: DockerContainer[];
+}
+
+/** Typed response for project-scoped Docker service logs. */
+export interface DockerServiceLogsResponse {
+  /** Whether Docker returned logs successfully. */
+  success: boolean;
+  /** Recent logs for the authorized Ragweld service. */
+  logs?: string;
+  /** Docker error when logs could not be read. */
+  error?: string | null;
 }
 
 /** Response payload for /api/docker/status. */
@@ -2272,8 +3581,32 @@ export interface DockerStatus {
   running?: boolean;
   /** Runtime label/version string (best-effort). */
   runtime?: string;
-  /** Total number of containers (docker ps -aq). */
+  /** Fixed Docker Compose project authorized by this local control surface. */
+  project_name?: "ragweld";
+  /** Number of authorized Ragweld service containers. */
   containers_count?: number;
+}
+
+/** FastAPI response envelope for a not-captured rich document. */
+export interface DocumentNotCapturedResponse {
+  detail: DocumentNotCapturedDetail;
+}
+
+/** FastAPI response envelope for an over-limit text document. */
+export interface DocumentTooLargeResponse {
+  detail: DocumentTooLargeDetail;
+}
+
+/** Source document as served to the evidence viewer. */
+export interface DocumentView {
+  /** Corpus the file belongs to */
+  corpus_id: string;
+  /** Corpus-root-relative POSIX path */
+  file_path: string;
+  /** Current file size on disk */
+  byte_size: number;
+  content: DocumentTextView | DocumentPdfView | DocumentRichView;
+  provenance: DocumentProvenanceCaptured | DocumentProvenanceNotCaptured;
 }
 
 /** Request payload for /eval/analyze_comparison. */
@@ -2336,10 +3669,52 @@ export interface EvalDatasetItem {
   expected_paths: string[];
   /** Expected answer if testing generation */
   expected_answer?: string | null;
+  /** Verbatim span of the expected document that supports the answer (grounding provenance written by the grounded_qa provider; empty for hand-written rows). */
+  evidence_quote?: string | null;
   /** Tags for filtering/grouping */
   tags?: string[];
   /** When this entry was created */
   created_at?: string;
+}
+
+/** Corpus-scoped eval observability summary. */
+export interface EvalObservabilitySummaryResponse {
+  ok?: boolean;
+  /** Optional corpus identifier for the summary. */
+  corpus_id?: string | null;
+  /** Most recent eval run id. */
+  latest_run_id?: string | null;
+  /** Previous eval run id when available. */
+  previous_run_id?: string | null;
+  /** Completion time for the latest eval run. */
+  latest_completed_at?: string | null;
+  /** How old the latest eval run is. */
+  freshness_minutes?: number | null;
+  /** Question count for the latest eval run. */
+  total_questions?: number;
+  /** Whether a comparison-ready pair of runs exists for AI analysis. */
+  ai_comparison_ready?: boolean;
+  top1_accuracy?: ObservabilityMetricDelta;
+  topk_accuracy?: ObservabilityMetricDelta;
+  mrr?: ObservabilityMetricDelta;
+  ndcg_at_10?: ObservabilityMetricDelta;
+  map_at_5?: ObservabilityMetricDelta;
+  recall_at_5?: ObservabilityMetricDelta;
+  recall_at_10?: ObservabilityMetricDelta;
+  /** Question count that improved vs previous run. */
+  improved_count?: number;
+  /** Question count that regressed vs previous run. */
+  regressed_count?: number;
+  /** Question count with no top-k state change. */
+  stable_count?: number;
+  /** Latest bundle id tied to the eval run. */
+  latest_bundle_id?: string | null;
+  /** Prompt set used by the latest eval run. */
+  latest_prompt_set_ref?: LineageRef | null;
+  /** Prompt set used by the previous eval run. */
+  previous_prompt_set_ref?: LineageRef | null;
+  /** Suggested next step for eval triage. */
+  operator_hint?: string | null;
 }
 
 /** Request payload for evaluation run. */
@@ -2388,6 +3763,14 @@ export interface EvalRun {
   started_at: string;
   /** When evaluation completed */
   completed_at: string;
+  /** Immutable eval dataset version used for this run. */
+  dataset_version_ref?: LineageRef | null;
+  /** Current bundle id captured before evaluation started. */
+  input_bundle_id?: string | null;
+  /** Bundle id after this run was attached to lineage. */
+  bundle_id?: string | null;
+  /** Immutable eval run version reference. */
+  lineage_ref?: LineageRef | null;
 }
 
 /** Response for listing eval runs. */
@@ -2438,6 +3821,16 @@ export interface FeedbackResponse {
   ok: boolean;
 }
 
+/** FastAPI response envelope for an unusable figure vision alias (HTTP 409). */
+export interface FigureRouteConflictResponse {
+  detail: FigureRouteConflictDetail;
+}
+
+/** FastAPI response envelope for a generation-gateway failure. */
+export interface GenerationUnavailableResponse {
+  detail: GenerationUnavailableDetail;
+}
+
 /** Neighbor subgraph centered on a single entity. */
 export interface GraphNeighborsResponse {
   /** Entities in the neighborhood (includes the center entity) */
@@ -2458,7 +3851,12 @@ export interface HealthStatus {
   services?: Record<string, HealthServiceStatus>;
 }
 
-/** Best-effort estimate for indexing cost/time before running the indexer.  Notes: - Token count is an approximation (byte-based heuristic). - Time is an intentionally rough range (depends on machine, provider latency,   semantic KG mode, and local hardware throughput). */
+/** FastAPI response envelope for an incomplete-deletion detail. */
+export interface IndexDeletionIncompleteResponse {
+  detail: IndexDeletionIncompleteDetail;
+}
+
+/** Best-effort estimate for indexing cost/time before running the indexer.  Notes: - Token count is an approximation (byte-based heuristic). - Time is an intentionally rough range (depends on machine, provider latency,   GraphRAG extraction scope, and local hardware throughput). */
 export interface IndexEstimate {
   /** Corpus identifier */
   corpus_id: string;
@@ -2480,19 +3878,23 @@ export interface IndexEstimate {
   embedding_provider: string;
   /** Embedding model used for indexing (effective model) */
   embedding_model: string;
-  /** Whether dense embeddings are skipped (indexing.skip_dense=1) */
+  /** Whether dense embeddings are skipped (indexing.skip_dense) */
   skip_dense: boolean;
   /** Estimated embedding cost (USD) when pricing data is available (0 for local/deterministic). */
   embedding_cost_usd?: number | null;
-  /** Estimated semantic KG extraction cost (USD) when semantic_kg_mode='llm' and pricing is available. */
+  /** Estimated GraphRAG semantic extraction cost (USD) when enabled and pricing data is available. */
   semantic_kg_cost_usd?: number | null;
+  /** Figures expected to be described (heuristic: PDF pages x 0.6), when indexing.figures is enabled */
+  estimated_figures?: number | null;
+  /** Estimated vision-call cost (USD) to describe figures, from catalog pricing for indexing.figures.vision_model */
+  figure_description_cost_usd?: number | null;
   /** Estimated total indexing cost (USD): embedding + semantic KG (when applicable). */
   total_cost_usd?: number | null;
   /** Very rough low-end estimate for total indexing time (seconds) */
   estimated_seconds_low?: number | null;
   /** Very rough high-end estimate for total indexing time (seconds) */
   estimated_seconds_high?: number | null;
-  /** Estimated semantic KG phase time (seconds) when semantic_kg_mode='llm'. */
+  /** Estimated GraphRAG semantic phase time (seconds) when enabled. */
   estimated_seconds_semantic_kg?: number | null;
   /** Human-readable assumptions used for the estimate */
   assumptions?: string[];
@@ -2506,6 +3908,11 @@ export interface IndexRequest {
   repo_path: string;
   /** Force full reindex even if up-to-date */
   force_reindex?: boolean;
+}
+
+/** FastAPI response envelope for every index-run fence conflict (HTTP 409). */
+export interface IndexRunConflictResponse {
+  detail: IndexRunConflictDetail | IndexFenceCorruptDetail;
 }
 
 /** Persisted index terminal event for replay. */
@@ -2590,6 +3997,52 @@ export interface KeywordsGenerateResponse {
   count: number;
 }
 
+/** Request payload for setting a bundle alias. */
+export interface LineageAliasUpdateRequest {
+  /** Existing immutable bundle identifier to target. */
+  bundle_id: string;
+}
+
+/** List response for corpus-scoped lineage aliases. */
+export interface LineageAliasesResponse {
+  /** Whether the request succeeded. */
+  ok?: boolean;
+  /** Mutable alias pointers for this corpus. */
+  aliases?: LineageAlias[];
+}
+
+/** List response for immutable asset versions. */
+export interface LineageAssetListResponse {
+  /** Whether the request succeeded. */
+  ok?: boolean;
+  /** Immutable asset versions. */
+  assets?: LineageAssetVersion[];
+}
+
+/** List response for immutable bundles. */
+export interface LineageBundleListResponse {
+  /** Whether the request succeeded. */
+  ok?: boolean;
+  /** Immutable lineage bundles. */
+  bundles?: LineageBundle[];
+}
+
+/** Request payload for explicitly snapshotting the current quality-loop state. */
+export interface LineageBundleSnapshotRequest {
+  /** Optional aliases to move to the new bundle after the snapshot is created. */
+  set_aliases?: ("current" | "promoted" | "baseline" | "canary")[];
+}
+
+/** Response payload for creating or fetching a current-state bundle snapshot. */
+export interface LineageBundleSnapshotResponse {
+  /** Whether the request succeeded. */
+  ok?: boolean;
+  /** Created or reused immutable bundle. */
+  bundle: LineageBundle;
+  /** Aliases updated by this request. */
+  aliases?: LineageAlias[];
+}
+
 /** Response payload for /api/loki/status. */
 export interface LokiStatus {
   /** Whether Loki is reachable. */
@@ -2600,12 +4053,32 @@ export interface LokiStatus {
   status?: string;
 }
 
-/** Response payload for legacy /api/mcp/rag_search (debug UI). */
-export interface MCPRagSearchResponse {
-  /** Compact match list. */
-  results?: MCPRagSearchResult[];
-  /** Error message when the search fails. */
-  error?: string | null;
+/** Run one real MCP tool call through the mounted Streamable HTTP transport. */
+export interface MCPProbeRequest {
+  /** A real question about the corpus (never a placeholder). */
+  question: string;
+  /** Corpus to search; required unless the request carries corpus_id in its scope. */
+  corpus_id?: string | null;
+  /** Retrieval mode passed to the MCP search tool; null uses mcp.default_mode exactly like an MCP client. */
+  mode?: "tribrid" | "dense_only" | "sparse_only" | "graph_only" | null;
+  /** Result count passed to the tool; null uses mcp.default_top_k. */
+  top_k?: number | null;
+}
+
+/** Result of invoking the MCP `search` tool over the mounted transport. */
+export interface MCPProbeResponse {
+  /** Tool that was invoked. */
+  tool?: string;
+  /** Streamable HTTP endpoint the client session connected to. */
+  transport_url: string;
+  /** Corpus the tool searched. */
+  corpus_id: string;
+  /** Retrieval mode the tool resolved (request override or mcp.default_mode). */
+  mode: string;
+  /** Result count the tool resolved. */
+  top_k: number;
+  /** Structured tool output, validated as ChunkMatch rows. */
+  results?: ChunkMatch[];
 }
 
 /** Status of MCP transports built into TriBridRAG. */
@@ -2618,6 +4091,8 @@ export interface MCPStatusResponse {
   python_stdio_available?: boolean;
   /** Human-readable diagnostic details (best-effort). */
   details?: string[];
+  /** Tools registered on the embedded Streamable HTTP server (empty when the transport is disabled). */
+  tools?: MCPToolInfo[];
 }
 
 /** Response payload for GET /api/models. */
@@ -2665,10 +4140,124 @@ export interface ModelValidationResult {
   warnings?: ModelValidationWarning[];
 }
 
+/** Alerting rules read live from Prometheus for the Monitoring surface. */
+export interface ObservabilityAlertRulesResponse {
+  /** False when Prometheus is unconfigured or unreachable. */
+  ok?: boolean;
+  /** Prometheus base URL the rules were read from. */
+  source_url?: string | null;
+  /** Whether the Prometheus rules API answered. */
+  reachable?: boolean;
+  /** Operator-facing reason when rules could not be read. */
+  error?: string | null;
+  /** Alerting rules, firing first. */
+  rules?: ObservabilityAlertRule[];
+  firing_count?: number;
+  pending_count?: number;
+}
+
+/** Catalog of dashboard and workbench observability surfaces. */
+export interface ObservabilityCatalogResponse {
+  ok?: boolean;
+  /** When the catalog payload was generated. */
+  generated_at?: string | null;
+  /** Curated Grafana dashboard families available to operators. */
+  dashboards?: ObservabilityDashboardFamily[];
+  /** Primary in-product destinations tied to observability workflows. */
+  workbench_links?: ObservabilityWorkbenchLink[];
+  /** Cross-stack external links surfaced alongside the catalog. */
+  external_links?: TraceExternalLink[];
+}
+
+/** Unified incident feed for the observability workspace. */
+export interface ObservabilityIncidentsResponse {
+  ok?: boolean;
+  /** When the incidents payload was generated. */
+  generated_at?: string | null;
+  /** Active or recent incidents. */
+  incidents?: ObservabilityIncident[];
+  /** Total incident count in this payload. */
+  total_count?: number;
+  /** Critical incident count in this payload. */
+  critical_count?: number;
+}
+
+/** Operator-facing readiness summary for the observability stack. */
+export interface ObservabilityStatusResponse {
+  ok?: boolean;
+  /** When this status snapshot was generated. */
+  generated_at?: string | null;
+  /** Normalized observability mode for the current config. */
+  mode?: "local" | "otel" | "otel_langfuse" | "off";
+  /** Overall observability severity for the current stack. */
+  severity?: "healthy" | "info" | "warning" | "critical";
+  /** Overall SLO state for the current stack. */
+  slo_state?: "healthy" | "at_risk" | "breached" | "unknown";
+  /** Observability components/backends and their readiness state. */
+  components?: ObservabilityComponentStatus[];
+  /** Useful external links for the current observability config. */
+  links?: TraceExternalLink[];
+  /** Catalog endpoint for dashboard/workbench surfaces. */
+  catalog_path?: string;
+  /** Incident-feed endpoint for operators. */
+  incidents_path?: string;
+  /** Incident count surfaced alongside this status snapshot. */
+  incident_count?: number;
+  /** Critical incident count for the current snapshot. */
+  critical_incident_count?: number;
+  /** High-signal next-step guidance for operators. */
+  operator_hint?: string | null;
+}
+
 /** Generic ok response used by several endpoints. */
 export interface OkResponse {
   /** Whether the operation succeeded */
   ok: boolean;
+  /** Optional human-readable detail, e.g. why the call was an explicit no-op. */
+  message?: string | null;
+}
+
+/** FastAPI response envelope for a persisted-state corruption detail. */
+export interface PersistedStateCorruptResponse {
+  detail: PersistedStateCorruptDetail;
+}
+
+/** FastAPI response envelope for a refused over-budget generation request. */
+export interface PromptBudgetExceededResponse {
+  detail: PromptBudgetExceededDetail;
+}
+
+/** Prompt-set observability and change-correlation summary. */
+export interface PromptObservabilitySummaryResponse {
+  ok?: boolean;
+  /** Optional corpus identifier for the summary. */
+  corpus_id?: string | null;
+  /** Current prompt-set lineage ref. */
+  current_prompt_set_ref?: LineageRef | null;
+  /** Previous prompt-set lineage ref. */
+  previous_prompt_set_ref?: LineageRef | null;
+  /** Latest eval run id used for prompt correlation. */
+  latest_eval_run_id?: string | null;
+  /** Prompt set pinned to the latest eval run. */
+  latest_eval_prompt_set_ref?: LineageRef | null;
+  /** Latest benchmark run id used for prompt correlation. */
+  latest_benchmark_run_id?: string | null;
+  /** Prompt set pinned to the latest benchmark run. */
+  latest_benchmark_prompt_set_ref?: LineageRef | null;
+  /** Whether prompts changed since the latest eval. */
+  changed_since_latest_eval?: boolean;
+  /** Whether prompts changed since the latest benchmark. */
+  changed_since_latest_benchmark?: boolean;
+  /** Whether prompt changes correlate with eval regression. */
+  eval_regression_suspected?: boolean;
+  /** Whether prompt changes correlate with benchmark regression. */
+  benchmark_regression_suspected?: boolean;
+  /** Whether the current prompt set has not yet been re-verified by eval/benchmark runs. */
+  pending_verification?: boolean;
+  /** Unique prompt-set versions seen in recent bundles. */
+  recent_prompt_set_count?: number;
+  /** Suggested next step for prompt-regression triage. */
+  operator_hint?: string | null;
 }
 
 export interface PromptUpdateRequest {
@@ -2683,6 +4272,15 @@ export interface PromptUpdateResponse {
   prompt_key: string;
   /** Human-readable status message */
   message: string;
+  /** Immutable prompt-set version after this edit. */
+  prompt_set_ref?: LineageRef | null;
+  /** Current bundle id after the prompt edit was captured. */
+  bundle_id?: string | null;
+}
+
+/** Listing of persisted Promptfoo runs for a corpus. */
+export interface PromptfooRunsResponse {
+  runs?: PromptfooRun[];
 }
 
 /** Response containing prompt text and UI metadata. */
@@ -2696,6 +4294,14 @@ export interface PromptsResponse {
 /** Response payload for GET /api/chat/health. */
 export interface ProvidersHealthResponse {
   providers?: ProviderHealth[];
+}
+
+/** Readiness payload; unavailable required dependencies are served with HTTP 503. */
+export interface ReadinessStatus {
+  ready: boolean;
+  corpus_id?: string | null;
+  corpus_error?: string | null;
+  dependencies: Record<string, ReadinessDependencyStatus>;
 }
 
 /** Request payload for POST /api/recall/index. */
@@ -2726,6 +4332,11 @@ export interface RecallStatusResponse {
   chunk_count?: number;
 }
 
+/** FastAPI response envelope for a required retrieval-leg failure. */
+export interface RequiredRetrievalLegFailureResponse {
+  detail: RequiredRetrievalLegFailureDetail;
+}
+
 /** Request payload for POST /api/reranker/click. */
 export interface RerankerClickRequest {
   /** Event id returned by chat/search for correlation */
@@ -2748,6 +4359,8 @@ export interface RerankerEvaluateResponse {
   output?: string | null;
   /** Error message (if any) */
   error?: string | null;
+  /** High-signal implementation hint for the next debugger. */
+  operator_hint?: string | null;
   /** Proxy metrics dict (if ok) */
   metrics?: Record<string, number> | null;
 }
@@ -2809,6 +4422,28 @@ export interface RerankerMineResponse {
   output?: string | null;
   /** Error message (if any) */
   error?: string | null;
+  /** High-signal implementation hint for the next debugger. */
+  operator_hint?: string | null;
+  /** Triplets written by this mining pass. */
+  triplets_mined?: number;
+  /** Triplets mined from positive feedback events on the query log. */
+  triplets_from_feedback?: number;
+  /** Triplets mined from the eval run's retrieval results (hard negatives). */
+  triplets_from_eval_run?: number;
+  /** Candidate rows not written because an identical row was already on disk. */
+  triplets_skipped_existing?: number;
+  /** Candidate rows rejected because their query was a placeholder, not a real question. */
+  triplets_rejected_placeholder?: number;
+  /** Retrieved candidates skipped as negatives because their text contains the expected answer. */
+  negatives_rejected_answer_leak?: number;
+  /** Retrieved candidates skipped because their document could not be read for the leak check. */
+  negatives_rejected_unverifiable?: number;
+  /** Eval results mined without a leak check because the run recorded no expected answer. */
+  entries_without_answer_provenance?: number;
+  /** Eval run whose retrieval results were mined, if any. */
+  eval_run_id?: string | null;
+  /** Validated rows in the triplets file after this pass. */
+  triplets_total?: number;
 }
 
 /** Response payload for GET /api/reranker/nohits. */
@@ -2825,7 +4460,7 @@ export interface RerankerScoreRequest {
   query: string;
   /** Document/passage text to score */
   document: string;
-  /** Scoring mode override. Only 'learning' is supported; legacy values normalize to 'learning'. */
+  /** Scoring mode override. Only 'learning' is supported; stale aliases such as 'local' fail validation. */
   mode?: "learning" | null;
   /** Include backend-specific raw logits when available (best-effort) */
   include_logits?: boolean;
@@ -2845,6 +4480,13 @@ export interface RerankerScoreResponse {
   no_logit?: number | null;
   /** Error message (if any) */
   error?: string | null;
+  /** High-signal implementation hint for the next debugger. */
+  operator_hint?: string | null;
+}
+
+export interface RerankerTrainDiagnosticsResponse {
+  ok?: boolean;
+  records?: RerankerTrainDiagnosticRecord[];
 }
 
 export interface RerankerTrainDiffRequest {
@@ -2868,6 +4510,10 @@ export interface RerankerTrainDiffResponse {
   baseline_stability_stddev?: number | null;
   current_stability_stddev?: number | null;
   delta_stability_stddev?: number | null;
+  /** Baseline event records that no longer validate. */
+  baseline_unreadable_events?: number;
+  /** Current event records that no longer validate. */
+  current_unreadable_events?: number;
 }
 
 /** Request payload for POST /api/reranker/train (legacy UI). */
@@ -2887,6 +4533,8 @@ export interface RerankerTrainLegacyResponse {
   output?: string | null;
   /** Error message (if any) */
   error?: string | null;
+  /** High-signal implementation hint for the next debugger. */
+  operator_hint?: string | null;
   /** Training run id */
   run_id?: string | null;
 }
@@ -2894,6 +4542,10 @@ export interface RerankerTrainLegacyResponse {
 export interface RerankerTrainMetricsResponse {
   ok?: boolean;
   events?: RerankerTrainMetricEvent[];
+  /** Persisted event records that no longer validate (reported, never silently dropped). */
+  unreadable_events?: number;
+  /** Why the first unreadable record failed. */
+  unreadable_reason?: string | null;
 }
 
 export interface RerankerTrainRunsResponse {
@@ -2919,6 +4571,21 @@ export interface RerankerTrainStartResponse {
   ok?: boolean;
   run_id: string;
   run: RerankerTrainRun;
+}
+
+/** FastAPI response envelope for a retrieval contract mismatch (HTTP 409). */
+export interface RetrievalContractMismatchResponse {
+  detail: RetrievalContractMismatchDetail;
+}
+
+/** Response payload for GET /api/runtime-capabilities. */
+export interface RuntimeCapabilitiesResponse {
+  generation?: GenerationRuntimeCapabilities;
+  embedding?: EmbeddingRuntimeCapabilities;
+  reranker?: RerankerRuntimeCapabilities;
+  chunking?: ChunkingRuntimeCapabilities;
+  indexing?: IndexingRuntimeCapabilities;
+  search?: SearchRuntimeCapabilities;
 }
 
 /** Request payload for tri-brid search. */
@@ -2968,6 +4635,10 @@ export interface SyntheticConfigPatchResponse {
   corpus_id: string;
   patch?: Record<string, unknown>;
   artifact_path?: string | null;
+  /** Bundle id after attaching the config patch artifact. */
+  bundle_id?: string | null;
+  /** Immutable published artifact version reference. */
+  lineage_ref?: LineageRef | null;
 }
 
 export interface SyntheticPublishResponse {
@@ -2977,6 +4648,10 @@ export interface SyntheticPublishResponse {
   kind: "eval_dataset_json" | "semantic_cards_jsonl" | "keywords_json" | "triplets_jsonl" | "config_patch_json" | "quality_eval_json" | "report_md";
   target_path?: string | null;
   message?: string | null;
+  /** Bundle id after attaching the published artifact. */
+  bundle_id?: string | null;
+  /** Immutable published artifact version reference. */
+  lineage_ref?: LineageRef | null;
 }
 
 export interface SyntheticRun {
@@ -2985,7 +4660,7 @@ export interface SyntheticRun {
   status?: "queued" | "running" | "completed" | "failed" | "cancelled";
   started_at: string;
   completed_at?: string | null;
-  provider: "internal_ragweld" | "synthetic_data_kit";
+  provider: "grounded_qa";
   recipe: "eval_dataset" | "semantic_cards" | "keywords" | "triplets" | "autotune_retrieval" | "full_stack";
   config_snapshot?: Record<string, unknown>;
   config?: Record<string, unknown>;
@@ -2993,6 +4668,14 @@ export interface SyntheticRun {
   artifacts?: SyntheticArtifactRef[];
   summary?: SyntheticRunSummary;
   error?: string | null;
+  /** Current bundle id captured before the run started. */
+  input_bundle_id?: string | null;
+  /** Bundle id after this run was attached to lineage. */
+  bundle_id?: string | null;
+  /** Immutable synthetic run version reference. */
+  lineage_ref?: LineageRef | null;
+  /** Synthetic artifact kind -> immutable version reference. */
+  artifact_lineage_refs?: Record<string, LineageRef>;
 }
 
 export interface SyntheticRunEvent {
@@ -3008,6 +4691,8 @@ export interface SyntheticRunEvent {
 export interface SyntheticRunsResponse {
   ok?: boolean;
   runs?: SyntheticRunMeta[];
+  /** Run directories under data/synthetic_runs that could not be loaded; never silently hidden. */
+  unreadable?: SyntheticUnreadableRun[];
 }
 
 /** Response payload for /api/traces/latest. */
@@ -3032,6 +4717,7 @@ export interface TriBridConfig {
   indexing?: IndexingConfig;
   graph_storage?: GraphStorageConfig;
   graph_indexing?: GraphIndexingConfig;
+  qdrant?: QdrantConfig;
   fusion?: FusionConfig;
   vector_search?: VectorSearchConfig;
   sparse_search?: SparseSearchConfig;
@@ -3049,23 +4735,7 @@ export interface TriBridConfig {
   evaluation?: EvaluationConfig;
   system_prompts?: SystemPromptsConfig;
   mcp?: MCPConfig;
+  synthetic?: SyntheticConfig;
   docker?: DockerConfig;
-}
-
-/** Response payload for the vocab preview endpoint. */
-export interface VocabPreviewResponse {
-  /** Corpus identifier */
-  corpus_id: string;
-  /** Number of top terms requested */
-  top_n: number;
-  /** BM25 tokenizer setting (indexing.bm25_tokenizer) */
-  tokenizer: string;
-  /** Stemmer language (indexing.bm25_stemmer_lang) */
-  stemmer_lang?: string | null;
-  /** Postgres text search configuration used for tsv + query parsing */
-  ts_config: string;
-  /** Total unique terms in the corpus vocabulary */
-  total_terms: number;
-  /** Top terms by document frequency */
-  terms?: VocabPreviewTerm[];
+  document_viewer?: DocumentViewerConfig;
 }
