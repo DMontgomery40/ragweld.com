@@ -360,7 +360,7 @@ export function GlossarySubtab() {
                           <span className="glossary-icon" style={{ fontSize: '20px' }}>
                             {categoryInfo.icon}
                           </span>
-                          <strong style={{ fontSize: '14px', color: 'var(--accent)' }}>{item.title}</strong>
+                          <strong style={{ fontSize: '14px', color: 'var(--accent-text)' }}>{item.title}</strong>
                         </div>
                         <code
                           className="glossary-param-name"
@@ -389,7 +389,7 @@ export function GlossarySubtab() {
                                 fontWeight: '600',
                                 borderRadius: '3px',
                                 background: 'var(--warn)',
-                                color: '#000',
+                                color: 'var(--on-warn)',
                                 textTransform: 'uppercase',
                                 letterSpacing: '0.3px'
                               }}
@@ -421,7 +421,7 @@ export function GlossarySubtab() {
                                 transition: 'color 0.2s ease'
                               }}
                               onMouseEnter={(e) => {
-                                e.currentTarget.style.color = 'var(--accent)';
+                                e.currentTarget.style.color = 'var(--accent-text)';
                               }}
                               onMouseLeave={(e) => {
                                 e.currentTarget.style.color = 'var(--link)';
