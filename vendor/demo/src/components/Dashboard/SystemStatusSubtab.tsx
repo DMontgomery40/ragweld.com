@@ -1,7 +1,7 @@
 // TriBridRAG - System Status Subtab
 // Real-time system health, status, and quick overview
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as DashAPI from '@/api/dashboard';
 import { QuickActions } from './QuickActions';
@@ -47,15 +47,7 @@ export function SystemStatusSubtab() {
   const {
     devStackStatus,
     devStackLoading,
-    restartingFrontend,
-    restartingBackend,
-    restartingStack,
-    clearingCache,
     fetchDevStackStatus,
-    restartFrontend,
-    restartBackend,
-    restartStack,
-    clearCacheAndRestart,
   } = useDockerStore();
 
   const formatBytes = (bytes: number) => {
@@ -66,7 +58,7 @@ export function SystemStatusSubtab() {
     return `${value.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
   };
 
-  const refreshStatus = async () => {
+  const refreshStatus = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -83,7 +75,7 @@ export function SystemStatusSubtab() {
         DashAPI.getMCPStatus(),
         // DashAPI.getAutotuneStatus(), // HIDDEN - Pro feature
         DashAPI.getDockerStatus(),
-        DashAPI.getIndexStatus()
+        activeRepo ? DashAPI.getIndexStatus(activeRepo) : Promise.resolve(null)
       ]);
 
       // Health
@@ -92,7 +84,7 @@ export function SystemStatusSubtab() {
         setHealth(`${h.status}`);
       }
 
-      if (indexData.status === 'fulfilled' && indexData.value.metadata) {
+      if (indexData.status === 'fulfilled' && indexData.value?.metadata) {
         // DashboardIndexStatusMetadata does not expose a per-corpus repo breakdown.
         // Keep this empty until the backend provides a deterministic schema.
         setTopFolders([]);
@@ -128,10 +120,14 @@ export function SystemStatusSubtab() {
       if (dockerData.status === 'fulfilled') {
         const d = dockerData.value;
         if (d.status.running) {
-          const managed = d.containers.filter((c) => c.tribrid_managed);
-          const total = managed.length;
-          const running = managed.filter((c) => c.state === 'running').length;
-          setContainers(`${running}/${total}`);
+          if (d.inventoryAvailable) {
+            const managed = d.containers.filter((c) => c.managed);
+            const total = managed.length;
+            const running = managed.filter((c) => c.state === 'running').length;
+            setContainers(`${running}/${total}`);
+          } else {
+            setContainers('inventory unavailable');
+          }
         } else {
           setContainers('unavailable');
         }
@@ -143,7 +139,7 @@ export function SystemStatusSubtab() {
       setError(err instanceof Error ? err.message : String(err));
       setLoading(false);
     }
-  };
+  }, [activeRepo]);
 
   useEffect(() => {
     refreshStatus();
@@ -169,7 +165,7 @@ export function SystemStatusSubtab() {
       clearInterval(interval);
       window.removeEventListener('dashboard-refresh', handleRefresh);
     };
-  }, []); // Empty array - run once on mount, Zustand actions are stable
+  }, [fetchDevStackStatus, loadRepos, refreshStatus, reposInitialized, reposLoading]);
 
   // If the dashboard mounted while the backend was down, `loadRepos()` can fail and the store
   // intentionally marks itself initialized to avoid retry loops. When the backend comes back,
@@ -198,7 +194,7 @@ export function SystemStatusSubtab() {
               style={{
                 fontSize: '14px',
                 marginBottom: '16px',
-                color: 'var(--accent)',
+                color: 'var(--accent-text)',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px'
@@ -388,7 +384,7 @@ export function SystemStatusSubtab() {
                         boxShadow: '0 0 6px var(--link)'
                       }}
                     />
-                    Dev Stack
+                    Local Runtime
                   </span>
 
                   {/* Status indicators */}
@@ -481,110 +477,6 @@ export function SystemStatusSubtab() {
                     </div>
                   </div>
 
-                  {/* Restart buttons */}
-                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                    <button
-                      onClick={restartFrontend}
-                      disabled={restartingFrontend || restartingStack || clearingCache}
-                      className="dev-stack-btn"
-                      style={{
-                        flex: 1,
-                        minWidth: '70px',
-                        padding: '6px 8px',
-                        background: 'var(--bg-elev2)',
-                        color: 'var(--fg)',
-                        border: '1px solid var(--line)',
-                        borderRadius: '4px',
-                        fontSize: '10px',
-                        fontWeight: 500,
-                        cursor: restartingFrontend || restartingStack || clearingCache ? 'wait' : 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '4px'
-                      }}
-                    >
-                      {restartingFrontend && <span className="loading-spinner" style={{ width: '10px', height: '10px' }} />}
-                      ↻ Frontend
-                    </button>
-
-                    <button
-                      onClick={restartBackend}
-                      disabled={restartingBackend || restartingStack || clearingCache}
-                      className="dev-stack-btn"
-                      style={{
-                        flex: 1,
-                        minWidth: '70px',
-                        padding: '6px 8px',
-                        background: 'var(--bg-elev2)',
-                        color: 'var(--fg)',
-                        border: '1px solid var(--line)',
-                        borderRadius: '4px',
-                        fontSize: '10px',
-                        fontWeight: 500,
-                        cursor: restartingBackend || restartingStack || clearingCache ? 'wait' : 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '4px'
-                      }}
-                    >
-                      {restartingBackend && <span className="loading-spinner" style={{ width: '10px', height: '10px' }} />}
-                      ↻ Backend
-                    </button>
-
-                    <button
-                      onClick={restartStack}
-                      disabled={restartingFrontend || restartingBackend || restartingStack || clearingCache}
-                      className="dev-stack-btn btn-primary"
-                      style={{
-                        flex: 1,
-                        minWidth: '80px',
-                        padding: '6px 8px',
-                        background: 'var(--accent)',
-                        color: 'var(--accent-contrast)',
-                        border: 'none',
-                        borderRadius: '4px',
-                        fontSize: '10px',
-                        fontWeight: 600,
-                        cursor: restartingFrontend || restartingBackend || restartingStack || clearingCache ? 'wait' : 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '4px'
-                      }}
-                    >
-                      {restartingStack && <span className="loading-spinner" style={{ width: '10px', height: '10px', borderTopColor: 'var(--accent-contrast)' }} />}
-                      ↻ Full Stack
-                    </button>
-
-                    <button
-                      onClick={clearCacheAndRestart}
-                      disabled={restartingFrontend || restartingBackend || restartingStack || clearingCache}
-                      className="dev-stack-btn"
-                      style={{
-                        flex: 1,
-                        minWidth: '120px',
-                        padding: '6px 8px',
-                        background: 'var(--warn)',
-                        color: 'var(--bg)',
-                        border: 'none',
-                        borderRadius: '4px',
-                        fontSize: '10px',
-                        fontWeight: 600,
-                        cursor: restartingFrontend || restartingBackend || restartingStack || clearingCache ? 'wait' : 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '4px'
-                      }}
-                    >
-                      {clearingCache && <span className="loading-spinner" style={{ width: '10px', height: '10px', borderTopColor: 'var(--bg)' }} />}
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                        🗑 Clear Bytecode <TooltipIcon name="DEV_STACK_CLEAR_PYTHON_BYTECODE" />
-                      </span>
-                    </button>
-                  </div>
                 </div>
               </div>
             )}
@@ -668,7 +560,7 @@ export function SystemStatusSubtab() {
               <tbody>
                 {topFolders.map(folder => (
                   <tr key={`${folder.profile || 'default'}-${folder.name}`}>
-                    <td style={{ padding: '4px 0', fontWeight: 600, color: 'var(--accent)' }}>
+                    <td style={{ padding: '4px 0', fontWeight: 600, color: 'var(--accent-text)' }}>
                       {folder.name}
                     </td>
                     <td style={{ padding: '4px 0', color: 'var(--fg-muted)' }}>
