@@ -27,7 +27,6 @@
 
 .glossary-search::placeholder {
   color: var(--fg-muted);
-  opacity: 0.7;
 }
 
 /* Category Filters */
@@ -135,7 +134,7 @@
   background: var(--bg-elev2);
   border: 1px solid var(--line);
   border-radius: 4px;
-  color: var(--accent);
+  color: var(--accent-text);
   font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
   flex-shrink: 0;
   font-weight: 600;
@@ -203,7 +202,7 @@
 }
 
 .glossary-link:hover {
-  color: var(--accent);
+  color: var(--accent-text);
   gap: 6px;
 }
 
