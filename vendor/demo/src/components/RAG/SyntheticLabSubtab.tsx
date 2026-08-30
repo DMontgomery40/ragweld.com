@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useNotification } from '@/hooks';
 import { api, apiClient, withCorpusScope } from '@/api/client';
+import { LineageMeta } from '@/components/ui/LineageMeta';
 import { useActiveRepo } from '@/stores';
 import { configApi } from '@/api/config';
-import { syntheticService } from '@/services/SyntheticService';
+import { describeSyntheticFailure, syntheticService } from '@/services/SyntheticService';
 import type {
   ChatModelInfo,
   ChatModelsResponse,
@@ -13,14 +14,16 @@ import type {
   SyntheticRun,
   SyntheticRunEvent,
   SyntheticRunMeta,
+  SyntheticUnreadableRun,
   SyntheticRunStartRequest,
 } from '@/types/generated';
+import { chatModelDetail, chatModelName, groupChatModels } from '@/components/Chat/modelLabel';
 
 type SyntheticArtifactKind = SyntheticArtifactRef['kind'];
 type SyntheticProvider = NonNullable<SyntheticRunStartRequest['provider']>;
 type SyntheticRecipeKind = NonNullable<SyntheticRunStartRequest['recipe']>;
 
-const PROVIDERS: SyntheticProvider[] = ['internal_ragweld', 'synthetic_data_kit'];
+const PROVIDERS: SyntheticProvider[] = ['grounded_qa'];
 const RECIPES: SyntheticRecipeKind[] = [
   'eval_dataset',
   'semantic_cards',
@@ -30,23 +33,10 @@ const RECIPES: SyntheticRecipeKind[] = [
   'full_stack',
 ];
 
-const MODEL_SOURCE_LABELS = {
-  local: 'Local',
-  ragweld: 'Ragweld',
-  openrouter: 'OpenRouter',
-  cloud_direct: 'Cloud Direct',
-} as const;
-
-const MODEL_SOURCE_ORDER = ['local', 'ragweld', 'openrouter', 'cloud_direct'] as const;
-
 function toModelValue(model: ChatModelInfo): string {
   return String(model.override || model.id || '').trim();
 }
 
-function toModelLabel(model: ChatModelInfo): string {
-  const name = String(model.catalog_model || model.id || '').trim();
-  return `${model.provider} · ${name}`;
-}
 
 function SyntheticModelPicker({
   label,
@@ -63,31 +53,13 @@ function SyntheticModelPicker({
   loading: boolean;
   error: string | null;
 }) {
-  const groupedModels = useMemo(() => {
-    const normalized = models.filter((model) => Boolean(toModelValue(model)));
-    const ordered = MODEL_SOURCE_ORDER.map((source) => ({
-      source,
-      label: MODEL_SOURCE_LABELS[source],
-      items: normalized.filter((model) => model.source === source),
-    })).filter((group) => group.items.length > 0);
-
-    const knownSources = new Set(MODEL_SOURCE_ORDER);
-    const extras = Array.from(
-      new Set(
-        normalized
-          .map((model) => String(model.source || '').trim())
-          .filter((source) => source && !knownSources.has(source as (typeof MODEL_SOURCE_ORDER)[number]))
-      )
-    )
-      .sort((a, b) => a.localeCompare(b))
-      .map((source) => ({
-        source,
-        label: source,
-        items: normalized.filter((model) => String(model.source || '').trim() === source),
-      }));
-
-    return [...ordered, ...extras];
-  }, [models]);
+  const groupedModels = useMemo(
+    () =>
+      groupChatModels(models.filter((model) => model.source === 'litellm' && Boolean(toModelValue(model)))).map(
+        ({ group, models: items }) => ({ source: group, label: `${group} (${items.length})`, items })
+      ),
+    [models]
+  );
 
   return (
     <div className="setting-row">
@@ -104,8 +76,8 @@ function SyntheticModelPicker({
               {group.items.map((model) => {
                 const optionValue = toModelValue(model);
                 return (
-                  <option key={optionValue} value={optionValue}>
-                    {toModelLabel(model)}
+                  <option key={optionValue} value={optionValue} title={chatModelDetail(model)}>
+                    {chatModelName(model)}
                   </option>
                 );
               })}
@@ -148,9 +120,9 @@ function publishBlockReason(kind: SyntheticArtifactKind, run: SyntheticRun | nul
 export function SyntheticLabSubtab() {
   const activeRepo = useActiveRepo();
   const location = useLocation();
-  const { success, error: notifyError, info } = useNotification();
+  const { success, error: notifyError, info, notifications, removeNotification } = useNotification();
 
-  const [provider, setProvider] = useState<SyntheticProvider>('internal_ragweld');
+  const [provider, setProvider] = useState<SyntheticProvider>('grounded_qa');
   const [recipe, setRecipe] = useState<SyntheticRecipeKind>('eval_dataset');
   const [generatorModel, setGeneratorModel] = useState('');
   const [judgeModel, setJudgeModel] = useState('');
@@ -164,6 +136,7 @@ export function SyntheticLabSubtab() {
   const [availableModelsError, setAvailableModelsError] = useState<string | null>(null);
 
   const [runs, setRuns] = useState<SyntheticRunMeta[]>([]);
+  const [unreadableRuns, setUnreadableRuns] = useState<SyntheticUnreadableRun[]>([]);
   const [loadingRuns, setLoadingRuns] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState('');
   const [selectedRun, setSelectedRun] = useState<SyntheticRun | null>(null);
@@ -173,11 +146,21 @@ export function SyntheticLabSubtab() {
 
   const selectedArtifacts = useMemo(() => selectedRun?.artifacts || [], [selectedRun]);
 
+  // Arriving with a preset applied and no sign of it is how an operator ends up starting the
+  // most expensive recipe there is without having chosen it.
+  const [presetNotice, setPresetNotice] = useState('');
+
   useEffect(() => {
     const qs = new URLSearchParams(location.search || '');
     const recipeParam = String(qs.get('synthetic_recipe') || '').trim() as SyntheticRecipeKind;
     if (recipeParam && RECIPES.includes(recipeParam)) {
       setRecipe(recipeParam);
+      const from = String(qs.get('synthetic_context') || '').trim();
+      setPresetNotice(
+        `Recipe preset to "${recipeParam}"${from ? ` from ${from}` : ''}. Nothing has run — review it and start when you are ready.`
+      );
+    } else {
+      setPresetNotice('');
     }
   }, [location.search]);
 
@@ -200,7 +183,12 @@ export function SyntheticLabSubtab() {
       .then(({ data }) => {
         if (cancelled) return;
         const models = Array.isArray(data?.models)
-          ? data.models.filter((model) => Array.isArray(model.components) && model.components.includes('GEN'))
+          ? data.models.filter(
+              (model) =>
+                Array.isArray(model.components) &&
+                model.components.includes('GEN') &&
+                model.source === 'litellm'
+            )
           : [];
         setAvailableModels(models);
       })
@@ -244,6 +232,7 @@ export function SyntheticLabSubtab() {
     const corpusId = String(activeRepo || '').trim();
     if (!corpusId) {
       setRuns([]);
+      setUnreadableRuns([]);
       setSelectedRun(null);
       return;
     }
@@ -251,11 +240,12 @@ export function SyntheticLabSubtab() {
     try {
       const data = await syntheticService.listRuns(corpusId, 50);
       setRuns(data.runs || []);
+      setUnreadableRuns(data.unreadable || []);
       if (!selectedRunId && data.runs?.length) {
         setSelectedRunId(data.runs[0].run_id);
       }
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : 'Failed to load synthetic runs');
+      notifyError(describeSyntheticFailure(e, 'Failed to load synthetic runs'));
     } finally {
       setLoadingRuns(false);
     }
@@ -272,7 +262,7 @@ export function SyntheticLabSubtab() {
         const run = await syntheticService.getRun(runId);
         setSelectedRun(run);
       } catch (e) {
-        notifyError(e instanceof Error ? e.message : 'Failed to load synthetic run');
+        notifyError(describeSyntheticFailure(e, 'Failed to load synthetic run'));
       }
     },
     [notifyError]
@@ -347,7 +337,7 @@ export function SyntheticLabSubtab() {
         setSelectedRunId(run.run_id);
         void loadRuns();
       } catch (e) {
-        notifyError(e instanceof Error ? e.message : 'Failed to start synthetic run');
+        notifyError(describeSyntheticFailure(e, 'Failed to start synthetic run'));
       } finally {
         setStarting(false);
       }
@@ -397,7 +387,7 @@ export function SyntheticLabSubtab() {
           info('Config patch preview loaded.');
         }
       } catch (e) {
-        notifyError(e instanceof Error ? e.message : 'Publish failed');
+        notifyError(describeSyntheticFailure(e, 'Publish failed'));
       } finally {
         setPublishing('');
       }
@@ -416,7 +406,7 @@ export function SyntheticLabSubtab() {
       }
       success('Config patch applied.');
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : 'Failed to apply patch');
+      notifyError(describeSyntheticFailure(e, 'Failed to apply patch'));
     }
   }, [activeRepo, notifyError, patchPreview, success]);
 
@@ -437,6 +427,31 @@ export function SyntheticLabSubtab() {
 
   return (
     <div className="subtab-panel" style={{ padding: '24px' }} data-testid="synthetic-lab-subtab">
+      <div className="notification-container" data-testid="synthetic-lab-notifications">
+        {notifications.map((notification) => (
+          <div key={notification.id} className={`notification notification-${notification.type}`} role="status">
+            <span>{notification.message}</span>
+            <button onClick={() => removeNotification(notification.id)} aria-label="Dismiss notification">×</button>
+          </div>
+        ))}
+      </div>
+      {presetNotice ? (
+        <div
+          data-testid="synthetic-preset-notice"
+          role="status"
+          style={{
+            marginBottom: 14,
+            padding: '10px 12px',
+            borderRadius: 8,
+            border: '1px solid var(--accent)',
+            background: 'rgba(var(--accent-rgb), 0.08)',
+            color: 'var(--fg)',
+            fontSize: 13,
+          }}
+        >
+          {presetNotice}
+        </div>
+      ) : null}
       <div style={{ marginBottom: 18 }}>
         <h3 style={{ fontSize: 18, fontWeight: 600, color: 'var(--fg)', marginBottom: 6 }}>Synthetic Lab</h3>
         <div style={{ fontSize: 13, color: 'var(--fg-muted)' }}>
@@ -543,7 +558,7 @@ export function SyntheticLabSubtab() {
           </div>
         ) : availableModels.length === 0 && !loadingAvailableModels ? (
           <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 8 }}>
-            No runnable generation models are available for this corpus. Configure a provider in Chat settings or use the Ragweld in-process model.
+            No runnable generation models are available for this corpus: the LiteLLM gateway exposed no aliases. Check gateway readiness under Infrastructure and the catalog-backed aliases (including ragweld-local) in Chat settings.
           </div>
         ) : selectionUnavailable ? (
           <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 8 }}>
@@ -560,6 +575,24 @@ export function SyntheticLabSubtab() {
         <div style={{ fontWeight: 600, marginBottom: 10 }}>Runs</div>
         {loadingRuns ? <div style={{ color: 'var(--fg-muted)' }}>Loading runs...</div> : null}
         {!loadingRuns && runs.length === 0 ? <div style={{ color: 'var(--fg-muted)' }}>No synthetic runs yet.</div> : null}
+        {unreadableRuns.length > 0 ? (
+          <div className="studio-callout" style={{ marginBottom: 10 }} data-testid="synthetic-unreadable-runs">
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>
+              {unreadableRuns.length} run director{unreadableRuns.length === 1 ? 'y' : 'ies'} could not be read
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginBottom: 6 }}>
+              These runs exist under data/synthetic_runs but no longer validate (usually written by a provider that
+              was replaced). They are listed here instead of being hidden; remove or migrate them deliberately.
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
+              {unreadableRuns.map((u) => (
+                <li key={u.run_id}>
+                  <span className="studio-mono">{u.run_id}</span> — {u.reason}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {runs.length > 0 ? (
           <div style={{ overflowX: 'auto' }}>
             <table className="studio-table" style={{ width: '100%' }}>
@@ -603,6 +636,15 @@ export function SyntheticLabSubtab() {
               <span className="studio-mono">status={selectedRun.status}</span>
             </div>
 
+            <div style={{ marginBottom: 10 }}>
+              <LineageMeta
+                bundleId={selectedRun.bundle_id}
+                inputBundleId={selectedRun.input_bundle_id}
+                lineageRef={selectedRun.lineage_ref}
+                corpusId={String(activeRepo || '')}
+              />
+            </div>
+
             <div className="studio-callout" style={{ marginBottom: 10 }}>
               <div style={{ fontWeight: 600, marginBottom: 6 }}>Quality Gate</div>
               <div className="studio-mono">
@@ -617,6 +659,21 @@ export function SyntheticLabSubtab() {
               ) : (
                 <div style={{ color: 'var(--fg-muted)', marginTop: 6 }}>not evaluated</div>
               )}
+            </div>
+
+            <div className="studio-callout" style={{ marginBottom: 10 }} data-testid="synthetic-grounding-summary">
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>Grounding &amp; Curation</div>
+              <div className="studio-mono">
+                sources={selectedRun.summary?.sources_used ?? 0} generated={selectedRun.summary?.items_generated ?? 0}{' '}
+                ungrounded={selectedRun.summary?.items_rejected_ungrounded ?? 0} malformed={selectedRun.summary?.items_rejected_malformed ?? 0}{' '}
+                judged={selectedRun.summary?.items_curated_in ?? 0} kept={selectedRun.summary?.items_curated_out ?? 0}{' '}
+                avg_judge={selectedRun.summary?.avg_judge_score ?? 'n/a'} triplets={selectedRun.summary?.triplets_mined ?? 0}
+              </div>
+              <div style={{ color: 'var(--fg-muted)', marginTop: 6, fontSize: '13px' }}>
+                Rows are kept only when their evidence quote appears verbatim in the source chunk and the judge scores them at or
+                above the curation threshold. Triplets pair each kept question with the highest-ranked non-expected documents the
+                real retrieval lane returned for it.
+              </div>
             </div>
 
             <div style={{ marginBottom: 10 }}>
@@ -637,6 +694,7 @@ export function SyntheticLabSubtab() {
                           <>
                             <button
                               className="small-button"
+                              data-testid={`synthetic-publish-${a.kind}`}
                               title={blockedReason || `Publish ${labelForKind(a.kind)}`}
                               disabled={isPublishing || isBlocked}
                               onClick={() => void runPublish(a.kind)}
