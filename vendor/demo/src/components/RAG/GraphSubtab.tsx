@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ForceGraph2D from 'react-force-graph-2d';
 import { useGraph } from '@/hooks/useGraph';
+import { useIndexing } from '@/hooks/useIndexing';
 import { SyntheticCallout } from '@/components/RAG/SyntheticCallout';
 import { useRepoStore } from '@/stores/useRepoStore';
-import type { Community, Entity, Relationship } from '@/types/generated';
+import type { Community, Entity, IndexStatus, Relationship } from '@/types/generated';
 
 /** Node with computed degree for importance labeling */
 type NodeWithDegree = Entity & { __degree?: number };
@@ -41,6 +42,12 @@ function formatRelProvenance(r: Relationship): string {
 export function GraphSubtab() {
   const { repos, activeRepo, loadRepos, setActiveRepo } = useRepoStore();
   const {
+    status: activeIndexStatus,
+    stats: activeIndexSnapshot,
+    fetchStatus: fetchIndexStatus,
+    fetchStats: fetchIndexStats,
+  } = useIndexing();
+  const {
     entities,
     relationships,
     communities,
@@ -69,6 +76,7 @@ export function GraphSubtab() {
   const [accentColor, setAccentColor] = useState<string>('#00ff88');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fullscreenAnimating, setFullscreenAnimating] = useState(false);
+  const lastSeenIndexStateRef = useRef<IndexStatus['status'] | null>(null);
   const fgRef = useRef<any>(null);
   const fullscreenFgRef = useRef<any>(null);
   const vizCanvasRef = useRef<HTMLDivElement | null>(null);
@@ -79,6 +87,51 @@ export function GraphSubtab() {
   useEffect(() => {
     if (!repos.length) void loadRepos();
   }, [repos.length, loadRepos]);
+
+  useEffect(() => {
+    if (!activeRepo) {
+      lastSeenIndexStateRef.current = null;
+      return;
+    }
+
+    let cancelled = false;
+    let timer: number | null = null;
+
+    const poll = async () => {
+      try {
+        const [nextStatus] = await Promise.all([
+          fetchIndexStatus(activeRepo, { quiet: true }).catch(() => null),
+          fetchIndexStats(activeRepo, { quiet: true }).catch(() => null),
+        ]);
+        if (cancelled) return;
+
+        const previousState = lastSeenIndexStateRef.current;
+        const currentState = nextStatus?.status ?? null;
+        lastSeenIndexStateRef.current = currentState;
+
+        if (previousState === 'indexing' && currentState === 'complete') {
+          await loadGraph();
+        }
+
+        const delayMs = currentState === 'indexing' ? 3000 : 15000;
+        timer = window.setTimeout(() => {
+          void poll();
+        }, delayMs);
+      } catch {
+        if (cancelled) return;
+        timer = window.setTimeout(() => {
+          void poll();
+        }, 15000);
+      }
+    };
+
+    void poll();
+
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [activeRepo, fetchIndexStatus, fetchIndexStats, loadGraph]);
 
   useEffect(() => {
     // Pull the CSS theme accent into canvas-land (ForceGraph uses canvas fillStyles).
@@ -178,26 +231,31 @@ export function GraphSubtab() {
     return () => window.clearTimeout(handle);
   }, [viewMode, vizGraphData.nodes.length, vizGraphData.links.length]);
 
-  // Fullscreen canvas resize observer
+  // Fullscreen canvas sizing: observe the canvas element itself so the graph
+  // follows the modal's real size (the modal scales in over 200ms; a one-shot
+  // measurement mid-transition left the canvas at thumbnail size — G3).
   useEffect(() => {
-    if (!isFullscreen) return;
+    if (!isFullscreen) {
+      setFullscreenSize({ w: 0, h: 0 });
+      return;
+    }
     const el = fullscreenCanvasRef.current;
     if (!el) return;
 
     const update = () => {
-      const rect = el.getBoundingClientRect();
-      setFullscreenSize({
-        w: Math.max(1, Math.floor(rect.width)),
-        h: Math.max(1, Math.floor(rect.height)),
-      });
+      // Layout size, not getBoundingClientRect: the modal opens with a
+      // scale(0.95) transform and a transformed rect would size the canvas 5% short.
+      const w = Math.max(1, Math.floor(el.clientWidth));
+      const h = Math.max(1, Math.floor(el.clientHeight));
+      setFullscreenSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
     };
 
-    // Small delay to let CSS transition complete
-    const initialTimeout = window.setTimeout(update, 50);
+    update();
+    const observer = new ResizeObserver(() => update());
+    observer.observe(el);
     window.addEventListener('resize', update);
-
     return () => {
-      window.clearTimeout(initialTimeout);
+      observer.disconnect();
       window.removeEventListener('resize', update);
     };
   }, [isFullscreen]);
@@ -216,6 +274,18 @@ export function GraphSubtab() {
   }, [isFullscreen, fullscreenGraphData.nodes.length, fullscreenGraphData.links.length]);
 
   // Fullscreen open/close handlers with animation
+  useEffect(() => {
+    if (!isFullscreen || fullscreenSize.w <= 1 || fullscreenSize.h <= 1) return;
+    const handle = window.setTimeout(() => {
+      try {
+        fullscreenFgRef.current?.zoomToFit?.(400, 80);
+      } catch {
+        // no-op
+      }
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [isFullscreen, fullscreenSize.w, fullscreenSize.h]);
+
   const handleOpenFullscreen = useCallback(() => {
     setFullscreenAnimating(true);
     setIsFullscreen(true);
@@ -306,7 +376,8 @@ export function GraphSubtab() {
       // Draw label for important nodes (only when zoomed in enough)
       if (importantNodeIds.has(entity.entity_id) && globalScale >= 0.4) {
         const label = entity.name || entity.entity_id;
-        const fontSize = Math.max(10, 12 / globalScale);
+        // Keep hub labels readable but never poster-sized when zoomed out.
+        const fontSize = Math.min(26, Math.max(10, 12 / globalScale));
         ctx.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
 
         // Background pill for readability
@@ -361,6 +432,18 @@ export function GraphSubtab() {
     return Array.from(types).sort((a, b) => a.localeCompare(b));
   }, [stats, relationships]);
 
+  const indexProgressPercent = useMemo(() => {
+    const raw = Number(activeIndexStatus?.progress ?? 0);
+    return Math.max(0, Math.min(100, Math.round(raw * 100)));
+  }, [activeIndexStatus?.progress]);
+
+  const isGraphPromotionPending = activeIndexStatus?.status === 'indexing';
+  const promotedSnapshotTime = String(activeIndexSnapshot?.last_indexed || '').trim();
+  const activeIndexStartedAt = String(activeIndexStatus?.started_at || '').trim();
+  const promotedGraphIsStale =
+    isGraphPromotionPending &&
+    (!!activeIndexSnapshot?.last_indexed || (stats?.total_entities ?? 0) === 0);
+
   const handleSearch = async () => {
     await searchEntities(entityQuery, 200);
   };
@@ -393,7 +476,7 @@ export function GraphSubtab() {
             style={{
               padding: '8px 10px',
               background: viewMode === 'viz' ? 'rgba(var(--accent-rgb), 0.14)' : 'transparent',
-              color: viewMode === 'viz' ? 'var(--accent)' : 'var(--fg-muted)',
+              color: viewMode === 'viz' ? 'var(--accent-text)' : 'var(--fg-muted)',
               border: viewMode === 'viz' ? '1px solid var(--accent)' : '1px solid var(--line)',
               borderRadius: '10px',
               cursor: 'pointer',
@@ -409,7 +492,7 @@ export function GraphSubtab() {
             style={{
               padding: '8px 10px',
               background: viewMode === 'table' ? 'rgba(var(--accent-rgb), 0.14)' : 'transparent',
-              color: viewMode === 'table' ? 'var(--accent)' : 'var(--fg-muted)',
+              color: viewMode === 'table' ? 'var(--accent-text)' : 'var(--fg-muted)',
               border: viewMode === 'table' ? '1px solid var(--accent)' : '1px solid var(--line)',
               borderRadius: '10px',
               cursor: 'pointer',
@@ -424,6 +507,55 @@ export function GraphSubtab() {
       </div>
 
       <SyntheticCallout context="graph" />
+
+      {promotedGraphIsStale ? (
+        <div
+          style={{
+            background: 'rgba(var(--accent-rgb), 0.08)',
+            border: '1px solid rgba(var(--accent-rgb), 0.28)',
+            borderRadius: '12px',
+            padding: '14px 16px',
+            marginBottom: '16px',
+          }}
+          data-testid="graph-staging-banner"
+        >
+          <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--fg)' }}>
+            GraphRAG reindex is still building in staging.
+          </div>
+          <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--fg-muted)', lineHeight: 1.55 }}>
+            This panel shows the last promoted graph. During an active reindex, graph stats can stay at zero until the
+            new run finishes and promotes.
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              gap: '14px',
+              flexWrap: 'wrap',
+              marginTop: '10px',
+              fontSize: '12px',
+            }}
+          >
+            <span style={{ color: 'var(--fg)' }}>
+              <strong style={{ color: 'var(--accent-text)' }}>{indexProgressPercent}%</strong> complete
+            </span>
+            {activeIndexStatus?.current_file ? (
+              <span style={{ color: 'var(--fg-muted)' }}>
+                Current file: <span style={{ color: 'var(--fg)' }}>{activeIndexStatus.current_file}</span>
+              </span>
+            ) : null}
+            {activeIndexStartedAt ? (
+              <span style={{ color: 'var(--fg-muted)' }}>
+                Started: <span style={{ color: 'var(--fg)' }}>{new Date(activeIndexStartedAt).toLocaleString()}</span>
+              </span>
+            ) : null}
+            {promotedSnapshotTime ? (
+              <span style={{ color: 'var(--fg-muted)' }}>
+                Last promoted: <span style={{ color: 'var(--fg)' }}>{new Date(promotedSnapshotTime).toLocaleString()}</span>
+              </span>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {error && (
         <div
@@ -602,7 +734,7 @@ export function GraphSubtab() {
                   }}
                   data-testid={`graph-community-${c.community_id}`}
                 >
-                  <div style={{ fontSize: '13px', fontWeight: 700, color: active ? 'var(--accent)' : 'var(--fg)' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: active ? 'var(--accent-text)' : 'var(--fg)' }}>
                     {c.name}
                   </div>
                   <div style={{ marginTop: '4px', fontSize: '11px', color: 'var(--fg-muted)' }}>
@@ -612,7 +744,10 @@ export function GraphSubtab() {
               );
             })}
             {!communities?.length && (
-              <div style={{ fontSize: '12px', color: 'var(--fg-muted)' }}>No communities found.</div>
+              <div style={{ fontSize: '12.5px', color: 'var(--fg-muted)', lineHeight: 1.5 }} data-testid="graph-communities-empty">
+                No communities: communities are groups of entities linked by relationships, and this graph has no
+                linked entities yet (run a Force re-index with the semantic knowledge graph enabled).
+              </div>
             )}
           </div>
         </div>
@@ -760,7 +895,7 @@ export function GraphSubtab() {
                   }}
                   data-testid={`graph-entity-${e.entity_id}`}
                 >
-                  <div style={{ fontSize: '13px', fontWeight: 700, color: active ? 'var(--accent)' : 'var(--fg)' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: active ? 'var(--accent-text)' : 'var(--fg)' }}>
                     {formatEntityLabel(e)}
                   </div>
                   <div style={{ marginTop: '4px', fontSize: '11px', color: 'var(--fg-muted)' }}>
@@ -878,6 +1013,7 @@ export function GraphSubtab() {
                     ['org', '#0ea5e9'],
                     ['location', '#10b981'],
                     ['event', '#eab308'],
+                    ['concept', '#94a3b8'],
                   ].map(([label, color]) => (
                     <span key={label as string} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                       <span style={{ width: '8px', height: '8px', borderRadius: '999px', background: color as string, display: 'inline-block' }} />
@@ -896,7 +1032,7 @@ export function GraphSubtab() {
                     background: 'rgba(var(--accent-rgb), 0.1)',
                     border: '1px solid var(--accent)',
                     borderRadius: '8px',
-                    color: 'var(--accent)',
+                    color: 'var(--accent-text)',
                     fontSize: '11px',
                     fontWeight: 700,
                     cursor: filteredEntities.length === 0 ? 'not-allowed' : 'pointer',
@@ -998,9 +1134,18 @@ export function GraphSubtab() {
             aria-label="Fullscreen graph visualization"
             data-testid="graph-fullscreen-overlay"
           >
-            {/* Modal container - 85% of viewport */}
+            {/* Modal container - 85% of viewport. The visualizer paints white
+                edges and dark label pills, so the modal keeps the dark token
+                set under every theme (Light theme made the edges invisible). */}
             <div
               style={{
+                ['--bg' as string]: '#09090b',
+                ['--bg-elev1' as string]: '#0f0f12',
+                ['--bg-elev2' as string]: '#18181b',
+                ['--line' as string]: '#3f3f46',
+                ['--fg' as string]: '#e4e4e7',
+                ['--fg-muted' as string]: '#a1a1aa',
+                color: '#e4e4e7',
                 width: '85vw',
                 height: '85vh',
                 maxWidth: '1800px',
@@ -1044,27 +1189,23 @@ export function GraphSubtab() {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  {/* Legend */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '11px' }}>
-                    {[
-                      { type: 'function', color: '#22c55e' },
-                      { type: 'class', color: '#60a5fa' },
-                      { type: 'module', color: '#fbbf24' },
-                      { type: 'variable', color: '#a78bfa' },
-                      { type: 'concept', color: '#94a3b8' },
-                    ].map(({ type, color }) => (
-                      <div key={type} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <div
-                          style={{
-                            width: '10px',
-                            height: '10px',
-                            borderRadius: '50%',
-                            background: color,
-                          }}
-                        />
-                        <span style={{ color: 'var(--fg-muted)' }}>{type}</span>
-                      </div>
-                    ))}
+                  {/* Legend: the entity types present in this graph, in the visualizer's colours */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px', flexWrap: 'wrap' }} data-testid="graph-fullscreen-legend">
+                    {Array.from(new Set(filteredEntities.map((e) => e.entity_type)))
+                      .sort()
+                      .map((type) => (
+                        <div key={type} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <div
+                            style={{
+                              width: '10px',
+                              height: '10px',
+                              borderRadius: '50%',
+                              background: nodeColor({ entity_id: '', name: '', entity_type: type } as Entity),
+                            }}
+                          />
+                          <span style={{ color: 'var(--fg-muted)' }}>{type}</span>
+                        </div>
+                      ))}
                   </div>
 
                   {/* Close button */}
@@ -1124,6 +1265,15 @@ export function GraphSubtab() {
                     nodeLabel={(n: any) => formatEntityLabel(n as Entity)}
                     linkLabel={(l: any) => String((l as Relationship).relation_type || '')}
                     nodeCanvasObject={fullscreenNodeCanvasObject}
+                    nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
+                      // Hit area must match the painted circle (custom painters get no default hit shape).
+                      const degree = (node as NodeWithDegree).__degree || 0;
+                      const radius = 4 * Math.min(2.5, 1 + degree * 0.15) + 2;
+                      ctx.fillStyle = color;
+                      ctx.beginPath();
+                      ctx.arc(node.x ?? 0, node.y ?? 0, radius, 0, 2 * Math.PI);
+                      ctx.fill();
+                    }}
                     linkColor={() => 'rgba(255, 255, 255, 0.12)'}
                     linkWidth={1.5}
                     backgroundColor="rgba(0,0,0,0)"
@@ -1156,7 +1306,7 @@ export function GraphSubtab() {
                       backdropFilter: 'blur(8px)',
                     }}
                   >
-                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--accent)' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--accent-text)' }}>
                       {selectedEntity.name}
                     </div>
                     <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '4px' }}>
