@@ -1,10 +1,22 @@
 // TriBrid RAG Storage Calculator Suite v2.0 - TSX Component
-// Calculates storage for pgvector, Neo4j, and sparse indices
+// Calculates storage for Qdrant dense vectors, Neo4j, and sparse indices
 // Connected to Pydantic config for default values
 
 import { useState, useEffect, useCallback } from 'react';
 import '@/styles/storage-calculator.css';
 import { configApi } from '@/api/config';
+import * as DashAPI from '@/api/dashboard';
+import { useRepoStore } from '@/stores/useRepoStore';
+import { NumberField } from '@/components/ui/NumberField';
+
+/** What the planner was seeded from, so every prefilled number can name its source (M-142). */
+interface PrefillInfo {
+  corpusName: string;
+  corpusSizeLabel: string;
+  chunkSizeLabel: string;
+  chunkCount: number;
+  embDim: number;
+}
 
 // Utility functions
 function formatBytes(bytes: number): string {
@@ -95,6 +107,11 @@ interface Calc2Results {
 }
 
 export function StorageCalculatorSuite() {
+  const activeRepo = useRepoStore((s) => s.activeRepo);
+  const repos = useRepoStore((s) => s.repos);
+  // What the planner was seeded from (null = still on generic defaults, no corpus to read).
+  const [prefill, setPrefill] = useState<PrefillInfo | null>(null);
+
   // Calculator 1 state - defaults will be overwritten by Pydantic config
   const [calc1, setCalc1] = useState<Calc1Inputs>({
     repoSize: 5,
@@ -103,7 +120,7 @@ export function StorageCalculatorSuite() {
     chunkUnit: 1024, // KiB
     embDim: 3072, // Default for text-embedding-3-large
     precision: 4, // float32
-    pgvectorOverhead: 1.15, // pgvector HNSW index overhead (lower than Qdrant)
+    pgvectorOverhead: 1.3, // Qdrant HNSW index overhead over raw dense vectors
     hydration: 100,
     replication: 3,
     // Neo4j defaults - estimated from typical entity extraction
@@ -126,21 +143,71 @@ export function StorageCalculatorSuite() {
     cardspct: 10,
   });
 
-  // Load defaults from Pydantic config
+  // Seed the planner from the active corpus so it opens grounded in the numbers shown 200px
+  // above it, instead of a hardcoded 5 GiB / 1.3M-chunk scenario that had nothing to do with a
+  // 3.5 MiB corpus (M-142). The embedding dim comes from Pydantic config; the corpus size and a
+  // representative chunk size are read from the live index stats. Every seeded value is labelled
+  // with its source in the banner below, and any field can still be edited to explore scenarios.
+  // If no corpus is indexed, the generic defaults stand and the banner says so.
   useEffect(() => {
-    async function loadConfig() {
+    let cancelled = false;
+    async function seedFromCorpus() {
+      let embDim = 3072;
       try {
         const config = await configApi.load();
-        const embDim = Number(config.embedding?.embedding_dim ?? 3072);
-        
-        setCalc1(prev => ({ ...prev, embDim }));
-        setCalc2(prev => ({ ...prev, embDim }));
+        embDim = Number(config.embedding?.embedding_dim ?? 3072);
       } catch (err) {
         console.error('[StorageCalculatorSuite] Failed to load config:', err);
       }
+      if (cancelled) return;
+      setCalc1((prev) => ({ ...prev, embDim }));
+      setCalc2((prev) => ({ ...prev, embDim }));
+
+      try {
+        const stats = await DashAPI.getIndexStats();
+        if (cancelled) return;
+        const chunkBytes = Number(stats.storage_breakdown?.chunks_bytes || 0);
+        const points = Number(stats.storage_breakdown?.qdrant_points || 0);
+        // Only seed when both are real: a confidently-wrong prefill is worse than an honest
+        // default. Chunk size is the mean stored chunk (corpus bytes / chunk count).
+        if (chunkBytes > 0 && points > 0) {
+          const repoSizeMiB = chunkBytes / 1048576;
+          const chunkSizeKiB = chunkBytes / points / 1024;
+          const corpusName =
+            String(repos.find((r) => r.corpus_id === activeRepo)?.name || activeRepo || 'the active corpus');
+          setCalc1((prev) => ({
+            ...prev,
+            repoSize: Number(repoSizeMiB.toFixed(3)),
+            repoUnit: 1048576,
+            chunkSize: Number(chunkSizeKiB.toFixed(3)),
+            chunkUnit: 1024,
+            embDim,
+          }));
+          setCalc2((prev) => ({
+            ...prev,
+            repoSize: Number(repoSizeMiB.toFixed(3)),
+            repoUnit: 1048576,
+            chunkSize: Number(chunkSizeKiB.toFixed(3)),
+            chunkUnit: 1024,
+            embDim,
+          }));
+          setPrefill({
+            corpusName,
+            corpusSizeLabel: formatBytes(chunkBytes),
+            chunkSizeLabel: `${chunkSizeKiB.toFixed(2)} KiB`,
+            chunkCount: points,
+            embDim,
+          });
+        }
+      } catch {
+        // No active corpus / not indexed yet: keep the generic defaults, banner says so.
+      }
     }
-    loadConfig();
-  }, []);
+    seedFromCorpus();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRepo, repos]);
 
   // Results state
   const [results1, setResults1] = useState<Calc1Results | null>(null);
@@ -159,7 +226,7 @@ export function StorageCalculatorSuite() {
     const hydrationPct = calc1.hydration / 100;
     const replFactor = calc1.replication;
 
-    // Vector storage (pgvector)
+    // Vector storage (Qdrant dense)
     const N = Math.ceil(R / C);
     const E = N * D * B;
     const PG_bytes = E * PG;
@@ -284,12 +351,26 @@ export function StorageCalculatorSuite() {
     <div className="storage-calc-wrapper">
       <div className="storage-calc-header">
         <h1><span className="brand">TriBrid RAG</span> Storage Calculator Suite</h1>
-        <p className="subtitle">MLOps Engineering Platform • Enterprise Memory Planning</p>
-        <div className="info-box">
-          <p>
-            <strong>Left:</strong> Calculate exact storage needs for your configuration.<br />
-            <strong>Right:</strong> See if your data fits within a target limit using different strategies.
-          </p>
+        <p className="subtitle">Hypothetical capacity planner — independent of the live storage shown above</p>
+        <div
+          className="info-box"
+          data-testid="storage-calc-prefill"
+          style={{ fontSize: '13px', lineHeight: 1.6, color: 'var(--fg)' }}
+        >
+          {prefill ? (
+            <p style={{ margin: 0 }}>
+              Seeded from <strong>{prefill.corpusName}</strong>: corpus size{' '}
+              <strong>{prefill.corpusSizeLabel}</strong> (stored chunk bytes), mean chunk{' '}
+              <strong>{prefill.chunkSizeLabel}</strong> across {prefill.chunkCount.toLocaleString()} chunks,
+              embedding dim <strong>{prefill.embDim.toLocaleString()}</strong> (from config). Edit any field to
+              model a different scenario — this planner never changes your stored index.
+            </p>
+          ) : (
+            <p style={{ margin: 0 }}>
+              No indexed corpus to seed from yet — the fields below hold generic planning defaults. Enter your own
+              numbers to size a future corpus; nothing here touches a stored index.
+            </p>
+          )}
         </div>
       </div>
 
@@ -315,12 +396,10 @@ export function StorageCalculatorSuite() {
                   </div>
                 </label>
                 <div className="unit-input">
-                  <input
-                    type="number"
+                  <NumberField
                     value={calc1.repoSize}
-                    onChange={(e) => setCalc1({ ...calc1, repoSize: parseFloat(e.target.value) || 0 })}
-                    step="0.1"
-                    min="0.1"
+                    onCommit={(next) => setCalc1({ ...calc1, repoSize: next })}
+                    min={0.1}
                   />
                   <select
                     value={calc1.repoUnit}
@@ -340,12 +419,10 @@ export function StorageCalculatorSuite() {
                   </div>
                 </label>
                 <div className="unit-input">
-                  <input
-                    type="number"
+                  <NumberField
                     value={calc1.chunkSize}
-                    onChange={(e) => setCalc1({ ...calc1, chunkSize: parseFloat(e.target.value) || 0 })}
-                    step="1"
-                    min="0.001"
+                    onCommit={(next) => setCalc1({ ...calc1, chunkSize: next })}
+                    min={0.001}
                   />
                   <select
                     value={calc1.chunkUnit}
@@ -366,12 +443,10 @@ export function StorageCalculatorSuite() {
                     <span className="tooltip" title="Vector size: 512 (small), 768 (BERT), 1536 (OpenAI)">?</span>
                   </div>
                 </label>
-                <input
-                  type="number"
+                <NumberField
                   value={calc1.embDim}
-                  onChange={(e) => setCalc1({ ...calc1, embDim: parseInt(e.target.value) || 0 })}
-                  step="1"
-                  min="1"
+                  onCommit={(next) => setCalc1({ ...calc1, embDim: next })}
+                  min={1}
                 />
               </div>
               <div className="input-group">
@@ -396,16 +471,14 @@ export function StorageCalculatorSuite() {
               <div className="input-group">
                 <label>
                   <div className="label-with-tooltip">
-                    pgvector Overhead
-                    <span className="tooltip" title="HNSW index overhead. Typically 1.1-1.2x for pgvector (lower than Qdrant)">?</span>
+                    Qdrant HNSW Overhead
+                    <span className="tooltip" title="HNSW index overhead over raw dense vectors. Typically 1.1-1.5x for Qdrant">?</span>
                   </div>
                 </label>
-                <input
-                  type="number"
+                <NumberField
                   value={calc1.pgvectorOverhead}
-                  onChange={(e) => setCalc1({ ...calc1, pgvectorOverhead: parseFloat(e.target.value) || 1 })}
-                  step="0.05"
-                  min="1"
+                  onCommit={(next) => setCalc1({ ...calc1, pgvectorOverhead: next })}
+                  min={1}
                 />
               </div>
               <div className="input-group">
@@ -415,13 +488,12 @@ export function StorageCalculatorSuite() {
                     <span className="tooltip" title="% of raw data kept in RAM for instant retrieval">?</span>
                   </div>
                 </label>
-                <input
-                  type="number"
+                <NumberField
+                  data-testid="storage-calc-hydration"
                   value={calc1.hydration}
-                  onChange={(e) => setCalc1({ ...calc1, hydration: parseFloat(e.target.value) || 0 })}
-                  step="10"
-                  min="0"
-                  max="100"
+                  onCommit={(next) => setCalc1({ ...calc1, hydration: next })}
+                  min={0}
+                  max={100}
                 />
               </div>
             </div>
@@ -434,19 +506,17 @@ export function StorageCalculatorSuite() {
                     <span className="tooltip" title="Number of copies for HA/scaling">?</span>
                   </div>
                 </label>
-                <input
-                  type="number"
+                <NumberField
                   value={calc1.replication}
-                  onChange={(e) => setCalc1({ ...calc1, replication: parseInt(e.target.value) || 1 })}
-                  step="1"
-                  min="1"
+                  onCommit={(next) => setCalc1({ ...calc1, replication: next })}
+                  min={1}
                 />
               </div>
             </div>
 
             {/* Neo4j Graph Storage Inputs */}
             <div style={{ borderTop: '1px solid var(--line)', marginTop: '16px', paddingTop: '16px' }}>
-              <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--accent)', marginBottom: '12px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--accent-text)', marginBottom: '12px' }}>
                 📊 Neo4j Graph Storage
               </div>
               <div className="input-row">
@@ -457,12 +527,10 @@ export function StorageCalculatorSuite() {
                       <span className="tooltip" title="Estimated number of nodes (entities) in the knowledge graph">?</span>
                     </div>
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     value={calc1.neo4jNodeCount}
-                    onChange={(e) => setCalc1({ ...calc1, neo4jNodeCount: parseInt(e.target.value) || 0 })}
-                    step="1000"
-                    min="0"
+                    onCommit={(next) => setCalc1({ ...calc1, neo4jNodeCount: next })}
+                    min={0}
                   />
                 </div>
                 <div className="input-group">
@@ -472,12 +540,10 @@ export function StorageCalculatorSuite() {
                       <span className="tooltip" title="Estimated number of relationships between entities">?</span>
                     </div>
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     value={calc1.neo4jRelCount}
-                    onChange={(e) => setCalc1({ ...calc1, neo4jRelCount: parseInt(e.target.value) || 0 })}
-                    step="1000"
-                    min="0"
+                    onCommit={(next) => setCalc1({ ...calc1, neo4jRelCount: next })}
+                    min={0}
                   />
                 </div>
               </div>
@@ -489,12 +555,10 @@ export function StorageCalculatorSuite() {
                       <span className="tooltip" title="Average bytes per node including properties and labels">?</span>
                     </div>
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     value={calc1.avgNodeBytes}
-                    onChange={(e) => setCalc1({ ...calc1, avgNodeBytes: parseInt(e.target.value) || 256 })}
-                    step="32"
-                    min="64"
+                    onCommit={(next) => setCalc1({ ...calc1, avgNodeBytes: next })}
+                    min={64}
                   />
                 </div>
                 <div className="input-group">
@@ -504,12 +568,10 @@ export function StorageCalculatorSuite() {
                       <span className="tooltip" title="Average bytes per relationship including properties">?</span>
                     </div>
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     value={calc1.avgRelBytes}
-                    onChange={(e) => setCalc1({ ...calc1, avgRelBytes: parseInt(e.target.value) || 128 })}
-                    step="16"
-                    min="32"
+                    onCommit={(next) => setCalc1({ ...calc1, avgRelBytes: next })}
+                    min={32}
                   />
                 </div>
               </div>
@@ -528,7 +590,7 @@ export function StorageCalculatorSuite() {
                   <span className="result-value">{formatBytes(results1.embeddings)}</span>
                 </div>
                 <div className="result-item">
-                  <span className="result-label">pgvector Index</span>
+                  <span className="result-label">Qdrant Dense Index</span>
                   <span className="result-value">{formatBytes(results1.pgvectorSize)}</span>
                 </div>
                 <div className="result-item">
@@ -551,7 +613,7 @@ export function StorageCalculatorSuite() {
 
               {/* Neo4j Graph Storage Results */}
               <div style={{ borderTop: '1px solid var(--line)', marginTop: '16px', paddingTop: '16px' }}>
-                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--accent)', marginBottom: '8px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--accent-text)', marginBottom: '8px' }}>
                   📊 Neo4j Graph Storage
                 </div>
                 <div className="result-grid">
@@ -569,7 +631,7 @@ export function StorageCalculatorSuite() {
                   </div>
                   <div className="result-item">
                     <span className="result-label">Graph Total</span>
-                    <span className="result-value" style={{ color: 'var(--accent)' }}>{formatBytes(results1.neo4jTotal)}</span>
+                    <span className="result-value" style={{ color: 'var(--accent-text)' }}>{formatBytes(results1.neo4jTotal)}</span>
                   </div>
                 </div>
               </div>
@@ -595,8 +657,16 @@ export function StorageCalculatorSuite() {
             <span className="calculator-badge">Fit Analysis</span>
           </div>
 
-          <p style={{ fontSize: '12px', color: 'var(--fg-muted)', marginBottom: '20px', lineHeight: 1.5 }}>
+          <p style={{ fontSize: '12px', color: 'var(--fg-muted)', marginBottom: '12px', lineHeight: 1.5 }}>
             Compare two strategies: <strong>Minimal</strong> (smallest footprint, fetches data on-demand) vs <strong>Low Latency</strong> (everything in RAM for instant access).
+          </p>
+          <p
+            data-testid="storage-calc2-independent-note"
+            style={{ fontSize: '11.5px', color: 'var(--fg-muted)', marginBottom: '20px', lineHeight: 1.5 }}
+          >
+            Corpus Size, Chunk Size and Embedding Dims here are <strong>independent scenario inputs</strong> — editing
+            them does not change the left panel. Hydration %, Replication and HNSW overhead are read from the left
+            panel.
           </p>
 
           <div className="input-section">
@@ -609,12 +679,10 @@ export function StorageCalculatorSuite() {
                   </div>
                 </label>
                 <div className="unit-input">
-                  <input
-                    type="number"
+                  <NumberField
                     value={calc2.repoSize}
-                    onChange={(e) => setCalc2({ ...calc2, repoSize: parseFloat(e.target.value) || 0 })}
-                    step="0.1"
-                    min="0.1"
+                    onCommit={(next) => setCalc2({ ...calc2, repoSize: next })}
+                    min={0.1}
                   />
                   <select
                     value={calc2.repoUnit}
@@ -634,12 +702,10 @@ export function StorageCalculatorSuite() {
                   </div>
                 </label>
                 <div className="unit-input">
-                  <input
-                    type="number"
+                  <NumberField
                     value={calc2.targetSize}
-                    onChange={(e) => setCalc2({ ...calc2, targetSize: parseFloat(e.target.value) || 0 })}
-                    step="0.5"
-                    min="0.1"
+                    onCommit={(next) => setCalc2({ ...calc2, targetSize: next })}
+                    min={0.1}
                   />
                   <select
                     value={calc2.targetUnit}
@@ -661,12 +727,10 @@ export function StorageCalculatorSuite() {
                   </div>
                 </label>
                 <div className="unit-input">
-                  <input
-                    type="number"
+                  <NumberField
                     value={calc2.chunkSize}
-                    onChange={(e) => setCalc2({ ...calc2, chunkSize: parseFloat(e.target.value) || 0 })}
-                    step="1"
-                    min="0.001"
+                    onCommit={(next) => setCalc2({ ...calc2, chunkSize: next })}
+                    min={0.001}
                   />
                   <select
                     value={calc2.chunkUnit}
@@ -684,12 +748,10 @@ export function StorageCalculatorSuite() {
                     <span className="tooltip" title="Must match your model choice">?</span>
                   </div>
                 </label>
-                <input
-                  type="number"
+                <NumberField
                   value={calc2.embDim}
-                  onChange={(e) => setCalc2({ ...calc2, embDim: parseInt(e.target.value) || 0 })}
-                  step="1"
-                  min="1"
+                  onCommit={(next) => setCalc2({ ...calc2, embDim: next })}
+                  min={1}
                 />
               </div>
             </div>
@@ -702,13 +764,11 @@ export function StorageCalculatorSuite() {
                     <span className="tooltip" title="Text search index, typically 20% of data">?</span>
                   </div>
                 </label>
-                <input
-                  type="number"
+                <NumberField
                   value={calc2.bm25pct}
-                  onChange={(e) => setCalc2({ ...calc2, bm25pct: parseFloat(e.target.value) || 0 })}
-                  step="5"
-                  min="0"
-                  max="100"
+                  onCommit={(next) => setCalc2({ ...calc2, bm25pct: next })}
+                  min={0}
+                  max={100}
                 />
               </div>
               <div className="input-group">
@@ -718,13 +778,11 @@ export function StorageCalculatorSuite() {
                     <span className="tooltip" title="Pre-computed chunk summaries, typically 10% of data">?</span>
                   </div>
                 </label>
-                <input
-                  type="number"
+                <NumberField
                   value={calc2.cardspct}
-                  onChange={(e) => setCalc2({ ...calc2, cardspct: parseFloat(e.target.value) || 0 })}
-                  step="5"
-                  min="0"
-                  max="100"
+                  onCommit={(next) => setCalc2({ ...calc2, cardspct: next })}
+                  min={0}
+                  max={100}
                 />
               </div>
             </div>
@@ -774,7 +832,7 @@ export function StorageCalculatorSuite() {
                     <div className="plan-details" style={{ lineHeight: 1.8 }}>
                       <strong>Includes:</strong><br />
                       • Product Quantized vectors<br />
-                      • pgvector HNSW index<br />
+                      • Qdrant HNSW index<br />
                       • BM25 sparse search<br />
                       • Chunk summaries<br />
                       • Reranker cache<br />
@@ -788,7 +846,7 @@ export function StorageCalculatorSuite() {
                     <div className="plan-details" style={{ lineHeight: 1.8 }}>
                       <strong>Includes:</strong><br />
                       • float16 vectors<br />
-                      • pgvector HNSW index<br />
+                      • Qdrant HNSW index<br />
                       • BM25 sparse search<br />
                       • Chunk summaries<br />
                       • Reranker cache<br />
@@ -824,7 +882,7 @@ export function StorageCalculatorSuite() {
 
       <div className="storage-calc-footer">
         <p>TriBrid RAG • Enterprise Storage Calculator v2.0</p>
-        <p>Precision calculations for pgvector + Neo4j + BM25 infrastructure</p>
+        <p>Precision calculations for Qdrant + Neo4j + sparse BM25 infrastructure</p>
       </div>
     </div>
   );
