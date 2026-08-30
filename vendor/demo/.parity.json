@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source_repo": "DMontgomery40/ragweld",
   "source_path": "web",
-  "source_sha": "fb210afb2a5f757d524e77bf51d2d8e81e47fe4f",
+  "source_sha": "8f202f45814d99f7cb8c78157bce8afea0f0dda9",
   "overlays_dir": "demo-overrides",
   "allowlist_file": "scripts/demo-parity-allowlist.json"
 }
