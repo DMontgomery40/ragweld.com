@@ -799,6 +799,41 @@ button:focus-visible {
     outline-offset: 2px;
 }
 
+/* App-shell tab stops: a ring that is actually visible.
+   `--ring` is a 20%-alpha slate, so the `box-shadow: 0 0 0 3px var(--ring)` focus
+   treatment on `#global-search` and `.theme-mode-select` composites to almost nothing
+   over the panel, and the `input:focus-visible { outline: none }` rule above removed the
+   global ring on top of that -- the first tab stops on every page showed no focus
+   indicator at all (M-136, M-161). Solid, 2px, offset, and only on :focus-visible, so
+   nothing changes for pointer users.
+   The two ID'd controls are listed by id on purpose: `main.css` clears their outline
+   through `#global-search:focus` and `.theme-mode-select:focus`, and a class-level rule
+   cannot outrank an id. These match at equal specificity and this file is imported after
+   `main.css`, so they win on source order.
+
+   NOT a cascade fight, despite how it first looked: `main.css:186` transitions `outline`
+   over ~120 ms, so a `getComputedStyle` read taken immediately after `.focus()` or a Tab
+   press reports `outline-width: 0px` while the value animates in. With a settle the
+   outline reaches every stop. The box-shadow below is kept because it makes an
+   immediate read deterministic -- a focus assertion should not depend on a timer -- and
+   because it is the mechanism the rest of the app already uses for focus. */
+.topbar a:focus-visible,
+.topbar button:focus-visible,
+.topbar input:focus-visible,
+.topbar select:focus-visible,
+#global-search:focus-visible,
+#theme-mode:focus-visible,
+.tab-bar a:focus-visible {
+    outline: 2px solid var(--accent-text) !important;
+    outline-offset: 2px;
+    border-radius: 6px;
+    /* The ring is also drawn as a box-shadow: the app's own focus treatment already is one,
+       it was simply painted in `--ring`, a 20%-alpha slate that composites to nothing over
+       the panel. Same geometry, opaque colour, and it is readable the instant focus lands
+       rather than 120 ms later. */
+    box-shadow: 0 0 0 3px var(--accent-text) !important;
+}
+
 
 /* ============================================
    MISCELLANEOUS ENHANCEMENTS
@@ -810,7 +845,7 @@ a {
 }
 
 a:hover {
-    color: var(--accent);
+    color: var(--accent-text);
 }
 
 /* Code blocks - subtle hover */
@@ -829,48 +864,26 @@ code:hover {
    PERFORMANCE OPTIMIZATIONS
    ============================================ */
 
-/* GPU acceleration hints */
-.tab-bar button,
-.subtab-btn,
-.top-actions button,
-.tab-content {
-    transform: translateZ(0);
-    backface-visibility: hidden;
-}
+/* The GPU hint that used to live here is deliberately gone.
+ *
+ * A `transform` on `.tab-content` -- the route's scroll container -- makes it a
+ * containing block for `position: fixed` descendants, so every inline fixed modal inside
+ * a route anchored to the scrolled content instead of the viewport and rendered
+ * off-screen once the page was scrolled. That is why the Dashboard corpus tile "did
+ * nothing": the modal opened, off-screen. Six more inline modals sat on the same fault
+ * (TooltipIcon, GraphSubtab, GlobalSearch, DockerSubtab, DockPanel, DockPickerModal).
+ *
+ * Removed rather than worked around: portalling each modal to `<body>` would have left
+ * the trap armed for the next one. `.tab-content` is a scrolling container with no
+ * animation of its own, so it never needed compositing promotion; the buttons that were
+ * in the same rule already get their own layer from the transforms in their hover and
+ * active states, at the moment they actually animate.
+ *
+ * `web/tests/e2e/exhaustive/routing_shell.spec.ts` measures this directly: it scrolls a
+ * route and asserts a fixed probe inside `.tab-content` still lands at the viewport
+ * origin.
+ */
 
-
-/* ============================================
-   DEV STACK BUTTON INTERACTIONS
-   ============================================ */
-
-/* Dev Stack Control Buttons */
-.dev-stack-btn {
-  will-change: transform, box-shadow;
-  position: relative;
-  overflow: hidden;
-}
-
-.dev-stack-btn:hover:not(:disabled) {
-  transform: translateY(-1px) scale(1.02);
-  box-shadow: var(--shadow-sm);
-  background: var(--bg-hover);
-}
-
-.dev-stack-btn:active:not(:disabled) {
-  transform: translateY(0) scale(0.98);
-  transition-duration: var(--timing-instant);
-  box-shadow: none;
-}
-
-.dev-stack-btn.btn-primary:hover:not(:disabled) {
-  filter: brightness(1.1);
-  box-shadow: var(--shadow-md);
-}
-
-.dev-stack-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
 
 /* Running status pulse animation */
 .status-running {
