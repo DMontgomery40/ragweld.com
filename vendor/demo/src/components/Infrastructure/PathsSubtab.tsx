@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import { ApiKeyStatus } from '@/components/ui/ApiKeyStatus';
+import { SECRET_REDACTED } from '@/api/secrets';
 import { TooltipIcon } from '@/components/ui/TooltipIcon';
 import { useConfig, useConfigField } from '@/hooks';
 import { useRepoStore } from '@/stores/useRepoStore';
@@ -17,7 +19,6 @@ export function PathsSubtab() {
   );
   const [neo4jUri, setNeo4jUri] = useConfigField<string>('graph_storage.neo4j_uri', 'bolt://localhost:7687');
   const [neo4jUser, setNeo4jUser] = useConfigField<string>('graph_storage.neo4j_user', 'neo4j');
-  const [neo4jPassword, setNeo4jPassword] = useConfigField<string>('graph_storage.neo4j_password', '');
   const [neo4jDatabase, setNeo4jDatabase] = useConfigField<string>('graph_storage.neo4j_database', 'neo4j');
   const [neo4jDatabaseMode, setNeo4jDatabaseMode] = useConfigField<'shared' | 'per_corpus'>(
     'graph_storage.neo4j_database_mode',
@@ -111,13 +112,32 @@ export function PathsSubtab() {
           <label>
             PostgreSQL DSN
             <TooltipIcon name="POSTGRES_URL" />
+            {postgresUrl.includes(SECRET_REDACTED) ? (
+              <span
+                data-testid="postgres-url-configured"
+                style={{
+                  marginLeft: 8,
+                  padding: '1px 8px',
+                  borderRadius: 999,
+                  border: '1px solid var(--line)',
+                  background: 'var(--bg-elev1)',
+                  color: 'var(--fg-muted)',
+                  fontSize: '11.5px',
+                  fontWeight: 700,
+                  letterSpacing: '0.04em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                Password configured
+              </span>
+            ) : null}
           </label>
           <input
             data-testid="postgres-url"
             type="text"
             value={postgresUrl}
             onChange={(e) => setPostgresUrl(e.target.value)}
-            placeholder="postgresql://postgres:postgres@localhost:5432/tribrid_rag"
+            placeholder="postgresql://user@localhost:5432/tribrid_rag"
             style={{
               width: '100%',
               padding: '8px',
@@ -127,6 +147,18 @@ export function PathsSubtab() {
               color: 'var(--fg)',
             }}
           />
+          {/* The DSN used to arrive here with its password in clear, sitting on screen and
+              in every screenshot, two fields above a Neo4j password the same form already
+              handles as env-only (M-88). The backend withholds it now; this says so, so
+              the marker does not read as a corrupted value. */}
+          <div
+            data-testid="postgres-url-secret-note"
+            style={{ fontSize: '11.5px', color: 'var(--fg-muted)', marginTop: '6px', lineHeight: 1.5 }}
+          >
+            The password is held in the backend and served back as{' '}
+            <code>{SECRET_REDACTED}</code>. Leave that marker in place to keep it — host,
+            port, database and user stay editable. Type a real password only to rotate it.
+          </div>
         </div>
         <div className="input-group">
           <label>
@@ -175,24 +207,13 @@ export function PathsSubtab() {
         </div>
         <div className="input-group">
           <label>
-            Neo4j Password
-            <TooltipIcon name="neo4j_password" />
+            Neo4j Password (env-only)
           </label>
-          <input
-            data-testid="neo4j-password"
-            type="password"
-            value={neo4jPassword}
-            onChange={(e) => setNeo4jPassword(e.target.value)}
-            placeholder="password"
-            style={{
-              width: '100%',
-              padding: '8px',
-              background: 'var(--input-bg)',
-              border: '1px solid var(--line)',
-              borderRadius: '4px',
-              color: 'var(--fg)',
-            }}
-          />
+          <ApiKeyStatus keyName="NEO4J_PASSWORD" label="Neo4j Password" />
+          <p className="small" style={{ marginTop: 8 }}>
+            Neo4j credentials now stay env-only. Set <code>NEO4J_PASSWORD</code> in the backend environment and use the Admin
+            dependency panel to verify readiness.
+          </p>
         </div>
       </div>
 
