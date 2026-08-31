@@ -10,9 +10,8 @@ export function useConfig() {
   const saving = useConfigStore((s) => s.saving);
   const loadConfig = useConfigStore((s) => s.loadConfig);
   const saveConfig = useConfigStore((s) => s.saveConfig);
-  const patchSection = useConfigStore((s) => s.patchSection);
-  const patchSectionDebounced = useConfigStore((s) => s.patchSectionDebounced);
-  const cancelPendingPatches = useConfigStore((s) => s.cancelPendingPatches);
+  const stageSection = useConfigStore((s) => s.stageSection);
+  const stageSectionReplace = useConfigStore((s) => s.stageSectionReplace);
   const flushPendingPatches = useConfigStore((s) => s.flushPendingPatches);
   const resetConfig = useConfigStore((s) => s.resetConfig);
 
@@ -24,22 +23,18 @@ export function useConfig() {
     }
   }, [config, error, loading, loadConfig]);
 
-  // Reload config when active corpus changes
+  // Reload config when active corpus changes. loadConfig replaces both config and persisted with
+  // the new corpus's server state, so any unapplied staged edits for the previous corpus are
+  // dropped (the staged-form contract: apply before you switch corpus).
   useEffect(() => {
-    const handler = (ev: Event) => {
-      const detail = (ev as CustomEvent<any>)?.detail || {};
-      const previous = String(detail?.previous || '').trim();
-      // When corpus changes, cancel patches (they're for the old corpus) and load new config.
-      // Note: loadConfig() will flush patches, but we cancel here because patches are corpus-scoped.
-      cancelPendingPatches(previous);
+    const handler = () => {
       loadConfig();
     };
-    // New event name (preferred).
     window.addEventListener('tribrid-corpus-changed', handler as EventListener);
     return () => {
       window.removeEventListener('tribrid-corpus-changed', handler as EventListener);
     };
-  }, [cancelPendingPatches, loadConfig]);
+  }, [loadConfig]);
 
   const reload = useCallback(async () => {
     await loadConfig();
@@ -60,8 +55,8 @@ export function useConfig() {
     // Actions
     loadConfig,
     saveConfig,
-    patchSection,
-    patchSectionDebounced,
+    stageSection,
+    stageSectionReplace,
     flushPendingPatches,
     resetConfig,
     reload,
@@ -79,7 +74,7 @@ export function useConfigField<T>(
   path: string,
   defaultValue: T
 ): [T, (value: T) => void, { loading: boolean; error: string | null }] {
-  const { config, loading, error, patchSectionDebounced, patchSection } = useConfig();
+  const { config, loading, error, stageSection } = useConfig();
 
   const value = useMemo(() => {
     if (!config) return defaultValue;
@@ -97,9 +92,9 @@ export function useConfigField<T>(
       const [section, ...rest] = path.split('.').filter(Boolean);
       if (!section) return;
       if (rest.length === 0) {
-        // Replace entire section
-        // This is rare; keep it immediate.
-        void patchSection(section as keyof TriBridConfig, newValue as any);
+        // Whole-section replacement: stage the object; the deep merge mirrors the server so a
+        // partial object keeps its siblings, matching the prior PATCH semantics.
+        stageSection(section as keyof TriBridConfig, newValue as any);
         return;
       }
       // Build nested patch object (shallow at top-level section)
@@ -107,10 +102,12 @@ export function useConfigField<T>(
       for (let i = rest.length - 1; i >= 0; i -= 1) {
         patch = { [rest[i]]: patch };
       }
-      // Debounced persistence for high-frequency inputs.
-      patchSectionDebounced(section as keyof TriBridConfig, patch);
+      // Stage the edit locally. Nothing is written until the operator clicks "Apply"; the field
+      // shows as dirty in the meantime (M-08: no more silent immediate PATCH on every keystroke,
+      // toggle, or strategy-card click).
+      stageSection(section as keyof TriBridConfig, patch);
     },
-    [patchSection, patchSectionDebounced, path]
+    [stageSection, path]
   );
 
   return [value, setValue, { loading, error }];
