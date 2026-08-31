@@ -1,11 +1,12 @@
 /**
  * AgentTrainingService - Thin API client for /api/agent/train endpoints
  *
- * ALL TYPES COME FROM generated.ts (Pydantic-first architecture).
+ * Public API wire types come from generated.ts.
  */
 
 import { apiClient, api, apiUrl } from '@/api/client';
 import type {
+  AgentTrainControlPlaneStatusResponse,
   AgentTrainDiffRequest,
   AgentTrainDiffResponse,
   AgentTrainMetricEvent,
@@ -20,6 +21,17 @@ import type {
 export type AgentTrainRunsScope = 'corpus' | 'all';
 
 export class AgentTrainingService {
+  async getControlPlaneStatus(corpusId?: string): Promise<AgentTrainControlPlaneStatusResponse> {
+    const qs = new URLSearchParams();
+    if (corpusId) qs.set('corpus_id', corpusId);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    const { data } = await apiClient.get<AgentTrainControlPlaneStatusResponse>(
+      api(`/agent/train/control-plane/status${suffix}`),
+      { headers: { 'Cache-Control': 'no-store' } }
+    );
+    return data;
+  }
+
   async listRuns(
     corpusId: string,
     scope: AgentTrainRunsScope = 'corpus',
@@ -104,4 +116,3 @@ export class AgentTrainingService {
 }
 
 export const agentTrainingService = new AgentTrainingService();
-
