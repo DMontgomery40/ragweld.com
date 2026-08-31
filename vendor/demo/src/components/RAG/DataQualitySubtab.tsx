@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useConfigField } from '@/hooks';
+import { NumberField } from '@/components/ui/NumberField';
 import type {
   ChunkSummariesBuildRequest,
   ChunkSummariesLastBuild,
   ChunkSummariesResponse,
   ChunkSummary,
+  Corpus,
   KeywordsGenerateRequest,
   KeywordsGenerateResponse,
 } from '@/types/generated';
-import { useActiveRepo } from '@/stores';
+import { useActiveRepo, useRepoStore } from '@/stores';
 import { RepoSelectorCompact } from '@/components/RAG/RepoSelector';
 import { SyntheticCallout } from '@/components/RAG/SyntheticCallout';
 import { TooltipIcon } from '@/components/ui/TooltipIcon';
-import { chunkSummariesApi, keywordsApi } from '@/api';
+import { chunkSummariesApi, corporaApi, keywordsApi } from '@/api';
 
 function parseList(text: string): string[] {
   return text
@@ -23,8 +25,9 @@ function parseList(text: string): string[] {
 
 export function DataQualitySubtab() {
   const activeRepo = useActiveRepo();
+  const loadRepos = useRepoStore((state) => state.loadRepos);
 
-  // Config fields (THE LAW)
+  // Validated public config fields
   const [excludeDirs, setExcludeDirs] = useConfigField<string[]>(
     'chunk_summaries.exclude_dirs',
     []
@@ -41,9 +44,9 @@ export function DataQualitySubtab() {
     'enrichment.chunk_summaries_max',
     100
   );
-  const [chunkSummariesEnrichDefault, setChunkSummariesEnrichDefault] = useConfigField<number>(
+  const [chunkSummariesEnrichDefault, setChunkSummariesEnrichDefault] = useConfigField<boolean>(
     'enrichment.chunk_summaries_enrich_default',
-    1
+    true
   );
 
   const [keywordsMaxPerCorpus, setKeywordsMaxPerCorpus] = useConfigField<number>(
@@ -55,9 +58,9 @@ export function DataQualitySubtab() {
     3
   );
   const [keywordsBoost, setKeywordsBoost] = useConfigField<number>('keywords.keywords_boost', 1.3);
-  const [keywordsAutoGenerate, setKeywordsAutoGenerate] = useConfigField<number>(
+  const [keywordsAutoGenerate, setKeywordsAutoGenerate] = useConfigField<boolean>(
     'keywords.keywords_auto_generate',
-    1
+    true
   );
   const [keywordsRefreshHours, setKeywordsRefreshHours] = useConfigField<number>(
     'keywords.keywords_refresh_hours',
@@ -83,6 +86,8 @@ export function DataQualitySubtab() {
   const [chunkSummaries, setChunkSummaries] = useState<ChunkSummary[]>([]);
   const [lastBuild, setLastBuild] = useState<ChunkSummariesLastBuild | null>(null);
   const [keywords, setKeywords] = useState<string[]>([]);
+  const [keywordsLoaded, setKeywordsLoaded] = useState(false);
+  const [summariesLoaded, setSummariesLoaded] = useState(false);
 
   // UI state
   const [loadingSummaries, setLoadingSummaries] = useState(false);
@@ -116,6 +121,7 @@ export function DataQualitySubtab() {
     try {
       const data: ChunkSummariesResponse = await chunkSummariesApi.list(rid);
       setChunkSummaries(Array.isArray(data.chunk_summaries) ? data.chunk_summaries : []);
+      setSummariesLoaded(true);
       setLastBuild(data.last_build ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load chunk summaries');
@@ -158,6 +164,44 @@ export function DataQualitySubtab() {
     [activeRepo]
   );
 
+  // The page showed "No builds yet / No chunk summaries to show" for every corpus, including
+  // a fully indexed one, and the network log held no request matching `summar` or `keyword`:
+  // nothing was ever fetched. Both panels load with the corpus now, and their empty states
+  // say whether the answer is "none exist" or "not loaded yet".
+  const loadKeywords = useCallback(async () => {
+    const rid = String(activeRepo || '').trim();
+    if (!rid) {
+      setKeywords([]);
+      setKeywordsLoaded(false);
+      return;
+    }
+    try {
+      const corpus: Corpus = await corporaApi.get(rid);
+      setKeywords(Array.isArray(corpus.keywords) ? corpus.keywords : []);
+      setKeywordsLoaded(true);
+    } catch (e) {
+      setKeywordsLoaded(false);
+      setError(e instanceof Error ? e.message : 'Failed to load corpus keywords');
+    }
+  }, [activeRepo]);
+
+  useEffect(() => {
+    setChunkSummaries([]);
+    setLastBuild(null);
+    setSummariesLoaded(false);
+    setKeywords([]);
+    setKeywordsLoaded(false);
+    void loadSummaries();
+    void loadKeywords();
+  }, [loadKeywords, loadSummaries]);
+
+  // One corpus source of truth across subtabs: this tab and Indexing both ask the shared store
+  // on entry, so neither can be showing a corpus list the other has already moved past. The
+  // drive found a deleted test corpus still offered here and not there.
+  useEffect(() => {
+    void loadRepos();
+  }, [loadRepos]);
+
   const generateKeywords = useCallback(async () => {
     const rid = String(activeRepo || '').trim();
     if (!rid) return;
@@ -167,6 +211,7 @@ export function DataQualitySubtab() {
       const body: KeywordsGenerateRequest = { corpus_id: rid };
       const data: KeywordsGenerateResponse = await keywordsApi.generate(body);
       setKeywords(Array.isArray(data.keywords) ? data.keywords : []);
+      setKeywordsLoaded(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Keyword generation failed');
     } finally {
@@ -187,7 +232,9 @@ export function DataQualitySubtab() {
           🧪 Data Quality
         </h3>
         <div style={{ fontSize: 13, color: 'var(--fg-muted)' }}>
-          Build and review <strong>chunk summaries</strong> and <strong>keywords</strong> for a corpus.
+          Build and review <strong>chunk summaries</strong>, and generate and review the{' '}
+          <strong>corpus keywords</strong> that weight retrieval. Both are corpus-scoped and both
+          need an indexed corpus.
         </div>
       </div>
 
@@ -255,20 +302,21 @@ export function DataQualitySubtab() {
               Max chunk summaries
               <TooltipIcon name="CHUNK_SUMMARIES_MAX" />
             </label>
-            <input
-              type="number"
+            <NumberField
+              data-testid="data-quality-chunk-summaries-max"
+              configPath="enrichment.chunk_summaries_max"
               min={10}
               max={1000}
               value={chunkSummariesMax}
-              onChange={(e) => setChunkSummariesMax(parseInt(e.target.value || '100', 10))}
+              onCommit={setChunkSummariesMax}
             />
           </div>
           <div className="input-group">
             <label>
               <input
                 type="checkbox"
-                checked={chunkSummariesEnrichDefault !== 0}
-                onChange={(e) => setChunkSummariesEnrichDefault(e.target.checked ? 1 : 0)}
+                checked={chunkSummariesEnrichDefault}
+                onChange={(e) => setChunkSummariesEnrichDefault(e.target.checked)}
               />{' '}
               Enrich by default
               <TooltipIcon name="CHUNK_SUMMARIES_ENRICH_DEFAULT" />
@@ -286,7 +334,7 @@ export function DataQualitySubtab() {
               rows={6}
               value={excludeDirsDraft}
               onChange={(e) => setExcludeDirsDraft(e.target.value)}
-              placeholder="node_modules\nvenv\ndist"
+              placeholder={'node_modules\nvenv\ndist'}
             />
           </div>
           <div className="input-group">
@@ -298,7 +346,7 @@ export function DataQualitySubtab() {
               rows={6}
               value={excludePatternsDraft}
               onChange={(e) => setExcludePatternsDraft(e.target.value)}
-              placeholder="*.min.js\n*.lock\n**/*.test.ts"
+              placeholder={'*.min.js\n*.lock\n**/*.test.ts'}
             />
           </div>
         </div>
@@ -313,7 +361,7 @@ export function DataQualitySubtab() {
               rows={4}
               value={excludeKeywordsDraft}
               onChange={(e) => setExcludeKeywordsDraft(e.target.value)}
-              placeholder="deprecated\nlegacy\nTODO"
+              placeholder={'deprecated\nlegacy\nTODO'}
             />
           </div>
           <div className="input-group" />
@@ -332,7 +380,7 @@ export function DataQualitySubtab() {
           </button>
         </div>
         <div style={{ marginTop: 10, fontSize: 12, color: 'var(--fg-muted)' }}>
-          Cost estimate placeholder: current chunk summary build is deterministic (no LLM billing). When LLM-based enrichment is added, an estimate will be shown before build.
+          This chunk summary build is deterministic and does not call an LLM, so it incurs no gateway billing.
         </div>
       </div>
 
@@ -352,12 +400,12 @@ export function DataQualitySubtab() {
               Max keywords per corpus
               <TooltipIcon name="KEYWORDS_MAX_PER_REPO" />
             </label>
-            <input
-              type="number"
+            <NumberField
+              configPath="keywords.keywords_max_per_repo"
               min={10}
               max={500}
               value={keywordsMaxPerCorpus}
-              onChange={(e) => setKeywordsMaxPerCorpus(parseInt(e.target.value || '50', 10))}
+              onCommit={setKeywordsMaxPerCorpus}
             />
           </div>
           <div className="input-group">
@@ -365,12 +413,12 @@ export function DataQualitySubtab() {
               Min frequency
               <TooltipIcon name="KEYWORDS_MIN_FREQ" />
             </label>
-            <input
-              type="number"
+            <NumberField
+              configPath="keywords.keywords_min_freq"
               min={1}
               max={10}
               value={keywordsMinFreq}
-              onChange={(e) => setKeywordsMinFreq(parseInt(e.target.value || '3', 10))}
+              onCommit={setKeywordsMinFreq}
             />
           </div>
           <div className="input-group">
@@ -378,38 +426,43 @@ export function DataQualitySubtab() {
               Boost
               <TooltipIcon name="KEYWORDS_BOOST" />
             </label>
-            <input
-              type="number"
+            <NumberField
+              configPath="keywords.keywords_boost"
               min={1.0}
               max={3.0}
               step={0.1}
               value={keywordsBoost}
-              onChange={(e) => setKeywordsBoost(parseFloat(e.target.value || '1.3'))}
+              onCommit={setKeywordsBoost}
             />
           </div>
         </div>
         <div className="input-row">
           <div className="input-group">
-            <label>
-              Auto-generate
-              <TooltipIcon name="KEYWORDS_AUTO_GENERATE" />
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={keywordsAutoGenerate}
+                onChange={(e) => setKeywordsAutoGenerate(e.target.checked)}
+              />
+              <span className="toggle-track" aria-hidden="true">
+                <span className="toggle-thumb"></span>
+              </span>
+              <span className="toggle-label">
+                Auto-generate <TooltipIcon name="KEYWORDS_AUTO_GENERATE" />
+              </span>
             </label>
-            <select value={keywordsAutoGenerate} onChange={(e) => setKeywordsAutoGenerate(parseInt(e.target.value, 10))}>
-              <option value={1}>Enabled</option>
-              <option value={0}>Disabled</option>
-            </select>
           </div>
           <div className="input-group">
             <label>
               Refresh hours
               <TooltipIcon name="KEYWORDS_REFRESH_HOURS" />
             </label>
-            <input
-              type="number"
+            <NumberField
+              configPath="keywords.keywords_refresh_hours"
               min={1}
               max={168}
               value={keywordsRefreshHours}
-              onChange={(e) => setKeywordsRefreshHours(parseInt(e.target.value || '24', 10))}
+              onCommit={setKeywordsRefreshHours}
             />
           </div>
           <div className="input-group" />
@@ -432,7 +485,11 @@ export function DataQualitySubtab() {
                 ? `Last build: ${
                     lastBuild.timestamp ? new Date(lastBuild.timestamp).toLocaleString() : '—'
                   } • ${lastBuild.total} summaries`
-                : 'No builds yet.'}
+                : loadingSummaries
+                  ? 'Loading…'
+                  : summariesLoaded
+                    ? 'No build has been run for this corpus yet.'
+                    : 'Not loaded.'}
             </div>
           </div>
           <input
@@ -452,7 +509,17 @@ export function DataQualitySubtab() {
         </div>
 
         {filteredSummaries.length === 0 ? (
-          <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>No chunk summaries to show.</div>
+          <div data-testid="chunk-summaries-empty" style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+            {loadingSummaries
+              ? 'Loading chunk summaries…'
+              : !String(activeRepo || '').trim()
+                ? 'Select a corpus to see its chunk summaries.'
+                : !summariesLoaded
+                  ? 'Chunk summaries could not be loaded — see the error above.'
+                  : chunkSummaries.length > 0
+                    ? `None of the ${chunkSummaries.length} chunk summaries match "${search}".`
+                    : 'This corpus has no chunk summaries yet. They are built from indexed chunks: index the corpus, then use Build chunk summaries above.'}
+          </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
             {filteredSummaries.map((s) => (
@@ -487,9 +554,26 @@ export function DataQualitySubtab() {
           </div>
         )}
 
+        <div data-testid="corpus-keywords-panel" style={{ marginTop: 18 }}>
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>
+            Corpus keywords {keywords.length > 0 ? `(${keywords.length})` : ''}
+          </div>
+          {keywords.length === 0 ? (
+            <div data-testid="corpus-keywords-empty" style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+              {!String(activeRepo || '').trim()
+                ? 'Select a corpus to see its keywords.'
+                : !keywordsLoaded
+                  ? 'Keywords could not be loaded — see the error above.'
+                  : 'This corpus has no stored keywords. They are counted from indexed chunks: index the corpus, then use Generate keywords above.'}
+            </div>
+          ) : null}
+        </div>
+
         {keywords.length > 0 && (
-          <div style={{ marginTop: 18 }}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>Latest keywords ({keywords.length})</div>
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginBottom: 8 }}>
+              Showing the first {Math.min(50, keywords.length)} by frequency.
+            </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {keywords.slice(0, 50).map((k) => (
                 <span
