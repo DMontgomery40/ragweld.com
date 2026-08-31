@@ -1,5 +1,6 @@
 import React from 'react';
 import { useTrace } from '@/hooks/useTrace';
+import { TraceExternalLinks } from '@/components/Observability/TraceExternalLinks';
 
 type TraceViewerProps = {
   className?: string;
@@ -60,13 +61,18 @@ export const TraceViewer: React.FC<TraceViewerProps> = ({ className = '' }) => {
           padding: '40px',
           color: 'var(--fg-muted)'
         }}>
-          No traces yet. Set Tracing Mode to Local/LangSmith (not Off) and run a query.
+          No traces yet. Set tracing mode to local, OTel, or OTel + Langfuse and run a query.
         </div>
       );
     }
 
     const trace = traceData.trace;
     const events = trace.events || [];
+    const routeSummary = trace.route_summary;
+    const durationMs =
+      trace.ended_at_ms != null && trace.started_at_ms != null
+        ? Math.max(0, trace.ended_at_ms - trace.started_at_ms)
+        : null;
 
     const decideEvent = events.find(ev => ev.kind === 'router.decide');
     const rerankEvent = events.find(ev => ev.kind === 'reranker.rank');
@@ -80,7 +86,7 @@ export const TraceViewer: React.FC<TraceViewerProps> = ({ className = '' }) => {
       `Policy: ${decideEvent?.data?.policy || '—'}`,
       `Intent: ${decideEvent?.data?.intent || '—'}`,
       `Final K: ${rerankEvent?.data?.output_topK || '—'}`,
-      `Vector: pgvector`
+      `Vector: qdrant`
     ];
 
     parts.push(
@@ -95,6 +101,61 @@ export const TraceViewer: React.FC<TraceViewerProps> = ({ className = '' }) => {
         {headerParts.join('  •  ')}
       </div>
     );
+
+    parts.push(
+      <div
+        key="observability"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: '12px',
+          marginBottom: '16px',
+        }}
+      >
+        <div style={{ background: 'var(--bg-elev2)', borderRadius: '4px', padding: '12px' }}>
+          <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '4px' }}>Canonical Trace</div>
+          <div style={{ fontSize: '11px', fontFamily: "'SF Mono', monospace", color: 'var(--fg)' }}>
+            {trace.trace_id || 'n/a'}
+          </div>
+          <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '6px' }}>
+            Correlation: {trace.correlation_id || 'n/a'}
+          </div>
+          <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '6px' }}>
+            Root span: {trace.root_span_id || 'n/a'}
+          </div>
+        </div>
+        <div style={{ background: 'var(--bg-elev2)', borderRadius: '4px', padding: '12px' }}>
+          <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '4px' }}>Request Route</div>
+          <div style={{ fontSize: '12px', color: 'var(--fg)' }}>
+            {routeSummary?.method || '—'} {routeSummary?.path || '—'}
+          </div>
+          <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '6px' }}>
+            {routeSummary?.route_name || 'n/a'}
+            {durationMs != null ? ` · ${durationMs} ms` : ''}
+          </div>
+        </div>
+        <div style={{ background: 'var(--bg-elev2)', borderRadius: '4px', padding: '12px' }}>
+          <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '4px' }}>Request Cost</div>
+          <div style={{ fontSize: '12px', color: 'var(--fg)' }}>
+            {trace.cost_summary?.estimated_cost_usd != null
+              ? `$${Number(trace.cost_summary.estimated_cost_usd).toFixed(6)}`
+              : 'Unavailable'}
+          </div>
+          <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '6px' }}>
+            {trace.cost_summary?.cost_source || 'unavailable'}
+            {trace.cost_summary?.total_tokens != null ? ` · ${trace.cost_summary.total_tokens} tokens` : ''}
+          </div>
+        </div>
+      </div>
+    );
+
+    if (Array.isArray(trace.external_links) && trace.external_links.length > 0) {
+      parts.push(
+        <div key="links" style={{ marginBottom: '16px' }}>
+          <TraceExternalLinks links={trace.external_links} traceId={trace.trace_id} />
+        </div>
+      );
+    }
 
     // Pre-rerank candidates
     if (retrieveEvent && Array.isArray(retrieveEvent.data?.candidates)) {
@@ -185,7 +246,7 @@ export const TraceViewer: React.FC<TraceViewerProps> = ({ className = '' }) => {
           <strong>Gate:</strong>{' '}
           top1&gt;={String(gateData.top1_thresh ?? '—')} avg5&gt;={String(gateData.avg5_thresh ?? '—')}
           {' → '}
-          <span style={{ color: 'var(--accent)', fontWeight: 600 }}>
+          <span style={{ color: 'var(--accent-text)', fontWeight: 600 }}>
             {String(gateData.outcome ?? '—')}
           </span>
         </div>
