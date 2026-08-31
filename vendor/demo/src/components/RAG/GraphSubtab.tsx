@@ -1,26 +1,61 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type React from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ForceGraph2D from 'react-force-graph-2d';
 import { useGraph } from '@/hooks/useGraph';
+import { useIndexing } from '@/hooks/useIndexing';
 import { SyntheticCallout } from '@/components/RAG/SyntheticCallout';
+import { NumberField } from '@/components/ui/NumberField';
 import { useRepoStore } from '@/stores/useRepoStore';
-import type { Community, Entity, Relationship } from '@/types/generated';
+import { DEFAULT_ENTITY_LIMIT, ENTITY_LIMIT_CHOICES } from '@/stores/useGraphStore';
+import type { Community, Entity, IndexStatus, Relationship } from '@/types/generated';
 
 /** Node with computed degree for importance labeling */
 type NodeWithDegree = Entity & { __degree?: number };
+
+/**
+ * The one legend. It reads the entity types actually present in the rendered
+ * graph, so the inline panel and the fullscreen modal can never disagree and the
+ * palette can never describe data that is not on screen (M-59: the inline legend
+ * was a hardcoded person/org/location/event/concept NER palette on a code graph).
+ */
+function GraphLegend({
+  types,
+  colorOf,
+  testId,
+}: {
+  types: string[];
+  colorOf: (type: string) => string;
+  testId: string;
+}) {
+  if (!types.length) return null;
+  return (
+    <div
+      style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '11.5px', flexWrap: 'wrap' }}
+      data-testid={testId}
+    >
+      {types.map((type) => (
+        <span key={type} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', color: 'var(--fg-muted)' }}>
+          <span
+            style={{
+              width: '10px',
+              height: '10px',
+              borderRadius: '999px',
+              background: colorOf(type),
+              display: 'inline-block',
+            }}
+          />
+          {type}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 function formatEntityLabel(e: Entity): string {
   const name = String(e.name || '').trim();
   const type = String(e.entity_type || '').trim();
   return type ? `${name} (${type})` : name;
-}
-
-function formatRelLabel(r: Relationship, byId: Map<string, Entity>): string {
-  const src = byId.get(r.source_id);
-  const dst = byId.get(r.target_id);
-  const srcName = src ? src.name : r.source_id;
-  const dstName = dst ? dst.name : r.target_id;
-  return `${srcName} ─ ${r.relation_type} → ${dstName}`;
 }
 
 function formatRelProvenance(r: Relationship): string {
@@ -38,8 +73,159 @@ function formatRelProvenance(r: Relationship): string {
   return bits.join(' • ');
 }
 
+/**
+ * Paint hub labels in a pass that runs AFTER every node and link, with a pill
+ * backdrop and rectangle-collision rejection. Painting them inside
+ * `nodeCanvasObject` put each label under every node drawn later, which sliced
+ * the dense centre into `fusi...y.at` / `onfi...ore.py` fragments (M-149 / C-40).
+ */
+function makeLabelPainter(
+  nodes: NodeWithDegree[],
+  labelledIds: Set<string>
+): (ctx: CanvasRenderingContext2D, globalScale: number) => void {
+  return (ctx, globalScale) => {
+    if (!labelledIds.size || globalScale <= 0) return;
+    const placed: Array<[number, number, number, number]> = [];
+    const ordered = nodes
+      .filter((n) => labelledIds.has(n.entity_id))
+      .sort((a, b) => (b.__degree || 0) - (a.__degree || 0));
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const node of ordered) {
+      const pos = node as NodeWithDegree & { x?: number; y?: number };
+      if (typeof pos.x !== 'number' || typeof pos.y !== 'number') continue;
+      const label = node.name || node.entity_id;
+      // Screen-constant 12px. A `Math.min(26, ...)` cap here meant that at the inline
+      // panel's resting scale (k ~= 0.01 for 200 nodes) a label rendered a quarter of a
+      // device pixel tall - drawn, and invisible.
+      const fontSize = 12 / globalScale;
+      ctx.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
+
+      const padding = 4 / globalScale;
+      const width = ctx.measureText(label).width + padding * 3;
+      const height = fontSize + padding * 2;
+      const nodeRadius = 4 * Math.min(2.5, 1 + (node.__degree || 0) * 0.15);
+      const left = pos.x - width / 2;
+      const top = pos.y - nodeRadius - height - 4 / globalScale;
+
+      const overlaps = placed.some(
+        ([l, t, w, h]) => left < l + w && left + width > l && top < t + h && top + height > t
+      );
+      if (overlaps) continue;
+      placed.push([left, top, width, height]);
+
+      ctx.fillStyle = 'rgba(12, 12, 18, 0.92)';
+      ctx.beginPath();
+      ctx.roundRect(left, top, width, height, height / 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)';
+      ctx.lineWidth = 1 / globalScale;
+      ctx.stroke();
+      ctx.fillStyle = '#f4f4f5';
+      ctx.fillText(label, pos.x + 0, top + height / 2);
+    }
+    ctx.restore();
+  };
+}
+
+/** Hand the operator a file. Nothing on the Graph Explorer could be taken off the page (M-149 / C-42). */
+function downloadBlob(filename: string, mime: string, body: BlobPart): void {
+  const url = URL.createObjectURL(new Blob([body], { type: mime }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function csvCell(value: unknown): string {
+  const text = value === null || value === undefined ? '' : String(value);
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function toCsv(headers: string[], rows: unknown[][]): string {
+  return [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\n') + '\n';
+}
+
+/** A disabled control must LOOK disabled. `controlButtonStyle` sets an explicit color and
+ *  background, which override the user-agent stylesheet's greying, so the export buttons
+ *  looked live on an empty graph and simply did nothing when clicked (review N-03). The
+ *  muted state is a real colour pair, not `opacity` on text: the legibility floor forbids
+ *  fading type, and this tier still clears 4.5:1 on the elevated ground. */
+function controlStyle(disabled: boolean): React.CSSProperties {
+  if (!disabled) return controlButtonStyle;
+  return {
+    ...controlButtonStyle,
+    color: 'var(--fg-muted)',
+    background: 'transparent',
+    borderColor: 'var(--line)',
+    borderStyle: 'dashed',
+    cursor: 'not-allowed',
+  };
+}
+
+const controlButtonStyle: React.CSSProperties = {
+  padding: '6px 10px',
+  background: 'var(--bg-elev2)',
+  border: '1px solid var(--line)',
+  borderRadius: '8px',
+  color: 'var(--fg)',
+  fontSize: '11.5px',
+  fontWeight: 700,
+  cursor: 'pointer',
+};
+
+/** Zoom as a percentage the operator can actually read at both ends of the range.
+ *  ForceGraph2D's zoomToFit divides by the node bounding box, so it reports a
+ *  non-finite k while the graph is empty or the canvas has no area; the readout must
+ *  never print "NaN%" at the operator. */
+function formatZoom(k: number): string {
+  if (!Number.isFinite(k) || k <= 0) return '-';
+  const percent = k * 100;
+  if (percent >= 100) return `${Math.round(percent)}%`;
+  if (percent >= 10) return `${percent.toFixed(0)}%`;
+  return `${percent.toFixed(1)}%`;
+}
+
+const tableStyle: React.CSSProperties = {
+  width: '100%',
+  borderCollapse: 'collapse',
+  fontSize: '12px',
+  tableLayout: 'auto',
+};
+
+const thStyle: React.CSSProperties = {
+  position: 'sticky',
+  top: 0,
+  textAlign: 'left',
+  padding: '8px 10px',
+  background: 'var(--bg-elev2)',
+  borderBottom: '1px solid var(--line)',
+  color: 'var(--fg)',
+  fontSize: '11.5px',
+  fontWeight: 700,
+  whiteSpace: 'nowrap',
+};
+
+const tdStyle: React.CSSProperties = {
+  padding: '8px 10px',
+  borderBottom: '1px solid var(--line)',
+  color: 'var(--fg-muted)',
+  verticalAlign: 'top',
+};
+
 export function GraphSubtab() {
   const { repos, activeRepo, loadRepos, setActiveRepo } = useRepoStore();
+  const {
+    status: activeIndexStatus,
+    stats: activeIndexSnapshot,
+    fetchStatus: fetchIndexStatus,
+    fetchStats: fetchIndexStats,
+  } = useIndexing();
   const {
     entities,
     relationships,
@@ -49,11 +235,15 @@ export function GraphSubtab() {
     selectedCommunity,
     isLoading,
     error,
+    expansion,
+    scope,
     viewMode,
     maxHops,
+    totalMatched,
+    activeQuery,
     visibleEntityTypes,
     visibleRelationTypes,
-    searchEntities,
+    loadSubgraph,
     loadGraph,
     selectEntity,
     selectCommunity,
@@ -66,12 +256,18 @@ export function GraphSubtab() {
   } = useGraph();
 
   const [entityQuery, setEntityQuery] = useState('');
+  // How many entities the visualizer draws. View state: a per-session display
+  // choice, not a persisted operator tunable (M-61).
+  const [entityLimit, setEntityLimit] = useState<number>(DEFAULT_ENTITY_LIMIT);
   const [accentColor, setAccentColor] = useState<string>('#00ff88');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fullscreenAnimating, setFullscreenAnimating] = useState(false);
+  const lastSeenIndexStateRef = useRef<IndexStatus['status'] | null>(null);
   const fgRef = useRef<any>(null);
   const fullscreenFgRef = useRef<any>(null);
   const vizCanvasRef = useRef<HTMLDivElement | null>(null);
+  const layoutRef = useRef<HTMLDivElement | null>(null);
+  const [layoutWidth, setLayoutWidth] = useState(0);
   const fullscreenCanvasRef = useRef<HTMLDivElement | null>(null);
   const [vizSize, setVizSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [fullscreenSize, setFullscreenSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
@@ -79,6 +275,51 @@ export function GraphSubtab() {
   useEffect(() => {
     if (!repos.length) void loadRepos();
   }, [repos.length, loadRepos]);
+
+  useEffect(() => {
+    if (!activeRepo) {
+      lastSeenIndexStateRef.current = null;
+      return;
+    }
+
+    let cancelled = false;
+    let timer: number | null = null;
+
+    const poll = async () => {
+      try {
+        const [nextStatus] = await Promise.all([
+          fetchIndexStatus(activeRepo, { quiet: true }).catch(() => null),
+          fetchIndexStats(activeRepo, { quiet: true }).catch(() => null),
+        ]);
+        if (cancelled) return;
+
+        const previousState = lastSeenIndexStateRef.current;
+        const currentState = nextStatus?.status ?? null;
+        lastSeenIndexStateRef.current = currentState;
+
+        if (previousState === 'indexing' && currentState === 'complete') {
+          await loadGraph();
+        }
+
+        const delayMs = currentState === 'indexing' ? 3000 : 15000;
+        timer = window.setTimeout(() => {
+          void poll();
+        }, delayMs);
+      } catch {
+        if (cancelled) return;
+        timer = window.setTimeout(() => {
+          void poll();
+        }, 15000);
+      }
+    };
+
+    void poll();
+
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [activeRepo, fetchIndexStatus, fetchIndexStats, loadGraph]);
 
   useEffect(() => {
     // Pull the CSS theme accent into canvas-land (ForceGraph uses canvas fillStyles).
@@ -109,9 +350,19 @@ export function GraphSubtab() {
     );
   }, [filteredRelationships, vizEntityIdSet]);
 
-  const vizGraphData = useMemo(() => {
-    return { nodes: filteredEntities, links: vizRelationships };
-  }, [filteredEntities, vizRelationships]);
+  // Zoom readouts. The modal promised "Scroll to zoom" with nothing on screen to
+  // confirm it happened, and the inline panel offered no zoom at all (M-63, M-64).
+  const [vizZoom, setVizZoom] = useState(1);
+  const [fullscreenZoom, setFullscreenZoom] = useState(1);
+
+  /** Ignore the non-finite transforms zoomToFit reports before the graph has an extent. */
+  const recordZoom = useCallback(
+    (setter: (k: number) => void) => (transform: { k: number }) => {
+      const k = Number(transform?.k);
+      if (Number.isFinite(k) && k > 0) setter(k);
+    },
+    []
+  );
 
   // Compute node degrees for importance-based labeling
   const nodeDegreeMap = useMemo(() => {
@@ -139,6 +390,27 @@ export function GraphSubtab() {
     return new Set(degrees.slice(0, topCount).map(([id]) => id));
   }, [nodeDegreeMap]);
 
+  /** The inline panel is a fraction of the modal's area: fewer labels, or it is a smear. */
+  const inlineLabelledIds = useMemo(() => {
+    const ranked = Array.from(nodeDegreeMap.entries())
+      .filter(([, deg]) => deg >= 3)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6);
+    return new Set(ranked.map(([id]) => id));
+  }, [nodeDegreeMap]);
+
+  const vizNodesWithDegree = useMemo<NodeWithDegree[]>(
+    () => filteredEntities.map((e) => ({ ...e, __degree: nodeDegreeMap.get(e.entity_id) || 0 })),
+    [filteredEntities, nodeDegreeMap]
+  );
+
+  // NOTE: this must stay memoized. ForceGraph2D re-seeds its simulation (and resets the
+  // zoom transform) whenever `graphData` is a new object, and `onZoom` re-renders on every
+  // zoom tick - an inline object literal here makes the panel un-zoomable.
+  const vizGraphData = useMemo(() => {
+    return { nodes: vizNodesWithDegree, links: vizRelationships };
+  }, [vizNodesWithDegree, vizRelationships]);
+
   // Fullscreen graph data with degree annotations for custom rendering
   const fullscreenGraphData = useMemo(() => {
     const nodesWithDegree: NodeWithDegree[] = filteredEntities.map((e) => ({
@@ -148,22 +420,44 @@ export function GraphSubtab() {
     return { nodes: nodesWithDegree, links: vizRelationships };
   }, [filteredEntities, vizRelationships, nodeDegreeMap]);
 
+  // Observe the canvas host, not just window resizes: the grid settles after the first
+  // paint (and the entity list changes its column's demand), so a one-shot measurement
+  // left the inline canvas frozen at whatever width it had on mount - 2px at 1280 wide,
+  // before minmax(0, 1fr) (M-63). Layout size, not getBoundingClientRect: a transformed
+  // ancestor would size the canvas short.
+  // Three columns only fit when there is room for them. Below that the visualization takes
+  // its own full-width row instead of being squeezed to 145px beside the entity list (M-63).
+  // useLayoutEffect, not useEffect: `wideLayout` defaults to wide, so measuring after
+  // paint made a narrow container render three columns and jump to two (review F-08).
+  useLayoutEffect(() => {
+    const el = layoutRef.current;
+    if (!el) return;
+    const update = () => setLayoutWidth(Math.floor(el.clientWidth));
+    update();
+    const observer = new ResizeObserver(() => update());
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   useEffect(() => {
     if (viewMode !== 'viz') return;
     const el = vizCanvasRef.current;
     if (!el) return;
 
     const update = () => {
-      const rect = el.getBoundingClientRect();
-      setVizSize({
-        w: Math.max(1, Math.floor(rect.width)),
-        h: Math.max(1, Math.floor(rect.height)),
-      });
+      const w = Math.max(1, Math.floor(el.clientWidth));
+      const h = Math.max(1, Math.floor(el.clientHeight));
+      setVizSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
     };
 
     update();
+    const observer = new ResizeObserver(() => update());
+    observer.observe(el);
     window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', update);
+    };
   }, [viewMode]);
 
   useEffect(() => {
@@ -178,26 +472,31 @@ export function GraphSubtab() {
     return () => window.clearTimeout(handle);
   }, [viewMode, vizGraphData.nodes.length, vizGraphData.links.length]);
 
-  // Fullscreen canvas resize observer
+  // Fullscreen canvas sizing: observe the canvas element itself so the graph
+  // follows the modal's real size (the modal scales in over 200ms; a one-shot
+  // measurement mid-transition left the canvas at thumbnail size — G3).
   useEffect(() => {
-    if (!isFullscreen) return;
+    if (!isFullscreen) {
+      setFullscreenSize({ w: 0, h: 0 });
+      return;
+    }
     const el = fullscreenCanvasRef.current;
     if (!el) return;
 
     const update = () => {
-      const rect = el.getBoundingClientRect();
-      setFullscreenSize({
-        w: Math.max(1, Math.floor(rect.width)),
-        h: Math.max(1, Math.floor(rect.height)),
-      });
+      // Layout size, not getBoundingClientRect: the modal opens with a
+      // scale(0.95) transform and a transformed rect would size the canvas 5% short.
+      const w = Math.max(1, Math.floor(el.clientWidth));
+      const h = Math.max(1, Math.floor(el.clientHeight));
+      setFullscreenSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
     };
 
-    // Small delay to let CSS transition complete
-    const initialTimeout = window.setTimeout(update, 50);
+    update();
+    const observer = new ResizeObserver(() => update());
+    observer.observe(el);
     window.addEventListener('resize', update);
-
     return () => {
-      window.clearTimeout(initialTimeout);
+      observer.disconnect();
       window.removeEventListener('resize', update);
     };
   }, [isFullscreen]);
@@ -216,6 +515,18 @@ export function GraphSubtab() {
   }, [isFullscreen, fullscreenGraphData.nodes.length, fullscreenGraphData.links.length]);
 
   // Fullscreen open/close handlers with animation
+  useEffect(() => {
+    if (!isFullscreen || fullscreenSize.w <= 1 || fullscreenSize.h <= 1) return;
+    const handle = window.setTimeout(() => {
+      try {
+        fullscreenFgRef.current?.zoomToFit?.(400, 80);
+      } catch {
+        // no-op
+      }
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [isFullscreen, fullscreenSize.w, fullscreenSize.h]);
+
   const handleOpenFullscreen = useCallback(() => {
     setFullscreenAnimating(true);
     setIsFullscreen(true);
@@ -272,9 +583,14 @@ export function GraphSubtab() {
     }
   };
 
+  const legendColor = useCallback(
+    (type: string): string => nodeColor({ entity_id: '', name: '', entity_type: type } as Entity),
+    [nodeColor]
+  );
+
   // Custom node rendering for fullscreen mode - shows labels for important nodes
   const fullscreenNodeCanvasObject = useCallback(
-    (node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+    (node: any, ctx: CanvasRenderingContext2D) => {
       const entity = node as NodeWithDegree;
       const x = node.x ?? 0;
       const y = node.y ?? 0;
@@ -303,39 +619,28 @@ export function GraphSubtab() {
         ctx.stroke();
       }
 
-      // Draw label for important nodes (only when zoomed in enough)
-      if (importantNodeIds.has(entity.entity_id) && globalScale >= 0.4) {
-        const label = entity.name || entity.entity_id;
-        const fontSize = Math.max(10, 12 / globalScale);
-        ctx.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
-
-        // Background pill for readability
-        const textWidth = ctx.measureText(label).width;
-        const padding = 4 / globalScale;
-        const pillHeight = fontSize + padding * 2;
-        const pillWidth = textWidth + padding * 3;
-        const pillY = y - nodeSize - pillHeight - 4 / globalScale;
-
-        ctx.fillStyle = 'rgba(20, 20, 30, 0.85)';
-        ctx.beginPath();
-        const radius = pillHeight / 2;
-        ctx.roundRect(x - pillWidth / 2, pillY, pillWidth, pillHeight, radius);
-        ctx.fill();
-
-        // Border
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-        ctx.lineWidth = 1 / globalScale;
-        ctx.stroke();
-
-        // Text
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-        ctx.fillText(label, x, pillY + pillHeight / 2);
-      }
+      // Labels are NOT drawn here: a label painted with its node is overdrawn by every
+      // node painted after it. They go in the post-render pass below (M-149).
     },
     [selectedEntity, accentColor, importantNodeIds, nodeColor]
   );
+
+  const paintFullscreenLabels = useMemo(
+    () => makeLabelPainter(fullscreenGraphData.nodes, importantNodeIds),
+    [fullscreenGraphData.nodes, importantNodeIds]
+  );
+
+  const paintInlineLabels = useMemo(
+    () => makeLabelPainter(vizNodesWithDegree, inlineLabelledIds),
+    [vizNodesWithDegree, inlineLabelledIds]
+  );
+
+  // Types actually drawn right now — what both legends describe (M-59).
+  const renderedEntityTypes = useMemo(() => {
+    return Array.from(new Set(filteredEntities.map((e) => String(e.entity_type || '').trim()).filter(Boolean))).sort(
+      (a, b) => a.localeCompare(b)
+    );
+  }, [filteredEntities]);
 
   const entityTypes = useMemo(() => {
     const types = new Set<string>();
@@ -361,13 +666,108 @@ export function GraphSubtab() {
     return Array.from(types).sort((a, b) => a.localeCompare(b));
   }, [stats, relationships]);
 
+  /**
+   * An honest count. "200 shown" against 5,179 entities told the operator nothing
+   * about what they were not seeing and offered no way to reach entity 201 (M-61).
+   */
+  const entityCountLabel = useMemo(() => {
+    const shown = filteredEntities.length;
+    const fmt = (n: number) => n.toLocaleString();
+    const hidden = visibleEntityTypes.length ? ' (type filter applied)' : '';
+    // Derived from the scope the rows were LOADED under, never from the current
+    // selection: a failed expansion leaves the previous rows on screen, and reading
+    // the label off `selectedEntity`/`expansion` relabelled one entity's 86-node
+    // neighborhood as "Showing 86 of 5,179 in this corpus" (review F-01).
+    switch (scope.kind) {
+      case 'community':
+        return `${fmt(shown)} in this community${hidden}`;
+      case 'neighborhood':
+        return `${fmt(shown)} in this neighborhood${hidden}`;
+      case 'none':
+        return `${fmt(shown)} loaded${hidden}`;
+      case 'search':
+      case 'corpus': {
+        const total = Math.max(totalMatched, shown);
+        const where =
+          scope.kind === 'search' ? `matching \u201c${scope.query}\u201d` : 'in this corpus';
+        return shown < total
+          ? `Showing ${fmt(shown)} of ${fmt(total)} ${where}${hidden}`
+          : `${fmt(shown)} ${where}${hidden}`;
+      }
+    }
+  }, [filteredEntities.length, totalMatched, scope, visibleEntityTypes.length]);
+
+  /**
+   * Communities are absent for three different reasons and the operator needs the
+   * right one. The old copy was a hardcoded string claiming the graph "has no
+   * linked entities yet" and prescribing an expensive Force re-index, printed two
+   * inches under a Stats panel reading 5,179 entities / 11,779 relationships (M-60).
+   */
+  const communitiesEmptyReason = useMemo(() => {
+    const entities = stats?.total_entities ?? 0;
+    const relationships = stats?.total_relationships ?? 0;
+    if (!stats) return 'No graph stats for this corpus yet.';
+    if (entities === 0) {
+      return 'No communities: this corpus has no entity graph. Enable Semantic KG (concepts + relations) or code-entity indexing in RAG > Indexing, then re-index.';
+    }
+    if (relationships === 0) {
+      return `No communities: this graph has ${entities.toLocaleString()} entities but no relationships between them, so there is nothing to cluster. Semantic KG relation extraction produced no edges on this corpus.`;
+    }
+    return `No communities: ${entities.toLocaleString()} entities and ${relationships.toLocaleString()} relationships are stored, but community detection has not produced any clusters for this graph generation. Communities are written during indexing - re-index this corpus to run detection over the current graph.`;
+  }, [stats]);
+
+  /**
+   * Why the relationships table is empty. The old copy said "No relationships loaded.
+   * Select an entity to load its neighborhood." even to an operator who had just
+   * selected one - and whose selection had 404ed (M-65, M-01).
+   */
+  const relationshipsEmptyReason = useMemo(() => {
+    if (selectedEntity) {
+      return `${selectedEntity.name} has no relationships in this graph generation. It is an isolated node.`;
+    }
+    if (selectedCommunity) return 'No relationships between the members of this community.';
+    if (!filteredEntities.length) return 'Nothing is loaded yet.';
+    if (visibleRelationTypes.length) {
+      return 'No relationships of the selected types. Clear the relationship-type filter to see the rest.';
+    }
+    return 'These entities have no relationships between them. Click one to load its neighborhood.';
+  }, [selectedEntity, selectedCommunity, filteredEntities.length, visibleRelationTypes.length]);
+
+  const entitiesEmptyReason = useMemo(() => {
+    if (visibleEntityTypes.length) return 'No entities of the selected types. Clear the entity-type filter to see the rest.';
+    if (activeQuery) return `No entity name matches \u201c${activeQuery}\u201d in this corpus graph.`;
+    if (selectedCommunity) return 'No entities in this community.';
+    return 'This corpus has no entity graph yet.';
+  }, [visibleEntityTypes.length, activeQuery, selectedCommunity]);
+
+  /** Room for a third column? Below this the visualization gets its own row. */
+  const wideLayout = layoutWidth === 0 || layoutWidth >= 1080;
+
+  const indexProgressPercent = useMemo(() => {
+    const raw = Number(activeIndexStatus?.progress ?? 0);
+    return Math.max(0, Math.min(100, Math.round(raw * 100)));
+  }, [activeIndexStatus?.progress]);
+
+  const isGraphPromotionPending = activeIndexStatus?.status === 'indexing';
+  const promotedSnapshotTime = String(activeIndexSnapshot?.last_indexed || '').trim();
+  const activeIndexStartedAt = String(activeIndexStatus?.started_at || '').trim();
+  const promotedGraphIsStale =
+    isGraphPromotionPending &&
+    (!!activeIndexSnapshot?.last_indexed || (stats?.total_entities ?? 0) === 0);
+
   const handleSearch = async () => {
-    await searchEntities(entityQuery, 200);
+    await loadSubgraph(entityLimit, entityQuery);
   };
 
   const handleClear = async () => {
     setEntityQuery('');
+    setEntityLimit(DEFAULT_ENTITY_LIMIT);
     await loadGraph();
+  };
+
+  const handleLimitChange = async (next: number) => {
+    setEntityLimit(next);
+    await loadSubgraph(next, activeQuery);
   };
 
   const handlePickCommunity = async (c: Community | null) => {
@@ -377,6 +777,93 @@ export function GraphSubtab() {
   const handlePickEntity = async (e: Entity | null) => {
     await selectEntity(e);
   };
+
+  const stepZoom = useCallback((ref: React.MutableRefObject<any>, factor: number) => {
+    const graph = ref.current;
+    if (!graph?.zoom) return;
+    const current = Number(graph.zoom());
+    if (!Number.isFinite(current) || current <= 0) return;
+    graph.zoom(Math.max(0.005, Math.min(40, current * factor)), 200);
+  }, []);
+
+  const exportBaseName = useMemo(() => {
+    const scope = activeQuery ? `-${activeQuery.replace(/[^a-z0-9]+/gi, '-')}` : '';
+    return `graph-${activeRepo || 'corpus'}${scope}`;
+  }, [activeRepo, activeQuery]);
+
+  const exportPng = useCallback(
+    (host: HTMLDivElement | null) => {
+      const canvas = host?.querySelector('canvas');
+      if (!canvas) return;
+      // The visualizer paints on a transparent ground with near-white edges, so a raw
+      // toBlob() produced a PNG whose 549 edges were invisible on any light background
+      // (review F-05). Composite onto the panel's own dark ground first.
+      const flattened = document.createElement('canvas');
+      flattened.width = canvas.width;
+      flattened.height = canvas.height;
+      const ctx = flattened.getContext('2d');
+      if (!ctx) return;
+      ctx.fillStyle = '#0c0c12';
+      ctx.fillRect(0, 0, flattened.width, flattened.height);
+      ctx.drawImage(canvas, 0, 0);
+      flattened.toBlob((blob) => {
+        if (blob) downloadBlob(`${exportBaseName}.png`, 'image/png', blob);
+      }, 'image/png');
+    },
+    [exportBaseName]
+  );
+
+  const exportEntitiesCsv = useCallback(() => {
+    downloadBlob(
+      `${exportBaseName}-entities.csv`,
+      'text/csv;charset=utf-8',
+      toCsv(
+        ['entity_id', 'name', 'entity_type', 'file_path', 'connections', 'description'],
+        filteredEntities.map((e) => [
+          e.entity_id,
+          e.name,
+          e.entity_type,
+          e.file_path || '',
+          nodeDegreeMap.get(e.entity_id) || 0,
+          e.description || '',
+        ])
+      )
+    );
+  }, [exportBaseName, filteredEntities, nodeDegreeMap]);
+
+  const exportRelationshipsCsv = useCallback(() => {
+    downloadBlob(
+      `${exportBaseName}-relationships.csv`,
+      'text/csv;charset=utf-8',
+      toCsv(
+        ['source_id', 'relation_type', 'target_id', 'weight', 'provenance'],
+        filteredRelationships.map((r) => [
+          r.source_id,
+          r.relation_type,
+          r.target_id,
+          r.weight,
+          formatRelProvenance(r),
+        ])
+      )
+    );
+  }, [exportBaseName, filteredRelationships]);
+
+  const exportJson = useCallback(() => {
+    downloadBlob(
+      `${exportBaseName}.json`,
+      'application/json',
+      JSON.stringify(
+        {
+          corpus_id: activeRepo,
+          query: activeQuery || null,
+          entities: filteredEntities,
+          relationships: filteredRelationships,
+        },
+        null,
+        2
+      )
+    );
+  }, [exportBaseName, activeRepo, activeQuery, filteredEntities, filteredRelationships]);
 
   return (
     <div className="subtab-panel" style={{ padding: '24px' }} data-testid="graph-subtab">
@@ -393,7 +880,7 @@ export function GraphSubtab() {
             style={{
               padding: '8px 10px',
               background: viewMode === 'viz' ? 'rgba(var(--accent-rgb), 0.14)' : 'transparent',
-              color: viewMode === 'viz' ? 'var(--accent)' : 'var(--fg-muted)',
+              color: viewMode === 'viz' ? 'var(--accent-text)' : 'var(--fg-muted)',
               border: viewMode === 'viz' ? '1px solid var(--accent)' : '1px solid var(--line)',
               borderRadius: '10px',
               cursor: 'pointer',
@@ -409,7 +896,7 @@ export function GraphSubtab() {
             style={{
               padding: '8px 10px',
               background: viewMode === 'table' ? 'rgba(var(--accent-rgb), 0.14)' : 'transparent',
-              color: viewMode === 'table' ? 'var(--accent)' : 'var(--fg-muted)',
+              color: viewMode === 'table' ? 'var(--accent-text)' : 'var(--fg-muted)',
               border: viewMode === 'table' ? '1px solid var(--accent)' : '1px solid var(--line)',
               borderRadius: '10px',
               cursor: 'pointer',
@@ -424,6 +911,73 @@ export function GraphSubtab() {
       </div>
 
       <SyntheticCallout context="graph" />
+
+      {promotedGraphIsStale ? (
+        <div
+          style={{
+            background: 'rgba(var(--accent-rgb), 0.08)',
+            border: '1px solid rgba(var(--accent-rgb), 0.28)',
+            borderRadius: '12px',
+            padding: '14px 16px',
+            marginBottom: '16px',
+          }}
+          data-testid="graph-staging-banner"
+        >
+          <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--fg)' }}>
+            GraphRAG reindex is still building in staging.
+          </div>
+          <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--fg-muted)', lineHeight: 1.55 }}>
+            This panel shows the last promoted graph. During an active reindex, graph stats can stay at zero until the
+            new run finishes and promotes.
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              gap: '14px',
+              flexWrap: 'wrap',
+              marginTop: '10px',
+              fontSize: '12px',
+            }}
+          >
+            <span style={{ color: 'var(--fg)' }}>
+              <strong style={{ color: 'var(--accent-text)' }}>{indexProgressPercent}%</strong> complete
+            </span>
+            {activeIndexStatus?.current_file ? (
+              <span style={{ color: 'var(--fg-muted)' }}>
+                Current file: <span style={{ color: 'var(--fg)' }}>{activeIndexStatus.current_file}</span>
+              </span>
+            ) : null}
+            {activeIndexStartedAt ? (
+              <span style={{ color: 'var(--fg-muted)' }}>
+                Started: <span style={{ color: 'var(--fg)' }}>{new Date(activeIndexStartedAt).toLocaleString()}</span>
+              </span>
+            ) : null}
+            {promotedSnapshotTime ? (
+              <span style={{ color: 'var(--fg-muted)' }}>
+                Last promoted: <span style={{ color: 'var(--fg)' }}>{new Date(promotedSnapshotTime).toLocaleString()}</span>
+              </span>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {expansion?.status === 'failed' ? (
+        <div
+          style={{
+            background: 'rgba(var(--error-rgb), 0.08)',
+            border: '1px solid var(--error)',
+            borderRadius: '10px',
+            padding: '10px 14px',
+            marginBottom: '16px',
+            color: 'var(--fg)',
+            fontSize: '12.5px',
+            lineHeight: 1.55,
+          }}
+          data-testid="graph-expansion-failed"
+        >
+          {expansion.detail} Your entity list and the graph on screen are unchanged.
+        </div>
+      ) : null}
 
       {error && (
         <div
@@ -482,12 +1036,11 @@ export function GraphSubtab() {
           <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--fg-muted)' }}>
             Max hops
           </div>
-          <input
-            type="number"
+          <NumberField
             min={1}
             max={5}
             value={maxHops}
-            onChange={(e) => setMaxHops(Math.max(1, Math.min(5, parseInt(e.target.value || '2', 10))))}
+            onCommit={setMaxHops}
             style={{
               width: '100%',
               padding: '10px 12px',
@@ -578,9 +1131,85 @@ export function GraphSubtab() {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr 1fr', gap: '16px' }}>
+      {/* `1fr` is `minmax(auto, 1fr)`: the entity list's ids
+          (`server/retrieval/rerank.py::Reranker`) are unbreakable min-content, so they
+          pushed the visualization column down to 2px wide at 1280x720 - the "solid grey
+          hairball in a ~320x300 box" of M-63. minmax(0, 1fr) is what makes the panel a
+          panel. */}
+      {/* Export lives above the grid, not inside the visualization panel: the panel is not
+          rendered in Table view, which left the one surface most obviously wanting CSV with
+          no export at all (review F-04). Real buttons rather than a <select> whose options
+          are actions — assistive tech announced that as a combobox reading "Export..." and
+          it worked only because React re-rendered the value back (F-07). */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          gap: '8px',
+          marginBottom: '10px',
+          fontSize: '11.5px',
+          color: 'var(--fg-muted)',
+        }}
+        data-testid="graph-export"
+      >
+        <span>Export</span>
+        {viewMode === 'viz' ? (
+          <button
+            type="button"
+            style={controlStyle(!filteredEntities.length)}
+            onClick={() => exportPng(vizCanvasRef.current)}
+            disabled={!filteredEntities.length}
+            data-testid="graph-export-png"
+            title="Download the rendered graph as a PNG"
+          >
+            PNG
+          </button>
+        ) : null}
+        <button
+          type="button"
+          style={controlStyle(!filteredEntities.length)}
+          onClick={exportEntitiesCsv}
+          disabled={!filteredEntities.length}
+          data-testid="graph-export-entities"
+          title="Download the loaded entities as CSV"
+        >
+          Entities CSV
+        </button>
+        <button
+          type="button"
+          style={controlStyle(!filteredRelationships.length)}
+          onClick={exportRelationshipsCsv}
+          disabled={!filteredRelationships.length}
+          data-testid="graph-export-relationships"
+          title="Download the loaded relationships as CSV"
+        >
+          Relationships CSV
+        </button>
+        <button
+          type="button"
+          style={controlStyle(!filteredEntities.length)}
+          onClick={exportJson}
+          disabled={!filteredEntities.length}
+          data-testid="graph-export-json"
+          title="Download entities and relationships as JSON"
+        >
+          JSON
+        </button>
+      </div>
+
+      <div
+        ref={layoutRef}
+        style={{
+          display: 'grid',
+          gridTemplateColumns:
+            viewMode === 'table' || !wideLayout ? '320px minmax(0, 1fr)' : '320px minmax(0, 1fr) minmax(0, 1.5fr)',
+          gap: '16px',
+          alignItems: 'start',
+        }}
+      >
         {/* Communities */}
-        <div style={{ background: 'var(--card-bg)', border: '1px solid var(--line)', borderRadius: '12px', padding: '16px' }}>
+        <div style={{ background: 'var(--card-bg)', border: '1px solid var(--line)', borderRadius: '12px', padding: '16px', minWidth: 0 }}>
           <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)', marginBottom: '10px' }}>
             Communities
           </div>
@@ -602,7 +1231,7 @@ export function GraphSubtab() {
                   }}
                   data-testid={`graph-community-${c.community_id}`}
                 >
-                  <div style={{ fontSize: '13px', fontWeight: 700, color: active ? 'var(--accent)' : 'var(--fg)' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: active ? 'var(--accent-text)' : 'var(--fg)' }}>
                     {c.name}
                   </div>
                   <div style={{ marginTop: '4px', fontSize: '11px', color: 'var(--fg-muted)' }}>
@@ -612,27 +1241,68 @@ export function GraphSubtab() {
               );
             })}
             {!communities?.length && (
-              <div style={{ fontSize: '12px', color: 'var(--fg-muted)' }}>No communities found.</div>
+              <div style={{ fontSize: '12.5px', color: 'var(--fg-muted)', lineHeight: 1.55 }} data-testid="graph-communities-empty">
+                {communitiesEmptyReason}
+              </div>
             )}
           </div>
         </div>
 
         {/* Entities */}
-        <div style={{ background: 'var(--card-bg)', border: '1px solid var(--line)', borderRadius: '12px', padding: '16px' }}>
+        <div style={{ background: 'var(--card-bg)', border: '1px solid var(--line)', borderRadius: '12px', padding: '16px', minWidth: 0 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
             <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>Entities</div>
-            <div style={{ fontSize: '11px', color: 'var(--fg-muted)' }} data-testid="graph-entity-count">
-              {filteredEntities.length} shown
+            <div style={{ fontSize: '11.5px', color: 'var(--fg-muted)' }} data-testid="graph-entity-count">
+              {entityCountLabel}
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+          <div
+            style={{
+              marginTop: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: '8px',
+              fontSize: '11.5px',
+              color: 'var(--fg-muted)',
+            }}
+          >
+            <label htmlFor="graph-entity-limit">Draw at most</label>
+            <select
+              id="graph-entity-limit"
+              value={entityLimit}
+              onChange={(e) => void handleLimitChange(Number(e.target.value))}
+              style={{
+                padding: '6px 8px',
+                background: 'var(--input-bg)',
+                border: '1px solid var(--line)',
+                borderRadius: '6px',
+                color: 'var(--fg)',
+                fontSize: '11.5px',
+              }}
+              data-testid="graph-entity-limit"
+            >
+              {ENTITY_LIMIT_CHOICES.map((n) => (
+                <option key={n} value={n}>
+                  {n.toLocaleString()}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* `flex: 1` without `minWidth: 0` keeps the input at its placeholder's min-content
+              width, so this row overflowed its grid track and the Search/Reset buttons ended
+              up UNDER the visualization canvas, where a click never lands. */}
+          <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
             <input
               value={entityQuery}
               onChange={(e) => setEntityQuery(e.target.value)}
-              placeholder="Search entities by name…"
+              placeholder="Search entities…"
               style={{
-                flex: 1,
+                flex: '1 1 120px',
+                minWidth: 0,
                 padding: '10px 12px',
                 background: 'var(--input-bg)',
                 border: '1px solid var(--line)',
@@ -760,99 +1430,154 @@ export function GraphSubtab() {
                   }}
                   data-testid={`graph-entity-${e.entity_id}`}
                 >
-                  <div style={{ fontSize: '13px', fontWeight: 700, color: active ? 'var(--accent)' : 'var(--fg)' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: active ? 'var(--accent-text)' : 'var(--fg)', wordBreak: 'break-word' }}>
                     {formatEntityLabel(e)}
                   </div>
-                  <div style={{ marginTop: '4px', fontSize: '11px', color: 'var(--fg-muted)' }}>
+                  <div style={{ marginTop: '4px', fontSize: '11.5px', color: 'var(--fg-muted)', wordBreak: 'break-all' }}>
                     {e.file_path || '—'}
                   </div>
                 </button>
               );
             })}
             {!filteredEntities.length && (
-              <div style={{ fontSize: '12px', color: 'var(--fg-muted)' }}>
-                {selectedCommunity
-                  ? 'No entities in this community.'
-                  : 'Search for entities to begin, or select a community.'}
+              <div style={{ fontSize: '12px', color: 'var(--fg-muted)', lineHeight: 1.5 }} data-testid="graph-entities-empty">
+                {entitiesEmptyReason}
               </div>
             )}
           </div>
         </div>
 
         {viewMode === 'table' ? (
-          /* Details */
-          <div style={{ background: 'var(--card-bg)', border: '1px solid var(--line)', borderRadius: '12px', padding: '16px' }}>
-            <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)', marginBottom: '10px' }}>Details</div>
-
+          /* Tables: the entities and relationships currently loaded, as actual tables.
+             "Table" used to render one Details card plus an empty-state that told the
+             operator to select an entity to load its neighborhood - the thing they had
+             just done, and which 404ed - over two thirds of empty viewport (M-65). */
+          <div
+            style={{
+              background: 'var(--card-bg)',
+              border: '1px solid var(--line)',
+              borderRadius: '12px',
+              padding: '16px',
+              minWidth: 0,
+            }}
+            data-testid="graph-table-panel"
+          >
             {selectedEntity ? (
-              <div data-testid="graph-entity-details">
+              <div style={{ marginBottom: '16px' }} data-testid="graph-entity-details">
                 <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--fg)' }}>{selectedEntity.name}</div>
-                <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--fg-muted)' }}>
+                <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--fg-muted)', wordBreak: 'break-all' }}>
                   <span style={{ fontFamily: 'var(--font-mono)' }}>{selectedEntity.entity_id}</span>
                 </div>
-                <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--fg)' }}>
-                  <strong>Type:</strong> {selectedEntity.entity_type}
-                </div>
-                <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--fg)' }}>
-                  <strong>File:</strong> {selectedEntity.file_path || '—'}
+                <div style={{ marginTop: '8px', display: 'flex', gap: '16px', flexWrap: 'wrap', fontSize: '12px', color: 'var(--fg)' }}>
+                  <span>
+                    <strong>Type:</strong> {selectedEntity.entity_type}
+                  </span>
+                  <span>
+                    <strong>File:</strong> {selectedEntity.file_path || '—'}
+                  </span>
+                  <span>
+                    <strong>Connections:</strong> {nodeDegreeMap.get(selectedEntity.entity_id) || 0}
+                  </span>
                 </div>
                 {selectedEntity.description && (
-                  <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--fg-muted)', lineHeight: 1.5 }}>
+                  <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--fg-muted)', lineHeight: 1.5 }}>
                     {selectedEntity.description}
                   </div>
                 )}
-
-                <div style={{ marginTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 800, color: 'var(--fg)' }}>Relationships</div>
-                  <div style={{ fontSize: '11px', color: 'var(--fg-muted)' }} data-testid="graph-relationship-count">
-                    {filteredRelationships.length} edges
-                  </div>
-                </div>
-
-                <div style={{ marginTop: '10px', maxHeight: '360px', overflowY: 'auto', display: 'grid', gap: '8px' }} data-testid="graph-relationships">
-                  {filteredRelationships.map((r, idx) => (
-                    <div
-                      key={`${r.source_id}-${r.relation_type}-${r.target_id}-${idx}`}
-                      style={{
-                        padding: '10px 12px',
-                        background: 'var(--bg-elev2)',
-                        border: '1px solid var(--line)',
-                        borderRadius: '10px',
-                        fontSize: '12px',
-                        color: 'var(--fg)',
-                      }}
-                    >
-                      <div style={{ fontFamily: 'var(--font-mono)' }}>{formatRelLabel(r, entityById)}</div>
-                      <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--fg-muted)' }}>
-                        {formatRelProvenance(r)}
-                      </div>
-                    </div>
-                  ))}
-                  {!filteredRelationships.length && (
-                    <div style={{ fontSize: '12px', color: 'var(--fg-muted)' }}>
-                      No relationships loaded. Select an entity to load its neighborhood.
-                    </div>
-                  )}
-                </div>
               </div>
             ) : selectedCommunity ? (
-              <div data-testid="graph-community-details">
+              <div style={{ marginBottom: '16px' }} data-testid="graph-community-details">
                 <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--fg)' }}>{selectedCommunity.name}</div>
-                <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--fg-muted)', lineHeight: 1.5 }}>
+                <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--fg-muted)', lineHeight: 1.5 }}>
                   {selectedCommunity.summary || '—'}
                 </div>
-                <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--fg)' }}>
-                  <strong>Members:</strong> {selectedCommunity.member_ids?.length || 0}
-                </div>
-                <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--fg-muted)' }}>
-                  Click a member in the Entities list to load its neighbors.
-                </div>
               </div>
-            ) : (
-              <div style={{ fontSize: '12px', color: 'var(--fg-muted)' }} data-testid="graph-details-empty">
-                Select a community or entity to view details.
+            ) : null}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>Entities</div>
+              <div style={{ fontSize: '11.5px', color: 'var(--fg-muted)' }}>{entityCountLabel}</div>
+            </div>
+            <div style={{ marginTop: '8px', maxHeight: '300px', overflow: 'auto' }}>
+              <table style={tableStyle} data-testid="graph-entities-table">
+                <thead>
+                  <tr>
+                    <th style={thStyle}>Name</th>
+                    <th style={thStyle}>Type</th>
+                    <th style={thStyle}>File</th>
+                    <th style={{ ...thStyle, textAlign: 'right' }}>Connections</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredEntities.map((e) => {
+                    const active = selectedEntity?.entity_id === e.entity_id;
+                    return (
+                      <tr
+                        key={e.entity_id}
+                        onClick={() => void handlePickEntity(active ? null : e)}
+                        style={{
+                          cursor: 'pointer',
+                          background: active ? 'rgba(var(--accent-rgb), 0.12)' : 'transparent',
+                        }}
+                        data-testid={`graph-entity-row-${e.entity_id}`}
+                      >
+                        <td style={{ ...tdStyle, color: active ? 'var(--accent-text)' : 'var(--fg)', fontWeight: 600 }}>
+                          {e.name}
+                        </td>
+                        <td style={tdStyle}>{e.entity_type}</td>
+                        <td style={{ ...tdStyle, fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>
+                          {e.file_path || '—'}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: 'right' }}>{nodeDegreeMap.get(e.entity_id) || 0}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {!filteredEntities.length && (
+                <div style={{ padding: '10px 2px', fontSize: '12px', color: 'var(--fg-muted)' }} data-testid="graph-entities-table-empty">
+                  {entitiesEmptyReason}
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginTop: '18px', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>Relationships</div>
+              <div style={{ fontSize: '11.5px', color: 'var(--fg-muted)' }} data-testid="graph-relationship-count">
+                {filteredRelationships.length.toLocaleString()} edges
               </div>
-            )}
+            </div>
+            <div style={{ marginTop: '8px', maxHeight: '320px', overflow: 'auto' }}>
+              <table style={tableStyle} data-testid="graph-relationships-table">
+                <thead>
+                  <tr>
+                    <th style={thStyle}>Source</th>
+                    <th style={thStyle}>Relation</th>
+                    <th style={thStyle}>Target</th>
+                    <th style={thStyle}>Provenance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRelationships.map((r, idx) => (
+                    <tr key={`${r.source_id}-${r.relation_type}-${r.target_id}-${idx}`}>
+                      <td style={{ ...tdStyle, color: 'var(--fg)' }}>
+                        {entityById.get(r.source_id)?.name || r.source_id}
+                      </td>
+                      <td style={{ ...tdStyle, fontFamily: 'var(--font-mono)' }}>{r.relation_type}</td>
+                      <td style={{ ...tdStyle, color: 'var(--fg)' }}>
+                        {entityById.get(r.target_id)?.name || r.target_id}
+                      </td>
+                      <td style={{ ...tdStyle, wordBreak: 'break-all' }}>{formatRelProvenance(r)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {!filteredRelationships.length && (
+                <div style={{ padding: '10px 2px', fontSize: '12px', color: 'var(--fg-muted)', lineHeight: 1.5 }} data-testid="graph-relationships-empty">
+                  {relationshipsEmptyReason}
+                </div>
+              )}
+            </div>
           </div>
         ) : (
           /* Visualization */
@@ -863,6 +1588,8 @@ export function GraphSubtab() {
               borderRadius: '12px',
               padding: '16px',
               overflow: 'hidden',
+              minWidth: 0,
+              gridColumn: wideLayout ? 'auto' : '1 / -1',
             }}
             data-testid="graph-viz-panel"
           >
@@ -872,19 +1599,28 @@ export function GraphSubtab() {
                 <div style={{ fontSize: '11px', color: 'var(--fg-muted)' }}>
                   {filteredEntities.length} nodes • {vizRelationships.length} edges
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '11px', color: 'var(--fg-muted)' }}>
-                  {[
-                    ['person', '#f97316'],
-                    ['org', '#0ea5e9'],
-                    ['location', '#10b981'],
-                    ['event', '#eab308'],
-                  ].map(([label, color]) => (
-                    <span key={label as string} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                      <span style={{ width: '8px', height: '8px', borderRadius: '999px', background: color as string, display: 'inline-block' }} />
-                      {label as string}
-                    </span>
-                  ))}
+                <GraphLegend types={renderedEntityTypes} colorOf={legendColor} testId="graph-legend" />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <button type="button" style={controlButtonStyle} onClick={() => stepZoom(fgRef, 1 / 1.4)} data-testid="graph-zoom-out" title="Zoom out">
+                    -
+                  </button>
+                  <span style={{ fontSize: '11.5px', color: 'var(--fg-muted)', minWidth: '46px', textAlign: 'center' }} data-testid="graph-zoom-level">
+                    {formatZoom(vizZoom)}
+                  </span>
+                  <button type="button" style={controlButtonStyle} onClick={() => stepZoom(fgRef, 1.4)} data-testid="graph-zoom-in" title="Zoom in">
+                    +
+                  </button>
+                  <button
+                    type="button"
+                    style={controlButtonStyle}
+                    onClick={() => fgRef.current?.zoomToFit?.(400, 60)}
+                    data-testid="graph-zoom-fit"
+                    title="Fit the whole graph"
+                  >
+                    Fit
+                  </button>
                 </div>
+
                 <button
                   onClick={handleOpenFullscreen}
                   disabled={filteredEntities.length === 0}
@@ -896,7 +1632,7 @@ export function GraphSubtab() {
                     background: 'rgba(var(--accent-rgb), 0.1)',
                     border: '1px solid var(--accent)',
                     borderRadius: '8px',
-                    color: 'var(--accent)',
+                    color: 'var(--accent-text)',
                     fontSize: '11px',
                     fontWeight: 700,
                     cursor: filteredEntities.length === 0 ? 'not-allowed' : 'pointer',
@@ -955,6 +1691,10 @@ export function GraphSubtab() {
                   linkColor={() => 'rgba(255, 255, 255, 0.15)'}
                   linkWidth={1}
                   backgroundColor="rgba(0,0,0,0)"
+                  onRenderFramePost={paintInlineLabels}
+                  onZoom={recordZoom(setVizZoom)}
+                  enableZoomInteraction={true}
+                  enablePanInteraction={true}
                   onNodeClick={(n: any) => {
                     const e = n as Entity;
                     const active = selectedEntity?.entity_id === e.entity_id;
@@ -968,9 +1708,29 @@ export function GraphSubtab() {
               )}
             </div>
 
-            <div style={{ marginTop: '10px', fontSize: '11px', color: 'var(--fg-muted)' }}>
-              Tip: click a node to load its neighborhood.
-            </div>
+            {filteredEntities.length > 0 && vizRelationships.length === 0 ? (
+              <div
+                style={{
+                  marginTop: '10px',
+                  padding: '10px 12px',
+                  borderRadius: '10px',
+                  border: '1px solid var(--line)',
+                  background: 'rgba(var(--accent-rgb), 0.06)',
+                  fontSize: '11.5px',
+                  color: 'var(--fg-muted)',
+                  lineHeight: 1.5,
+                }}
+                data-testid="graph-no-edges-note"
+              >
+                No relationships run between these {filteredEntities.length.toLocaleString()} entities, so they are
+                drawn as unconnected nodes. Click one to load its neighborhood, or Reset for the whole-corpus graph.
+              </div>
+            ) : (
+              <div style={{ marginTop: '10px', fontSize: '11.5px', color: 'var(--fg-muted)' }} data-testid="graph-viz-hint">
+                Scroll or use the zoom controls to zoom, drag to pan, hover a node for its name, click a node to load
+                its neighborhood. Expand opens the same graph full screen.
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -998,9 +1758,18 @@ export function GraphSubtab() {
             aria-label="Fullscreen graph visualization"
             data-testid="graph-fullscreen-overlay"
           >
-            {/* Modal container - 85% of viewport */}
+            {/* Modal container - 85% of viewport. The visualizer paints white
+                edges and dark label pills, so the modal keeps the dark token
+                set under every theme (Light theme made the edges invisible). */}
             <div
               style={{
+                ['--bg' as string]: '#09090b',
+                ['--bg-elev1' as string]: '#0f0f12',
+                ['--bg-elev2' as string]: '#18181b',
+                ['--line' as string]: '#3f3f46',
+                ['--fg' as string]: '#e4e4e7',
+                ['--fg-muted' as string]: '#a1a1aa',
+                color: '#e4e4e7',
                 width: '85vw',
                 height: '85vh',
                 maxWidth: '1800px',
@@ -1044,28 +1813,8 @@ export function GraphSubtab() {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  {/* Legend */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '11px' }}>
-                    {[
-                      { type: 'function', color: '#22c55e' },
-                      { type: 'class', color: '#60a5fa' },
-                      { type: 'module', color: '#fbbf24' },
-                      { type: 'variable', color: '#a78bfa' },
-                      { type: 'concept', color: '#94a3b8' },
-                    ].map(({ type, color }) => (
-                      <div key={type} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <div
-                          style={{
-                            width: '10px',
-                            height: '10px',
-                            borderRadius: '50%',
-                            background: color,
-                          }}
-                        />
-                        <span style={{ color: 'var(--fg-muted)' }}>{type}</span>
-                      </div>
-                    ))}
-                  </div>
+                  {/* Same legend component as the inline panel: one source of truth (M-59). */}
+                  <GraphLegend types={renderedEntityTypes} colorOf={legendColor} testId="graph-fullscreen-legend" />
 
                   {/* Close button */}
                   <button
@@ -1124,6 +1873,17 @@ export function GraphSubtab() {
                     nodeLabel={(n: any) => formatEntityLabel(n as Entity)}
                     linkLabel={(l: any) => String((l as Relationship).relation_type || '')}
                     nodeCanvasObject={fullscreenNodeCanvasObject}
+                    nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
+                      // Hit area must match the painted circle (custom painters get no default hit shape).
+                      const degree = (node as NodeWithDegree).__degree || 0;
+                      const radius = 4 * Math.min(2.5, 1 + degree * 0.15) + 2;
+                      ctx.fillStyle = color;
+                      ctx.beginPath();
+                      ctx.arc(node.x ?? 0, node.y ?? 0, radius, 0, 2 * Math.PI);
+                      ctx.fill();
+                    }}
+                    onRenderFramePost={paintFullscreenLabels}
+                    onZoom={recordZoom(setFullscreenZoom)}
                     linkColor={() => 'rgba(255, 255, 255, 0.12)'}
                     linkWidth={1.5}
                     backgroundColor="rgba(0,0,0,0)"
@@ -1156,7 +1916,7 @@ export function GraphSubtab() {
                       backdropFilter: 'blur(8px)',
                     }}
                   >
-                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--accent)' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--accent-text)' }}>
                       {selectedEntity.name}
                     </div>
                     <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '4px' }}>
@@ -1184,15 +1944,33 @@ export function GraphSubtab() {
                     position: 'absolute',
                     bottom: '20px',
                     right: '20px',
-                    fontSize: '11px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    fontSize: '11.5px',
                     color: 'var(--fg-muted)',
-                    background: 'rgba(20, 20, 30, 0.7)',
+                    background: 'rgba(20, 20, 30, 0.92)',
                     padding: '8px 12px',
                     borderRadius: '8px',
-                    backdropFilter: 'blur(4px)',
                   }}
+                  data-testid="graph-fullscreen-hint"
                 >
-                  Scroll to zoom • Drag to pan • Click node for details • Esc to close
+                  <button type="button" style={controlButtonStyle} onClick={() => stepZoom(fullscreenFgRef, 1 / 1.4)} data-testid="graph-fullscreen-zoom-out" title="Zoom out">
+                    -
+                  </button>
+                  <span style={{ minWidth: '46px', textAlign: 'center' }} data-testid="graph-fullscreen-zoom-level">
+                    {formatZoom(fullscreenZoom)}
+                  </span>
+                  <button type="button" style={controlButtonStyle} onClick={() => stepZoom(fullscreenFgRef, 1.4)} data-testid="graph-fullscreen-zoom-in" title="Zoom in">
+                    +
+                  </button>
+                  <button type="button" style={controlButtonStyle} onClick={() => fullscreenFgRef.current?.zoomToFit?.(400, 80)} data-testid="graph-fullscreen-zoom-fit" title="Fit the whole graph">
+                    Fit
+                  </button>
+                  <button type="button" style={controlButtonStyle} onClick={() => exportPng(fullscreenCanvasRef.current)} data-testid="graph-fullscreen-export-png" title="Download this render as a PNG">
+                    PNG
+                  </button>
+                  <span>Scroll or +/- to zoom, drag to pan, click a node for details, Esc to close</span>
                 </div>
               </div>
             </div>
