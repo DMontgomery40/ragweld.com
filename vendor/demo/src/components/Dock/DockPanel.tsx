@@ -3,6 +3,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Sidepanel } from '@/components/Sidepanel';
 import { DockPickerModal } from '@/components/Dock/DockPickerModal';
 import { DockView } from '@/components/Dock/DockView';
+import { DocumentViewer } from '@/components/Documents/DocumentViewer';
+import { figureBadgeLabel, formatSourceLocation } from '@/components/Documents/sourceLabels';
 import { DOCK_DEFAULT_MODE_BY_PATH } from '@/config/dockCatalog';
 import { getRouteByPath } from '@/config/routes';
 import { useDockStore } from '@/stores';
@@ -24,6 +26,7 @@ export function DockPanel() {
 
   const mode = useDockStore((s) => s.mode);
   const docked = useDockStore((s) => s.docked);
+  const activeDocument = useDockStore((s) => s.activeDocument);
   const setMode = useDockStore((s) => s.setMode);
   const setDocked = useDockStore((s) => s.setDocked);
   const clearDocked = useDockStore((s) => s.clearDocked);
@@ -103,10 +106,23 @@ export function DockPanel() {
       return;
     }
 
+    // Docking the current page with nothing already docked frees the main pane, so it moves to
+    // Chat. That used to happen with no announcement, which read as the page vanishing (M-153 /
+    // A-46). Say what happened and offer a one-click undo.
+    const swappedFrom = currentMainTarget;
     setDocked(currentMainTarget);
     setMode('dock');
     navigate('/chat');
-  }, [currentMainTarget, docked, navigate, setDocked, setMode]);
+    showUndoToast({
+      message: `Docked ${formatDockTitle(swappedFrom)}; the main view moved to Chat.`,
+      onUndo: () => {
+        setDocked(null, { rememberLast: false });
+        setMode('dock');
+        navigate(swappedFrom.path + swappedFrom.search);
+        clearUndoToast();
+      },
+    });
+  }, [clearUndoToast, currentMainTarget, docked, navigate, setDocked, setMode, showUndoToast]);
 
   const swap = useCallback(() => {
     if (!docked) return;
@@ -163,9 +179,15 @@ export function DockPanel() {
 
   const title = useMemo(() => {
     if (mode === 'settings') return 'Settings';
+    if (mode === 'document') {
+      if (!activeDocument) return 'Source';
+      const name = activeDocument.source.file_path.split('/').pop() || activeDocument.source.file_path;
+      const figureSuffix = figureBadgeLabel(activeDocument.source) === null ? '' : ' · Figure';
+      return `Source: ${name} · ${formatSourceLocation(activeDocument.source)}${figureSuffix}`;
+    }
     if (!docked) return 'Dock';
     return `Dock: ${formatDockTitle(docked)}`;
-  }, [docked, mode]);
+  }, [activeDocument, docked, mode]);
 
   const SegmentedButton = ({
     active,
@@ -256,6 +278,12 @@ export function DockPanel() {
               onClick={() => setMode('dock')}
               testId="dock-mode-dock"
             />
+            <SegmentedButton
+              active={mode === 'document'}
+              label="Source"
+              onClick={() => setMode('document')}
+              testId="dock-mode-document"
+            />
           </div>
 
           <div
@@ -267,6 +295,13 @@ export function DockPanel() {
           </div>
 
           <div className="dock-header-actions">
+            {/* One set of dock controls, in the header. When nothing is docked the empty body
+                used to render its own Dock Current / Choose beside these, so two identical
+                control sets sat on screen at once (M-153 / A-47); Dock Chat now lives here too
+                and the empty body is guidance only. */}
+            {!docked ? (
+              <HeaderButton label="Dock Chat" onClick={dockChat} testId="dock-chat" />
+            ) : null}
             <HeaderButton label="Dock Current" onClick={dockCurrentSwap} testId="dock-current" disabled={!currentMainTarget} />
             <HeaderButton label="Choose…" onClick={() => setPickerOpen(true)} testId="dock-choose" />
             {docked ? (
@@ -291,12 +326,44 @@ export function DockPanel() {
           flex: '1 1 auto',
           minHeight: 0,
           overflow: 'hidden',
+          // Every docked pane wraps rather than clipping mid-word (A-44/M-109):
+          // `overflow-wrap` is inherited, so a long id/token in any mode (native
+          // page, source document, settings) breaks to the next line instead of
+          // spilling past the pane edge. Overflow that still cannot wrap scrolls
+          // in the mode's own scroll container, never silently clips.
+          overflowWrap: 'anywhere',
         }}
       >
         {mode === 'settings' ? (
           <div style={{ height: '100%', overflow: 'auto', padding: '20px' }}>
             <Sidepanel />
           </div>
+        ) : mode === 'document' ? (
+          activeDocument ? (
+            <div style={{ height: '100%', overflow: 'hidden' }}>
+              <DocumentViewer key={`${activeDocument.corpusId}:${activeDocument.source.chunk_id}`} target={activeDocument} />
+            </div>
+          ) : (
+            <div
+              data-testid="dock-document-empty"
+              style={{
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '10px',
+                padding: '18px',
+                color: 'var(--fg-muted)',
+                textAlign: 'center',
+              }}
+            >
+              <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--fg)' }}>No source open</div>
+              <div style={{ fontSize: '12.5px', maxWidth: '320px' }}>
+                Click a citation under a chat answer to see the cited page or lines here.
+              </div>
+            </div>
+          )
         ) : docked ? (
           <div style={{ height: '100%', overflow: 'hidden' }}>
             <DockView target={docked} />
@@ -318,13 +385,9 @@ export function DockPanel() {
           >
             <div style={{ fontSize: '28px' }}>📌</div>
             <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--fg)' }}>Nothing docked yet</div>
-            <div style={{ fontSize: '12px', maxWidth: '320px' }}>
-              Dock Chat while you browse Grafana/RAG.
-            </div>
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'center' }}>
-              <HeaderButton label="Dock Chat" onClick={dockChat} testId="dock-chat" />
-              <HeaderButton label="Dock Current" onClick={dockCurrentSwap} testId="dock-current-empty" disabled={!currentMainTarget} />
-              <HeaderButton label="Choose…" onClick={() => setPickerOpen(true)} testId="dock-choose-empty" />
+            <div style={{ fontSize: '12.5px', maxWidth: '340px', lineHeight: 1.5 }}>
+              Use <strong>Dock Chat</strong> above to keep chat beside Grafana or RAG, or{' '}
+              <strong>Dock Current</strong> to move the page you are on into this panel.
             </div>
           </div>
         )}
@@ -361,7 +424,7 @@ export function DockPanel() {
             style={{
               background: 'transparent',
               border: '1px solid var(--accent)',
-              color: 'var(--accent)',
+              color: 'var(--accent-text)',
               borderRadius: '8px',
               padding: '6px 10px',
               cursor: 'pointer',
