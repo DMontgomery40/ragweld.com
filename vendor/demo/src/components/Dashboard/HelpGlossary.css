@@ -27,7 +27,6 @@
 
 .glossary-search::placeholder {
   color: var(--fg-muted);
-  opacity: 0.7;
 }
 
 /* Category Filters */
@@ -68,7 +67,7 @@
 }
 
 .filter-count {
-  font-size: 11px;
+  font-size: 11.5px;
   padding: 2px 6px;
   background: rgba(0, 0, 0, 0.2);
   border-radius: 10px;
@@ -130,12 +129,12 @@
 }
 
 .glossary-param-name {
-  font-size: 11px;
+  font-size: 11.5px;
   padding: 4px 8px;
   background: var(--bg-elev2);
   border: 1px solid var(--line);
   border-radius: 4px;
-  color: var(--accent);
+  color: var(--accent-text);
   font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
   flex-shrink: 0;
   font-weight: 600;
@@ -156,7 +155,7 @@
 }
 
 .glossary-badge {
-  font-size: 10px;
+  font-size: 11.5px;
   padding: 3px 8px;
   border-radius: 4px;
   font-weight: 600;
@@ -203,7 +202,7 @@
 }
 
 .glossary-link:hover {
-  color: var(--accent);
+  color: var(--accent-text);
   gap: 6px;
 }
 
