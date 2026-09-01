@@ -1,7 +1,7 @@
 /**
  * useGraph - Hook for knowledge graph operations
  *
- * Uses types from generated.ts (Pydantic-first architecture):
+ * Uses public wire types from generated.ts:
  * - Entity, Relationship, Community, GraphStats
  *
  * USAGE:
@@ -11,18 +11,34 @@
  *     communities,
  *     stats,
  *     loadGraph,
- *     searchEntities,
+  *     loadSubgraph,
  *     getNeighbors,
  *     selectEntity,
  *     selectCommunity,
  *   } = useGraph();
  */
 import { useCallback, useEffect } from 'react';
-import { useGraphStore } from '@/stores/useGraphStore';
+import { DEFAULT_ENTITY_LIMIT, useGraphStore } from '@/stores/useGraphStore';
 import { useRepoStore } from '@/stores';
 import type { Entity, Relationship, Community, GraphStats, GraphNeighborsResponse } from '@/types/generated';
 
 const GRAPH_API_BASE = '/api/graph';
+
+/**
+ * The server's own `detail` for a failed graph call. The operator needs to read
+ * which id or corpus the backend rejected; a bare status code is not actionable
+ * and swallowing the failure silently is what made M-01 invisible.
+ */
+async function failureDetail(response: Response, action: string): Promise<string> {
+  let detail = '';
+  try {
+    const body = (await response.json()) as { detail?: unknown };
+    if (typeof body?.detail === 'string') detail = body.detail.trim();
+  } catch {
+    detail = '';
+  }
+  return detail ? `${action}: ${detail}` : `${action} (HTTP ${response.status})`;
+}
 
 export function useGraph() {
   const { activeRepo } = useRepoStore();
@@ -35,7 +51,11 @@ export function useGraph() {
     selectedCommunity,
     isLoading,
     error,
+    expansion,
+    scope,
     viewMode,
+    totalMatched,
+    activeQuery,
     visibleEntityTypes,
     visibleRelationTypes,
     maxHops,
@@ -47,6 +67,10 @@ export function useGraph() {
     setSelectedCommunity,
     setIsLoading,
     setError,
+    setExpansion,
+    setScope,
+    setTotalMatched,
+    setActiveQuery,
     setViewMode,
     setVisibleEntityTypes,
     setVisibleRelationTypes,
@@ -113,55 +137,13 @@ export function useGraph() {
   }, [activeRepo, setCommunities, setIsLoading, setError]);
 
   /**
-   * Search for entities matching a query
-   */
-  const searchEntities = useCallback(
-    async (query: string, limit: number = 50): Promise<Entity[]> => {
-      if (!activeRepo) {
-        setError('No repository selected');
-        return [];
-      }
-
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const q = query.trim();
-        let url = `${GRAPH_API_BASE}/${encodeURIComponent(activeRepo)}/entities?limit=${encodeURIComponent(String(limit))}`;
-        if (q) url += `&q=${encodeURIComponent(q)}`;
-
-        const response = await fetch(url);
-        if (!response.ok) {
-          if (response.status === 404) {
-            // No graph for this corpus yet (or empty corpus graph).
-            setEntities([]);
-            return [];
-          }
-          throw new Error(`Failed to search entities: ${response.status}`);
-        }
-
-        const data: Entity[] = await response.json();
-        setEntities(data);
-        return data;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to search entities';
-        setError(message);
-        return [];
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [activeRepo, setEntities, setIsLoading, setError]
-  );
-
-  /**
    * Get neighbors of an entity within N hops
    */
   const getNeighbors = useCallback(
-    async (entityId: string, hops: number = maxHops): Promise<{ entities: Entity[]; relationships: Relationship[] }> => {
+    async (entityId: string, hops: number = maxHops): Promise<{ entities: Entity[]; relationships: Relationship[] } | null> => {
       if (!activeRepo) {
         setError('No repository selected');
-        return { entities: [], relationships: [] };
+        return null;
       }
 
       setIsLoading(true);
@@ -169,18 +151,26 @@ export function useGraph() {
 
       try {
         const safeHops = Math.max(1, Math.min(5, Number.isFinite(hops) ? Math.floor(hops) : maxHops));
-        const url = `${GRAPH_API_BASE}/${encodeURIComponent(activeRepo)}/entity/${encodeURIComponent(entityId)}/neighbors` +
-          `?max_hops=${encodeURIComponent(String(safeHops))}&limit=${encodeURIComponent(String(200))}`;
+        const params = new URLSearchParams({
+          entity_id: entityId,
+          max_hops: String(safeHops),
+          limit: String(200),
+        });
+        const url = `${GRAPH_API_BASE}/${encodeURIComponent(activeRepo)}/entity/neighbors?${params.toString()}`;
 
         const response = await fetch(url);
         if (!response.ok) {
-          if (response.status === 404) {
-            // Treat as "no graph yet" / missing entity (avoid scary UI errors).
-            setEntities([]);
-            setRelationships([]);
-            return { entities: [], relationships: [] };
-          }
-          throw new Error(`Failed to get neighbors: ${response.status}`);
+          // A failed expansion leaves the operator's results and graph exactly as
+          // they were and reports the server's reason. Blanking the view on 404
+          // destroyed the search results and told nobody why (M-01).
+          // One surface per failure: the expansion banner carries this one. Mirroring it
+          // into `error` too rendered the same sentence in two stacked red boxes (F-02).
+          setExpansion({
+            entityId,
+            status: 'failed',
+            detail: await failureDetail(response, 'Could not expand this entity'),
+          });
+          return null;
         }
 
         const data: GraphNeighborsResponse = await response.json();
@@ -189,64 +179,40 @@ export function useGraph() {
 
         setEntities(ents);
         setRelationships(rels);
+        setExpansion({ entityId, status: 'ok', detail: '' });
+        setScope({ kind: 'neighborhood', entityId });
         return { entities: ents, relationships: rels };
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to get neighbors';
-        setError(message);
-        return { entities: [], relationships: [] };
+        const message = err instanceof Error ? err.message : 'Could not expand this entity';
+        setExpansion({ entityId, status: 'failed', detail: message });
+        return null;
       } finally {
         setIsLoading(false);
       }
     },
-    [activeRepo, maxHops, setEntities, setRelationships, setIsLoading, setError]
-  );
-
-  /**
-   * Get all entities in a community
-   */
-  const getCommunityMembers = useCallback(
-    async (communityId: string): Promise<Entity[]> => {
-      if (!activeRepo) {
-        setError('No repository selected');
-        return [];
-      }
-
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const url = `${GRAPH_API_BASE}/${encodeURIComponent(activeRepo)}/community/${encodeURIComponent(communityId)}/members` +
-          `?limit=${encodeURIComponent(String(500))}`;
-
-        const response = await fetch(url);
-        if (!response.ok) {
-          if (response.status === 404) {
-            return [];
-          }
-          throw new Error(`Failed to load community members: ${response.status}`);
-        }
-
-        const data: Entity[] = await response.json();
-        return Array.isArray(data) ? data : [];
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to get community members';
-        setError(message);
-        return [];
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [activeRepo, setIsLoading, setError]
+    [
+      activeRepo,
+      maxHops,
+      setEntities,
+      setRelationships,
+      setIsLoading,
+      setError,
+      setExpansion,
+      setScope,
+    ]
   );
 
   /**
    * Get a community subgraph (members + edges between members)
    */
   const getCommunitySubgraph = useCallback(
-    async (communityId: string, limit: number = 200): Promise<{ entities: Entity[]; relationships: Relationship[] }> => {
+    async (
+      communityId: string,
+      limit: number = 200
+    ): Promise<{ entities: Entity[]; relationships: Relationship[] } | null> => {
       if (!activeRepo) {
         setError('No repository selected');
-        return { entities: [], relationships: [] };
+        return null;
       }
 
       setIsLoading(true);
@@ -258,10 +224,8 @@ export function useGraph() {
 
         const response = await fetch(url);
         if (!response.ok) {
-          if (response.status === 404) {
-            return { entities: [], relationships: [] };
-          }
-          throw new Error(`Failed to load community subgraph: ${response.status}`);
+          setError(await failureDetail(response, 'Could not load this community'));
+          return null;
         }
 
         const data: GraphNeighborsResponse = await response.json();
@@ -269,9 +233,9 @@ export function useGraph() {
         const rels = Array.isArray(data.relationships) ? data.relationships : [];
         return { entities: ents, relationships: rels };
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to get community subgraph';
+        const message = err instanceof Error ? err.message : 'Could not load this community';
         setError(message);
-        return { entities: [], relationships: [] };
+        return null;
       } finally {
         setIsLoading(false);
       }
@@ -284,14 +248,21 @@ export function useGraph() {
    */
   const selectEntity = useCallback(
     async (entity: Entity | null) => {
+      setExpansion(null);
+      if (!entity) {
+        setSelectedEntity(null);
+        return;
+      }
+      // Nothing about the current view changes until the neighborhood is on screen.
+      // Moving the selection first, or clearing the community first, would leave the
+      // previous scope's rows on screen under the new entity's name and under the
+      // corpus denominator (M-01 keeps the results; F-01 keeps them correctly labelled).
+      const loaded = await getNeighbors(entity.entity_id);
+      if (!loaded) return;
       setSelectedEntity(entity);
       setSelectedCommunity(null);
-
-      if (entity) {
-        await getNeighbors(entity.entity_id);
-      }
     },
-    [setSelectedEntity, setSelectedCommunity, getNeighbors]
+    [setSelectedEntity, setSelectedCommunity, setExpansion, getNeighbors]
   );
 
   /**
@@ -299,28 +270,25 @@ export function useGraph() {
    */
   const selectCommunity = useCallback(
     async (community: Community | null) => {
+      setExpansion(null);
+      if (!community) {
+        setSelectedCommunity(null);
+        return;
+      }
+      const sub = await getCommunitySubgraph(community.community_id, 250);
+      if (sub === null) return;
+      setEntities(sub.entities);
+      setRelationships(sub.relationships);
       setSelectedCommunity(community);
       setSelectedEntity(null);
-
-      if (community) {
-        const sub = await getCommunitySubgraph(community.community_id, 250);
-        if (sub.entities.length || sub.relationships.length) {
-          setEntities(sub.entities);
-          setRelationships(sub.relationships);
-          return;
-        }
-
-        // Back-compat / fallback when the subgraph endpoint isn't available.
-        const members = await getCommunityMembers(community.community_id);
-        setEntities(members);
-        setRelationships([]);
-      }
+      setScope({ kind: 'community', communityId: community.community_id });
     },
     [
       setSelectedCommunity,
       setSelectedEntity,
+      setExpansion,
+      setScope,
       getCommunitySubgraph,
-      getCommunityMembers,
       setEntities,
       setRelationships,
     ]
@@ -330,8 +298,8 @@ export function useGraph() {
    * Filter entities by type
    */
   const getEntitiesByType = useCallback(
-    (types: string[]): Entity[] => {
-      if (types.length === 0) return entities;
+    (types: string[] | null): Entity[] => {
+      if (types === null) return entities;
       return entities.filter((e) => types.includes(e.entity_type));
     },
     [entities]
@@ -341,8 +309,8 @@ export function useGraph() {
    * Filter relationships by type
    */
   const getRelationshipsByType = useCallback(
-    (types: string[]): Relationship[] => {
-      if (types.length === 0) return relationships;
+    (types: string[] | null): Relationship[] => {
+      if (types === null) return relationships;
       return relationships.filter((r) => types.includes(r.relation_type));
     },
     [relationships]
@@ -351,12 +319,71 @@ export function useGraph() {
   /**
    * Load initial graph data when repo changes
    */
+  /**
+   * Load the whole-corpus induced subgraph (best-connected entities + the edges
+   * between them). The entity list alone carried no relationships, so the
+   * corpus-level visualizer drew "N nodes • 0 edges" (2026-08-25 finding G2).
+   */
+  const loadSubgraph = useCallback(
+    async (
+      limit: number = DEFAULT_ENTITY_LIMIT,
+      query: string = ''
+    ): Promise<{ entities: Entity[]; relationships: Relationship[] } | null> => {
+      if (!activeRepo) {
+        setError('No repository selected');
+        return null;
+      }
+      setIsLoading(true);
+      setError(null);
+      try {
+        const params = new URLSearchParams({ limit: String(limit) });
+        const q = query.trim();
+        if (q) params.set('q', q);
+        const url = `${GRAPH_API_BASE}/${encodeURIComponent(activeRepo)}/subgraph?${params.toString()}`;
+        const response = await fetch(url);
+        if (!response.ok) {
+          setError(await failureDetail(response, 'Could not load the corpus graph'));
+          return null;
+        }
+        const data: GraphNeighborsResponse = await response.json();
+        const ents = Array.isArray(data.entities) ? data.entities : [];
+        const rels = Array.isArray(data.relationships) ? data.relationships : [];
+        setEntities(ents);
+        setRelationships(rels);
+        setTotalMatched(Number(data.total_matched ?? ents.length));
+        setActiveQuery(q);
+        setSelectedEntity(null);
+        setExpansion(null);
+        setScope(q ? { kind: 'search', query: q } : { kind: 'corpus' });
+        return { entities: ents, relationships: rels };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Could not load the corpus graph';
+        setError(message);
+        return null;
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [
+      activeRepo,
+      setEntities,
+      setRelationships,
+      setTotalMatched,
+      setActiveQuery,
+      setSelectedEntity,
+      setExpansion,
+      setScope,
+      setIsLoading,
+      setError,
+    ]
+  );
+
   const loadGraph = useCallback(async () => {
     if (!activeRepo) return;
 
     reset();
-    await Promise.all([loadStats(), loadCommunities(), searchEntities('', 200)]);
-  }, [activeRepo, reset, loadStats, loadCommunities, searchEntities]);
+    await Promise.all([loadStats(), loadCommunities(), loadSubgraph(DEFAULT_ENTITY_LIMIT, '')]);
+  }, [activeRepo, reset, loadStats, loadCommunities, loadSubgraph]);
 
   // Load graph when active repo changes
   useEffect(() => {
@@ -375,7 +402,11 @@ export function useGraph() {
     selectedCommunity,
     isLoading,
     error,
+    expansion,
+    scope,
     viewMode,
+    totalMatched,
+    activeQuery,
     visibleEntityTypes,
     visibleRelationTypes,
     maxHops,
@@ -384,9 +415,8 @@ export function useGraph() {
     loadStats,
     loadCommunities,
     loadGraph,
-    searchEntities,
+    loadSubgraph,
     getNeighbors,
-    getCommunityMembers,
     getCommunitySubgraph,
     selectEntity,
     selectCommunity,
