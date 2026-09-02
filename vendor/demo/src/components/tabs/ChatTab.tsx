@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { TraceExternalLinks } from '@/components/Observability/TraceExternalLinks';
 import { ChatSubtabs } from '@/components/Chat/ChatSubtabs';
 import { ChatInterface } from '@/components/Chat/ChatInterface';
-import { ChatSettings2 } from '@/components/Chat/ChatSettings2';
+import { ChatSettings } from '@/components/Chat/ChatSettings';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { useAPI, useConfig, useSubtab } from '@/hooks';
 import { LiveTerminal, type LiveTerminalHandle } from '@/components/LiveTerminal/LiveTerminal';
@@ -30,7 +31,12 @@ export default function ChatTab() {
   const [logService, setLogService] = useState<'all' | 'api' | 'postgres' | 'neo4j'>('all');
   const [lokiStatus, setLokiStatus] = useState<{ reachable: boolean; status: string; url?: string } | null>(null);
 
-  const chatShowTraceDefault = Boolean(config?.ui?.chat_show_trace ?? 1);
+  const chatShowTraceDefault = config?.ui?.chat_show_trace ?? true;
+  const traceRouteSummary = trace?.route_summary ?? null;
+  const traceDurationMs =
+    trace?.ended_at_ms != null && trace?.started_at_ms != null
+      ? Math.max(0, trace.ended_at_ms - trace.started_at_ms)
+      : null;
 
   useEffect(() => {
     // Apply config default once (do not override manual toggles).
@@ -42,7 +48,10 @@ export default function ChatTab() {
 
   const loadTrace = useCallback(
     async (opts?: { runId?: string | null }) => {
-      const runId = (opts?.runId || selectedRunId || '').trim();
+      // An explicit null asks for the corpus's latest run; only an omitted option falls back to
+      // the remembered selection. `null || selectedRunId` used to pin the panel to the previous
+      // run whenever a caller had no run id to offer.
+      const runId = (opts && opts.runId !== undefined ? opts.runId || '' : selectedRunId || '').trim();
       const qs = new URLSearchParams();
       if (runId) qs.set('run_id', runId);
       else if (activeRepo) qs.set('repo', activeRepo);
@@ -94,12 +103,15 @@ export default function ChatTab() {
     return () => window.removeEventListener('tribrid:chat:open-trace', onOpen as EventListener);
   }, [loadTrace]);
 
-  // When a chat run completes, refresh the trace panel if open.
+  // When a chat run completes (answered or failed), the panel follows it: the run id is
+  // remembered even while the panel is closed, so opening it later shows this conversation's
+  // latest run rather than whichever run was selected before (2026-09-02 drive, S10).
   useEffect(() => {
     const onComplete = (ev: Event) => {
-      if (!traceOpen) return;
       const detail = (ev as CustomEvent).detail || {};
       const runId = typeof detail.run_id === 'string' ? detail.run_id : null;
+      setSelectedRunId(runId);
+      if (!traceOpen) return;
       void loadTrace({ runId });
     };
     window.addEventListener('tribrid:chat:run-complete', onComplete as EventListener);
@@ -116,14 +128,14 @@ export default function ChatTab() {
   const lokiQuery = useMemo(() => {
     switch (logService) {
       case 'api':
-        return '{compose_service="api"}';
+        return '{ragweld_service="api"}';
       case 'postgres':
-        return '{compose_service="postgres"}';
+        return '{ragweld_service="postgres"}';
       case 'neo4j':
-        return '{compose_service="neo4j"}';
+        return '{ragweld_service="neo4j"}';
       case 'all':
       default:
-        return '{compose_service=~"api|postgres|neo4j"}';
+        return '{ragweld_service=~"api|postgres|neo4j"}';
     }
   }, [logService]);
 
@@ -135,9 +147,6 @@ export default function ChatTab() {
     const startMs = Math.max(0, Number(t.started_at_ms || 0) - 1500);
     const endMs = typeof t.ended_at_ms === 'number' ? Number(t.ended_at_ms) + 2000 : undefined;
 
-    terminalRef.current?.setTitle(
-      `Chat logs (${logService === 'all' ? 'api|postgres|neo4j' : logService})${lokiStatus?.reachable === false ? ' — Loki unreachable' : ''}`
-    );
     terminalRef.current?.setContent([`LogQL: ${lokiQuery}`, `time: ${startMs}${endMs ? ` → ${endMs}` : ' → now'}`, '---']);
 
     const qs = new URLSearchParams();
@@ -149,10 +158,28 @@ export default function ChatTab() {
 
     TerminalService.connectToStream('chat_loki', `loki/tail?${qs.toString()}`, {
       onLine: (line) => terminalRef.current?.appendLine(line),
+      // The tail is still open and still resolving Loki: re-read the status so the header
+      // stops saying "unreachable" the moment the box frees up, without a page reload.
+      onTransient: () => {
+        void refreshLokiStatus();
+      },
       onError: (err) => terminalRef.current?.appendLine(`\u001b[31mERROR: ${err}\u001b[0m`),
       onComplete: () => terminalRef.current?.appendLine('\u001b[90m[complete]\u001b[0m'),
     });
-  }, [logService, lokiQuery, lokiStatus?.reachable, trace, traceOpen]);
+    // `lokiStatus` is deliberately NOT a dependency. It only ever fed the terminal title,
+    // and the title now has its own effect: leaving it here made every reachability flip
+    // change this callback's identity, which disconnected and reopened the tail. On a
+    // flapping box that restarted the server's two-minute retry budget from zero every
+    // time, so the bounded give-up was never reached and each reconnect paid for another
+    // candidate resolve.
+  }, [logService, lokiQuery, refreshLokiStatus, trace, traceOpen]);
+
+  // The header tracks Loki's reachability; the stream must not.
+  useEffect(() => {
+    terminalRef.current?.setTitle(
+      `Chat logs (${logService === 'all' ? 'api|postgres|neo4j' : logService})${lokiStatus?.reachable === false ? ' — Loki unreachable' : ''}`
+    );
+  }, [logService, lokiStatus?.reachable]);
 
   // Reconnect logs when selection/filter changes
   useEffect(() => {
@@ -193,9 +220,7 @@ export default function ChatTab() {
       >
         <div className="settings-section" style={{ borderLeft: '3px solid var(--link)', padding: 0 }}>
           <ErrorBoundary>
-            <ChatInterface
-              traceOpen={traceOpen}
-            />
+            <ChatInterface />
           </ErrorBoundary>
         </div>
 
@@ -212,9 +237,53 @@ export default function ChatTab() {
             }}
             title="Latest routing trace steps (retrieve, bm25, vector, rrf, hydrate)"
           >
-            <summary style={{ cursor: 'pointer', fontWeight: 600, color: 'var(--accent)', fontSize: '13px' }}>
+            <summary style={{ cursor: 'pointer', fontWeight: 600, color: 'var(--accent-text)', fontSize: '13px' }}>
               Routing Trace {trace?.events?.length ? `(${trace.events.length} events)` : ''}
             </summary>
+            {trace && (
+              <div
+                style={{
+                  marginTop: '10px',
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                  gap: '10px',
+                }}
+              >
+                <div style={{ border: '1px solid var(--line)', borderRadius: '4px', padding: '10px', background: 'var(--bg)' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '4px' }}>Canonical Trace</div>
+                  <div style={{ fontFamily: 'monospace', fontSize: '11px', color: 'var(--fg)' }}>{trace.trace_id || 'n/a'}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '6px' }}>
+                    Correlation: {trace.correlation_id || 'n/a'}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '6px' }}>
+                    Root span: {trace.root_span_id || 'n/a'}
+                  </div>
+                </div>
+                <div style={{ border: '1px solid var(--line)', borderRadius: '4px', padding: '10px', background: 'var(--bg)' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '4px' }}>Request Route</div>
+                  <div style={{ fontSize: '12px', color: 'var(--fg)' }}>
+                    {traceRouteSummary?.method || '—'} {traceRouteSummary?.path || '—'}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '6px' }}>
+                    {traceRouteSummary?.route_name || 'n/a'}
+                    {traceDurationMs != null ? ` · ${traceDurationMs} ms` : ''}
+                  </div>
+                </div>
+                <div style={{ border: '1px solid var(--line)', borderRadius: '4px', padding: '10px', background: 'var(--bg)' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '4px' }}>Cost</div>
+                  <div style={{ fontSize: '12px', color: 'var(--fg)' }}>
+                    {trace.cost_summary?.estimated_cost_usd != null
+                      ? `$${Number(trace.cost_summary.estimated_cost_usd).toFixed(6)}`
+                      : 'Unavailable'}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '6px' }}>
+                    {trace.cost_summary?.cost_source || 'unavailable'}
+                    {trace.cost_summary?.total_tokens != null ? ` · ${trace.cost_summary.total_tokens} tokens` : ''}
+                  </div>
+                </div>
+              </div>
+            )}
+            <TraceExternalLinks links={trace?.external_links} traceId={trace?.trace_id} />
             <div
               id="chat-trace-output"
               aria-live="polite"
@@ -243,7 +312,10 @@ export default function ChatTab() {
             <div style={{ marginTop: '12px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '8px' }}>
                 <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--fg)' }}>Logs</div>
-                <div style={{ fontSize: '11px', color: 'var(--fg-muted)' }}>
+                <div
+                  style={{ fontSize: '11px', color: 'var(--fg-muted)' }}
+                  data-testid="chat-loki-status"
+                >
                   {lokiStatus
                     ? lokiStatus.reachable
                       ? `Loki: ${lokiStatus.status}${lokiStatus.url ? ` (${lokiStatus.url})` : ''}`
@@ -266,7 +338,7 @@ export default function ChatTab() {
                   >
                     <option value="all">api + postgres + neo4j</option>
                     <option value="api">api</option>
-                    <option value="postgres">postgres (pgvector)</option>
+                    <option value="postgres">postgres</option>
                     <option value="neo4j">neo4j</option>
                   </select>
                   <button
@@ -309,7 +381,7 @@ export default function ChatTab() {
         >
           <div className="settings-section" style={{ borderLeft: '3px solid var(--warn)', marginTop: '16px' }}>
             <ErrorBoundary>
-              <ChatSettings2 />
+              <ChatSettings />
             </ErrorBoundary>
           </div>
         </div>
