@@ -5,6 +5,8 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useNavigate } from 'react-router-dom';
 import 'dockview/dist/styles/dockview.css';
 import { TooltipIcon } from '@/components/ui/TooltipIcon';
+import { LineageMeta } from '@/components/ui/LineageMeta';
+import { NumberField } from '@/components/ui/NumberField';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useActiveRepo } from '@/stores/useRepoStore';
 import { useConfigField, useNotification, useReranker } from '@/hooks';
@@ -12,6 +14,7 @@ import { rerankerTrainingService, type RerankerTrainRunsScope } from '@/services
 import type {
   CorpusEvalProfile,
   RerankerScoreResponse,
+  RerankerTrainDiagnosticRecord,
   RerankerTrainMetricEvent,
   RerankerTrainRun,
   RerankerTrainRunMeta,
@@ -124,6 +127,7 @@ function metricEventKey(ev: RerankerTrainMetricEvent): string {
     epoch: ev.epoch ?? null,
     percent: ev.percent ?? null,
     message: ev.message ?? null,
+    operator_hint: ev.operator_hint ?? null,
     loss: ev.loss ?? null,
     lr: ev.lr ?? null,
     grad_norm: ev.grad_norm ?? null,
@@ -191,7 +195,7 @@ function presetLabel(preset: LayoutPreset): string {
 }
 
 export function TrainingStudio() {
-  const { success, error: notifyError, info } = useNotification();
+  const { success, error: notifyError, info, notifications, removeNotification } = useNotification();
   const activeCorpus = useActiveRepo();
   const navigate = useNavigate();
   const config = useConfigStore((s) => s.config);
@@ -242,16 +246,18 @@ export function TrainingStudio() {
 
   const [logsLoading, setLogsLoading] = useState(false);
   const [logs, setLogs] = useState<any[]>([]);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<RerankerTrainDiagnosticRecord[]>([]);
 
-  const [probeQuery, setProbeQuery] = useState('auth login flow');
-  const [probeDocument, setProbeDocument] = useState('auth login token flow good');
+  const [probeQuery, setProbeQuery] = useState('');
+  const [probeDocument, setProbeDocument] = useState('');
   const [probeIncludeLogits, setProbeIncludeLogits] = useState(false);
   const [probeLoading, setProbeLoading] = useState(false);
   const [probeResult, setProbeResult] = useState<RerankerScoreResponse | null>(null);
 
   const [modelPath, setModelPath] = useConfigField<string>(
     'training.tribrid_reranker_model_path',
-    'models/learning-reranker-epstein-files-1'
+    'models/learning-reranker-active'
   );
   const [logPath, setLogPath] = useConfigField<string>('tracing.tribrid_log_path', 'data/logs/queries.jsonl');
   const [tripletsPath, setTripletsPath] = useConfigField<string>(
@@ -279,7 +285,7 @@ export function TrainingStudio() {
   );
   const [negativeRatio, setNegativeRatio] = useConfigField<number>('training.learning_reranker_negative_ratio', 5);
   const [gradAccumSteps, setGradAccumSteps] = useConfigField<number>('training.learning_reranker_grad_accum_steps', 8);
-  const [promoteIfImproves, setPromoteIfImproves] = useConfigField<number>('training.learning_reranker_promote_if_improves', 1);
+  const [promoteIfImproves, setPromoteIfImproves] = useConfigField<boolean>('training.learning_reranker_promote_if_improves', true);
   const [promoteEpsilon, setPromoteEpsilon] = useConfigField<number>('training.learning_reranker_promote_epsilon', 0.0);
   const [unloadAfterSec, setUnloadAfterSec] = useConfigField<number>('training.learning_reranker_unload_after_sec', 0);
   const [telemetryIntervalSteps, setTelemetryIntervalSteps] = useConfigField<number>(
@@ -295,7 +301,7 @@ export function TrainingStudio() {
     'ui.learning_reranker_default_preset',
     'balanced'
   );
-  const [showSetupRow, setShowSetupRow] = useConfigField<number>('ui.learning_reranker_show_setup_row', 0);
+  const [showSetupRow, setShowSetupRow] = useConfigField<boolean>('ui.learning_reranker_show_setup_row', false);
   const [logsRenderer, setLogsRenderer] = useConfigField<'json' | 'xterm'>(
     'ui.learning_reranker_logs_renderer',
     'xterm'
@@ -336,13 +342,13 @@ export function TrainingStudio() {
     'ui.learning_reranker_visualizer_motion_intensity',
     1
   );
-  const [visualizerShowVectorField, setVisualizerShowVectorField] = useConfigField<number>(
+  const [visualizerShowVectorField, setVisualizerShowVectorField] = useConfigField<boolean>(
     'ui.learning_reranker_visualizer_show_vector_field',
-    1
+    true
   );
-  const [visualizerReduceMotion, setVisualizerReduceMotion] = useConfigField<number>(
+  const [visualizerReduceMotion, setVisualizerReduceMotion] = useConfigField<boolean>(
     'ui.learning_reranker_visualizer_reduce_motion',
-    0
+    false
   );
 
   const ringLimit = clamp(Number(visualizerMaxPoints || 10000), 1000, 50000);
@@ -562,6 +568,21 @@ export function TrainingStudio() {
 
   useEffect(() => {
     if (bottomTab !== 'logs') return;
+    if (selectedRunId) {
+      setDiagnosticsLoading(true);
+      void rerankerTrainingService
+        .getDiagnostics(selectedRunId, 1000)
+        .then((res) => {
+          setDiagnostics(res?.records || []);
+        })
+        .catch((e) => {
+          notifyError(e instanceof Error ? e.message : 'Failed to load diagnostics');
+        })
+        .finally(() => {
+          setDiagnosticsLoading(false);
+        });
+      return;
+    }
     setLogsLoading(true);
     void getLogs()
       .then((res) => {
@@ -573,7 +594,7 @@ export function TrainingStudio() {
       .finally(() => {
         setLogsLoading(false);
       });
-  }, [bottomTab, getLogs, notifyError]);
+  }, [bottomTab, getLogs, notifyError, selectedRunId]);
 
   const recommended = useMemo(() => {
     if (!profile) return null;
@@ -618,7 +639,8 @@ export function TrainingStudio() {
     if (!q) return events;
     return events.filter((ev) => {
       const msg = String(ev.message || '').toLowerCase();
-      return msg.includes(q) || ev.type.includes(q);
+      const hint = String(ev.operator_hint || '').toLowerCase();
+      return msg.includes(q) || hint.includes(q) || ev.type.includes(q);
     });
   }, [events, eventQuery]);
 
@@ -708,8 +730,21 @@ export function TrainingStudio() {
     try {
       info('Mining triplets…');
       const res = await mineTriplets();
-      if (res?.ok) success('Triplet mining complete');
-      else notifyError(res?.error || 'Triplet mining failed');
+      if (res?.ok) {
+        const evalSource = res.eval_run_id
+          ? `${res.triplets_from_eval_run ?? 0} from eval run ${res.eval_run_id}`
+          : 'no persisted eval run for this corpus';
+        const rejected = [
+          res.triplets_skipped_existing ? `${res.triplets_skipped_existing} already on disk` : '',
+          res.triplets_rejected_placeholder ? `${res.triplets_rejected_placeholder} placeholder queries rejected` : '',
+          res.negatives_rejected_answer_leak ? `${res.negatives_rejected_answer_leak} answer-leaking negatives rejected` : '',
+          res.negatives_rejected_unverifiable ? `${res.negatives_rejected_unverifiable} unreadable candidates rejected` : '',
+          res.entries_without_answer_provenance ? `${res.entries_without_answer_provenance} results without an expected answer` : '',
+        ].filter(Boolean);
+        success(
+          `Mined ${res.triplets_mined ?? 0} triplets (${res.triplets_from_feedback ?? 0} from feedback, ${evalSource}${rejected.length ? `; ${rejected.join(', ')}` : ''}); ${res.triplets_total ?? 0} rows on disk.`
+        );
+      } else notifyError(res?.error || 'Triplet mining failed');
       await refreshStats();
     } catch (e) {
       notifyError(e instanceof Error ? e.message : 'Triplet mining failed');
@@ -742,7 +777,7 @@ export function TrainingStudio() {
   const openSyntheticLab = useCallback(() => {
     const qs = new URLSearchParams();
     qs.set('subtab', 'synthetic');
-    qs.set('synthetic_context', 'learning-ranker');
+    qs.set('synthetic_context', 'learning-reranker');
     qs.set('synthetic_recipe', syntheticRecipe);
     qs.set('synthetic_autorun', '0');
     navigate({ pathname: '/rag', search: `?${qs.toString()}` });
@@ -1061,7 +1096,22 @@ export function TrainingStudio() {
     { id: 'debug-score', label: 'Debug Score Pair' },
   ];
 
-  const disabledLegacy = status.running;
+  // Real preconditions for the toolbar actions. Mining needs a corpus; training and
+  // evaluation additionally need mined triplets for that corpus — running either with
+  // triplets=0 can only fail or waste a run (drive D-23). The reason is shown on hover.
+  const noTriplets = (stats.tripletCount ?? 0) <= 0;
+  const mineBlockReason = status.running
+    ? 'A run is already active'
+    : !activeCorpus
+      ? 'Select a corpus first'
+      : null;
+  const trainBlockReason = status.running
+    ? 'A run is already active'
+    : !activeCorpus
+      ? 'Select a corpus first'
+      : noTriplets
+        ? 'Mine triplets first — training and evaluation need mined triplets for this corpus'
+        : null;
 
   const renderRunsPanel = useCallback(() => {
     return (
@@ -1137,8 +1187,8 @@ export function TrainingStudio() {
           targetFps={Number(visualizerTargetFps)}
           tailSeconds={Number(visualizerTailSeconds)}
           motionIntensity={Number(visualizerMotionIntensity)}
-          reduceMotion={Number(visualizerReduceMotion) === 1}
-          showVectorField={Number(visualizerShowVectorField) === 1}
+          reduceMotion={visualizerReduceMotion}
+          showVectorField={visualizerShowVectorField}
         />
       </section>
     );
@@ -1178,31 +1228,42 @@ export function TrainingStudio() {
                 <h3 className="studio-panel-title">Run HUD</h3>
               </header>
               {selectedRun ? (
-                <div className="studio-keyvals">
-                  <div>
-                    <span>status</span>
-                    <span
-                      className="studio-run-status-pill studio-mono"
-                      data-status={hud?.status || 'unknown'}
-                      data-testid="studio-run-hud-status"
-                    >
-                      {hud?.status || 'unknown'}
-                    </span>
-                  </div>
-                  <div><span>backend</span><span className="studio-mono">{hud?.backend || '—'}</span></div>
-                  <div><span>base_model</span><span className="studio-mono studio-truncate" title={hud?.baseModel || ''}>{hud?.baseModel || '—'}</span></div>
-                  <div><span>active_path</span><span className="studio-mono studio-truncate" title={hud?.activePath || ''}>{hud?.activePath || '—'}</span></div>
-                  <div><span>duration</span><span className="studio-mono">{hud?.durationSec == null ? '—' : `${hud.durationSec.toFixed(1)}s`}</span></div>
-                  <div><span>step</span><span className="studio-mono">{hud?.last?.step ?? '—'}</span></div>
-                  <div><span>epoch</span><span className="studio-mono">{hud?.last?.epoch ?? '—'}</span></div>
-                  <div><span>progress</span><span className="studio-mono" data-testid="studio-run-hud-progress">{hud?.progressLabel || '—'}</span></div>
-                  {hud?.terminalMessage ? (
+                <>
+                  <div className="studio-keyvals">
                     <div>
-                      <span>{hud.status === 'cancelled' ? 'cancel_reason' : 'failure_reason'}</span>
-                      <span className="studio-mono studio-truncate" title={hud.terminalMessage}>{hud.terminalMessage}</span>
+                      <span>status</span>
+                      <span
+                        className="studio-run-status-pill studio-mono"
+                        data-status={hud?.status || 'unknown'}
+                        data-testid="studio-run-hud-status"
+                      >
+                        {hud?.status || 'unknown'}
+                      </span>
                     </div>
-                  ) : null}
-                </div>
+                    <div><span>backend</span><span className="studio-mono">{hud?.backend || '—'}</span></div>
+                    <div><span>base_model</span><span className="studio-mono studio-truncate" title={hud?.baseModel || ''}>{hud?.baseModel || '—'}</span></div>
+                    <div><span>active_path</span><span className="studio-mono studio-truncate" title={hud?.activePath || ''}>{hud?.activePath || '—'}</span></div>
+                    <div><span>duration</span><span className="studio-mono">{hud?.durationSec == null ? '—' : `${hud.durationSec.toFixed(1)}s`}</span></div>
+                    <div><span>step</span><span className="studio-mono">{hud?.last?.step ?? '—'}</span></div>
+                    <div><span>epoch</span><span className="studio-mono">{hud?.last?.epoch ?? '—'}</span></div>
+                    <div><span>progress</span><span className="studio-mono" data-testid="studio-run-hud-progress">{hud?.progressLabel || '—'}</span></div>
+                    {hud?.terminalMessage ? (
+                      <div>
+                        <span>{hud.status === 'cancelled' ? 'cancel_reason' : 'failure_reason'}</span>
+                        <span className="studio-mono studio-truncate" title={hud.terminalMessage}>{hud.terminalMessage}</span>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div>
+                    <LineageMeta
+                      bundleId={selectedRun.bundle_id}
+                      inputBundleId={selectedRun.input_bundle_id}
+                      lineageRef={selectedRun.lineage_ref}
+                      modelArtifactRef={selectedRun.model_artifact_ref}
+                      corpusId={activeCorpus}
+                    />
+                  </div>
+                </>
               ) : (
                 <p className="studio-empty">Select a run.</p>
               )}
@@ -1309,52 +1370,52 @@ export function TrainingStudio() {
                 </div>
                 <div className="input-group">
                   <label>Triplets min count <TooltipIcon name="TRIPLETS_MIN_COUNT" /></label>
-                  <input
-                    type="number"
+                  <NumberField
+                    configPath="training.triplets_min_count"
                     min={10}
                     max={10000}
                     value={tripletsMinCount}
-                    onChange={(e) => setTripletsMinCount(parseInt(e.target.value || '10', 10))}
+                    onCommit={setTripletsMinCount}
                   />
                 </div>
                 <div className="input-group">
                   <label>Epochs <TooltipIcon name="RERANKER_TRAIN_EPOCHS" /></label>
-                  <input type="number" min={1} max={20} value={epochs} onChange={(e) => setEpochs(parseInt(e.target.value || '1', 10))} />
+                  <NumberField data-testid="training-studio-epochs" configPath="training.reranker_train_epochs" min={1} max={20} value={epochs} onCommit={setEpochs} />
                 </div>
                 <div className="input-group">
                   <label>Batch <TooltipIcon name="RERANKER_TRAIN_BATCH" /></label>
-                  <input type="number" min={1} max={128} value={trainBatch} onChange={(e) => setTrainBatch(parseInt(e.target.value || '1', 10))} />
+                  <NumberField configPath="training.reranker_train_batch" min={1} max={128} value={trainBatch} onCommit={setTrainBatch} />
                 </div>
                 <div className="input-group">
                   <label>Warmup ratio <TooltipIcon name="RERANKER_WARMUP_RATIO" /></label>
-                  <input
-                    type="number"
+                  <NumberField
+                    configPath="training.reranker_warmup_ratio"
                     min={0}
                     max={0.5}
                     step={0.01}
                     value={warmupRatio}
-                    onChange={(e) => setWarmupRatio(parseFloat(e.target.value || '0'))}
+                    onCommit={setWarmupRatio}
                   />
                 </div>
                 <div className="input-group">
                   <label>Learning rate <TooltipIcon name="RERANKER_TRAIN_LR" /></label>
-                  <input
-                    type="number"
+                  <NumberField
+                    configPath="training.reranker_train_lr"
                     min={0.000001}
                     max={0.001}
                     step={0.000001}
                     value={trainLr}
-                    onChange={(e) => setTrainLr(parseFloat(e.target.value || '0.00002'))}
+                    onCommit={setTrainLr}
                   />
                 </div>
                 <div className="input-group">
                   <label>Telemetry interval <TooltipIcon name="LEARNING_RERANKER_TELEMETRY_INTERVAL_STEPS" /></label>
-                  <input
-                    type="number"
+                  <NumberField
+                    configPath="training.learning_reranker_telemetry_interval_steps"
                     min={1}
                     max={20}
                     value={telemetryIntervalSteps}
-                    onChange={(e) => setTelemetryIntervalSteps(parseInt(e.target.value || '2', 10))}
+                    onCommit={setTelemetryIntervalSteps}
                   />
                 </div>
               </div>
@@ -1364,38 +1425,46 @@ export function TrainingStudio() {
                 <div className="studio-form-grid two">
                   <div className="input-group">
                     <label>LoRA rank <TooltipIcon name="LEARNING_RERANKER_LORA_RANK" /></label>
-                    <input type="number" min={1} max={128} value={loraRank} onChange={(e) => setLoraRank(parseInt(e.target.value || '16', 10))} />
+                    <NumberField configPath="training.learning_reranker_lora_rank" min={1} max={128} value={loraRank} onCommit={setLoraRank} />
                   </div>
                   <div className="input-group">
                     <label>LoRA alpha <TooltipIcon name="LEARNING_RERANKER_LORA_ALPHA" /></label>
-                    <input type="number" min={1} max={512} step={1} value={loraAlpha} onChange={(e) => setLoraAlpha(parseFloat(e.target.value || '32'))} />
+                    <NumberField configPath="training.learning_reranker_lora_alpha" min={1} max={512} step={1} value={loraAlpha} onCommit={setLoraAlpha} />
                   </div>
                   <div className="input-group">
                     <label>LoRA dropout <TooltipIcon name="LEARNING_RERANKER_LORA_DROPOUT" /></label>
-                    <input type="number" min={0} max={0.5} step={0.01} value={loraDropout} onChange={(e) => setLoraDropout(parseFloat(e.target.value || '0.05'))} />
+                    <NumberField configPath="training.learning_reranker_lora_dropout" min={0} max={0.5} step={0.01} value={loraDropout} onCommit={setLoraDropout} />
                   </div>
                   <div className="input-group">
                     <label>Negative ratio <TooltipIcon name="LEARNING_RERANKER_NEGATIVE_RATIO" /></label>
-                    <input type="number" min={1} max={20} value={negativeRatio} onChange={(e) => setNegativeRatio(parseInt(e.target.value || '5', 10))} />
+                    <NumberField configPath="training.learning_reranker_negative_ratio" min={1} max={20} value={negativeRatio} onCommit={setNegativeRatio} />
                   </div>
                   <div className="input-group">
                     <label>Grad accum steps <TooltipIcon name="LEARNING_RERANKER_GRAD_ACCUM_STEPS" /></label>
-                    <input type="number" min={1} max={128} value={gradAccumSteps} onChange={(e) => setGradAccumSteps(parseInt(e.target.value || '8', 10))} />
+                    <NumberField configPath="training.learning_reranker_grad_accum_steps" min={1} max={128} value={gradAccumSteps} onCommit={setGradAccumSteps} />
                   </div>
                   <div className="input-group">
-                    <label>Promote if improves <TooltipIcon name="LEARNING_RERANKER_PROMOTE_IF_IMPROVES" /></label>
-                    <select value={String(promoteIfImproves)} onChange={(e) => setPromoteIfImproves(parseInt(e.target.value, 10))}>
-                      <option value="1">Yes</option>
-                      <option value="0">No</option>
-                    </select>
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={promoteIfImproves}
+                        onChange={(e) => setPromoteIfImproves(e.target.checked)}
+                      />
+                      <span className="toggle-track" aria-hidden="true">
+                        <span className="toggle-thumb"></span>
+                      </span>
+                      <span className="toggle-label">
+                        Promote if improves <TooltipIcon name="LEARNING_RERANKER_PROMOTE_IF_IMPROVES" />
+                      </span>
+                    </label>
                   </div>
                   <div className="input-group">
                     <label>Promote epsilon <TooltipIcon name="LEARNING_RERANKER_PROMOTE_EPSILON" /></label>
-                    <input type="number" min={0} max={1} step={0.001} value={promoteEpsilon} onChange={(e) => setPromoteEpsilon(parseFloat(e.target.value || '0'))} />
+                    <NumberField configPath="training.learning_reranker_promote_epsilon" min={0} max={1} step={0.001} value={promoteEpsilon} onCommit={setPromoteEpsilon} />
                   </div>
                   <div className="input-group">
                     <label>Unload idle sec <TooltipIcon name="LEARNING_RERANKER_UNLOAD_AFTER_SEC" /></label>
-                    <input type="number" min={0} max={86400} value={unloadAfterSec} onChange={(e) => setUnloadAfterSec(parseInt(e.target.value || '0', 10))} />
+                    <NumberField configPath="training.learning_reranker_unload_after_sec" min={0} max={86400} value={unloadAfterSec} onCommit={setUnloadAfterSec} />
                   </div>
                   <div className="input-group">
                     <label>LoRA target modules <TooltipIcon name="LEARNING_RERANKER_LORA_TARGET_MODULES" /></label>
@@ -1434,11 +1503,19 @@ export function TrainingStudio() {
                     </select>
                   </div>
                   <div className="input-group">
-                    <label>Show setup row <TooltipIcon name="LEARNING_RERANKER_SHOW_SETUP_ROW" /></label>
-                    <select value={String(showSetupRow)} onChange={(e) => setShowSetupRow(parseInt(e.target.value, 10))}>
-                      <option value="0">No</option>
-                      <option value="1">Yes</option>
-                    </select>
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={showSetupRow}
+                        onChange={(e) => setShowSetupRow(e.target.checked)}
+                      />
+                      <span className="toggle-track" aria-hidden="true">
+                        <span className="toggle-thumb"></span>
+                      </span>
+                      <span className="toggle-label">
+                        Show setup row <TooltipIcon name="LEARNING_RERANKER_SHOW_SETUP_ROW" />
+                      </span>
+                    </label>
                   </div>
                   <div className="input-group">
                     <label>Logs renderer <TooltipIcon name="LEARNING_RERANKER_LOGS_RENDERER" /></label>
@@ -1449,15 +1526,15 @@ export function TrainingStudio() {
                   </div>
                   <div className="input-group">
                     <label>Left panel % <TooltipIcon name="LEARNING_RERANKER_STUDIO_LEFT_PANEL_PCT" /></label>
-                    <input type="number" min={15} max={35} value={studioLeftPct} onChange={(e) => setStudioLeftPct(parseInt(e.target.value || '20', 10))} />
+                    <NumberField configPath="ui.learning_reranker_studio_left_panel_pct" min={15} max={35} value={studioLeftPct} onCommit={setStudioLeftPct} />
                   </div>
                   <div className="input-group">
                     <label>Right panel % <TooltipIcon name="LEARNING_RERANKER_STUDIO_RIGHT_PANEL_PCT" /></label>
-                    <input type="number" min={20} max={45} value={studioRightPct} onChange={(e) => setStudioRightPct(parseInt(e.target.value || '30', 10))} />
+                    <NumberField configPath="ui.learning_reranker_studio_right_panel_pct" min={20} max={45} value={studioRightPct} onCommit={setStudioRightPct} />
                   </div>
                   <div className="input-group">
                     <label>Bottom panel % <TooltipIcon name="LEARNING_RERANKER_STUDIO_BOTTOM_PANEL_PCT" /></label>
-                    <input type="number" min={18} max={45} value={studioBottomPct} onChange={(e) => setStudioBottomPct(parseInt(e.target.value || '28', 10))} />
+                    <NumberField configPath="ui.learning_reranker_studio_bottom_panel_pct" min={18} max={45} value={studioBottomPct} onCommit={setStudioBottomPct} />
                   </div>
                   <div className="input-group">
                     <label>Renderer <TooltipIcon name="LEARNING_RERANKER_VISUALIZER_RENDERER" /></label>
@@ -1485,33 +1562,49 @@ export function TrainingStudio() {
                   </div>
                   <div className="input-group">
                     <label>Max points <TooltipIcon name="LEARNING_RERANKER_VISUALIZER_MAX_POINTS" /></label>
-                    <input type="number" min={1000} max={50000} value={visualizerMaxPoints} onChange={(e) => setVisualizerMaxPoints(parseInt(e.target.value || '10000', 10))} />
+                    <NumberField configPath="ui.learning_reranker_visualizer_max_points" min={1000} max={50000} value={visualizerMaxPoints} onCommit={setVisualizerMaxPoints} />
                   </div>
                   <div className="input-group">
                     <label>Target FPS <TooltipIcon name="LEARNING_RERANKER_VISUALIZER_TARGET_FPS" /></label>
-                    <input type="number" min={30} max={144} value={visualizerTargetFps} onChange={(e) => setVisualizerTargetFps(parseInt(e.target.value || '60', 10))} />
+                    <NumberField configPath="ui.learning_reranker_visualizer_target_fps" min={30} max={144} value={visualizerTargetFps} onCommit={setVisualizerTargetFps} />
                   </div>
                   <div className="input-group">
                     <label>Tail sec <TooltipIcon name="LEARNING_RERANKER_VISUALIZER_TAIL_SECONDS" /></label>
-                    <input type="number" min={1} max={30} step={0.5} value={visualizerTailSeconds} onChange={(e) => setVisualizerTailSeconds(parseFloat(e.target.value || '8'))} />
+                    <NumberField configPath="ui.learning_reranker_visualizer_tail_seconds" min={1} max={30} step={0.5} value={visualizerTailSeconds} onCommit={setVisualizerTailSeconds} />
                   </div>
                   <div className="input-group">
                     <label>Motion intensity <TooltipIcon name="LEARNING_RERANKER_VISUALIZER_MOTION_INTENSITY" /></label>
-                    <input type="number" min={0} max={2} step={0.05} value={visualizerMotionIntensity} onChange={(e) => setVisualizerMotionIntensity(parseFloat(e.target.value || '1'))} />
+                    <NumberField configPath="ui.learning_reranker_visualizer_motion_intensity" min={0} max={2} step={0.05} value={visualizerMotionIntensity} onCommit={setVisualizerMotionIntensity} />
                   </div>
                   <div className="input-group">
-                    <label>Show vector field <TooltipIcon name="LEARNING_RERANKER_VISUALIZER_SHOW_VECTOR_FIELD" /></label>
-                    <select value={String(visualizerShowVectorField)} onChange={(e) => setVisualizerShowVectorField(parseInt(e.target.value, 10))}>
-                      <option value="1">Yes</option>
-                      <option value="0">No</option>
-                    </select>
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={visualizerShowVectorField}
+                        onChange={(e) => setVisualizerShowVectorField(e.target.checked)}
+                      />
+                      <span className="toggle-track" aria-hidden="true">
+                        <span className="toggle-thumb"></span>
+                      </span>
+                      <span className="toggle-label">
+                        Show vector field <TooltipIcon name="LEARNING_RERANKER_VISUALIZER_SHOW_VECTOR_FIELD" />
+                      </span>
+                    </label>
                   </div>
                   <div className="input-group">
-                    <label>Reduce motion <TooltipIcon name="LEARNING_RERANKER_VISUALIZER_REDUCE_MOTION" /></label>
-                    <select value={String(visualizerReduceMotion)} onChange={(e) => setVisualizerReduceMotion(parseInt(e.target.value, 10))}>
-                      <option value="0">No</option>
-                      <option value="1">Yes</option>
-                    </select>
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={visualizerReduceMotion}
+                        onChange={(e) => setVisualizerReduceMotion(e.target.checked)}
+                      />
+                      <span className="toggle-track" aria-hidden="true">
+                        <span className="toggle-thumb"></span>
+                      </span>
+                      <span className="toggle-label">
+                        Reduce motion <TooltipIcon name="LEARNING_RERANKER_VISUALIZER_REDUCE_MOTION" />
+                      </span>
+                    </label>
                   </div>
                 </div>
               </details>
@@ -1522,7 +1615,18 @@ export function TrainingStudio() {
             <section className="studio-panel studio-compact-panel" data-testid="studio-debug-score-panel">
               <header className="studio-panel-header">
                 <h3 className="studio-panel-title">Debug Score Pair</h3>
-                <button className="small-button" onClick={handleProbeScore} disabled={probeLoading || !activeCorpus}>
+                <button
+                  className="small-button"
+                  onClick={handleProbeScore}
+                  disabled={probeLoading || !activeCorpus || !probeQuery.trim() || !probeDocument.trim()}
+                  title={
+                    !activeCorpus
+                      ? 'Select a corpus first'
+                      : !probeQuery.trim() || !probeDocument.trim()
+                        ? 'Enter a query and a document to score'
+                        : 'Score this query/document pair with the current reranker'
+                  }
+                >
                   {probeLoading ? 'Scoring…' : 'Score'}
                 </button>
               </header>
@@ -1530,12 +1634,22 @@ export function TrainingStudio() {
               <div className="studio-form-grid one">
                 <div className="input-group">
                   <label>Query</label>
-                  <textarea value={probeQuery} onChange={(e) => setProbeQuery(e.target.value)} rows={3} />
+                  <textarea
+                    value={probeQuery}
+                    onChange={(e) => setProbeQuery(e.target.value)}
+                    rows={3}
+                    placeholder="A question from this corpus, e.g. what a searcher would type"
+                  />
                 </div>
 
                 <div className="input-group">
                   <label>Document</label>
-                  <textarea value={probeDocument} onChange={(e) => setProbeDocument(e.target.value)} rows={4} />
+                  <textarea
+                    value={probeDocument}
+                    onChange={(e) => setProbeDocument(e.target.value)}
+                    rows={4}
+                    placeholder="A chunk or passage from this corpus to score against the query"
+                  />
                 </div>
 
                 <label className="studio-checkbox-inline">
@@ -1544,8 +1658,11 @@ export function TrainingStudio() {
                     checked={probeIncludeLogits}
                     onChange={(e) => setProbeIncludeLogits(e.target.checked)}
                   />
-                  include logits
+                  Include raw logits
                 </label>
+                <p className="studio-panel-subtitle studio-note-tight">
+                  Adds the model's pre-sigmoid output values to the result for debugging; leave off for the plain relevance score.
+                </p>
 
                 {probeResult ? (
                   <pre className="studio-pre" data-testid="studio-debug-score-result">{JSON.stringify(probeResult, null, 2)}</pre>
@@ -1664,29 +1781,37 @@ export function TrainingStudio() {
   ]);
 
   const renderLogsBody = useCallback(() => {
+    const activeLogs = selectedRunId ? diagnostics : logs;
+    const activeLoading = selectedRunId ? diagnosticsLoading : logsLoading;
     if (logsRenderer === 'xterm') {
       return (
         <StudioLogTerminal
-          logs={logs}
-          loading={logsLoading}
-          onDownload={downloadLogs}
-          onClear={clearLogs}
+          logs={activeLogs}
+          loading={activeLoading}
+          onDownload={() => {
+            if (selectedRunId) rerankerTrainingService.downloadDiagnostics(selectedRunId);
+            else downloadLogs();
+          }}
+          onClear={() => {
+            if (!selectedRunId) void clearLogs();
+          }}
+          clearDisabled={Boolean(selectedRunId)}
         />
       );
     }
 
     return (
       <div className="studio-log-viewer" data-testid="studio-log-viewer">
-        {logsLoading ? (
-          <p className="studio-empty">Loading logs…</p>
-        ) : logs.length === 0 ? (
-          <p className="studio-empty">No logs.</p>
+        {activeLoading ? (
+          <p className="studio-empty">{selectedRunId ? 'Loading diagnostics…' : 'Loading logs…'}</p>
+        ) : activeLogs.length === 0 ? (
+          <p className="studio-empty">{selectedRunId ? 'No diagnostics.' : 'No logs.'}</p>
         ) : (
-          <pre className="studio-pre">{JSON.stringify(logs, null, 2)}</pre>
+          <pre className="studio-pre">{JSON.stringify(activeLogs, null, 2)}</pre>
         )}
       </div>
     );
-  }, [clearLogs, downloadLogs, logs, logsLoading, logsRenderer]);
+  }, [clearLogs, diagnostics, diagnosticsLoading, downloadLogs, logs, logsLoading, logsRenderer, selectedRunId]);
 
   const renderActivityPanel = useCallback(() => {
     return (
@@ -1704,13 +1829,23 @@ export function TrainingStudio() {
           {bottomTab === 'timeline' ? (
             <input
               className="studio-search"
-              placeholder="Filter events by type/message"
+              placeholder="Filter events by type/message/hint"
               value={eventQuery}
               onChange={(e) => setEventQuery(e.target.value)}
             />
           ) : <span className="studio-tab-spacer"></span>}
-          <button className="small-button" onClick={downloadLogs}>Download</button>
-          <button className="small-button" onClick={clearLogs}>Clear</button>
+          <button
+            className="small-button"
+            onClick={() => {
+              if (selectedRunId) rerankerTrainingService.downloadDiagnostics(selectedRunId);
+              else downloadLogs();
+            }}
+          >
+            Download
+          </button>
+          <button className="small-button" onClick={clearLogs} disabled={Boolean(selectedRunId)}>
+            Clear
+          </button>
         </div>
 
         <div className="studio-bottom-body">
@@ -1738,6 +1873,11 @@ export function TrainingStudio() {
                           {ev.percent != null ? <span className="studio-chip">{ev.percent}%</span> : null}
                         </header>
                         {ev.message ? <p className="studio-event-message">{ev.message}</p> : null}
+                        {ev.operator_hint ? (
+                          <p className="studio-event-message studio-event-operator-hint">
+                            operatorHint: {ev.operator_hint}
+                          </p>
+                        ) : null}
                         {ev.metrics ? (
                           <div className="studio-mini-grid">
                             {Object.entries(ev.metrics).map(([k, v]) => (
@@ -1845,6 +1985,14 @@ export function TrainingStudio() {
 
   return (
     <section className="training-studio-root" data-testid="reranker-training-studio">
+      <div className="notification-container" data-testid="reranker-studio-notifications">
+        {notifications.map((notification) => (
+          <div key={notification.id} className={`notification notification-${notification.type}`} role="status">
+            <span>{notification.message}</span>
+            <button onClick={() => removeNotification(notification.id)} aria-label="Dismiss notification">×</button>
+          </div>
+        ))}
+      </div>
       <header className="training-studio-header">
         <div>
           <h2 className="studio-title">Learning Reranker Training Studio</h2>
@@ -1852,10 +2000,23 @@ export function TrainingStudio() {
         </div>
 
         <div className="studio-header-actions">
-          <button className="small-button" onClick={() => setScope('corpus')} data-active={scope === 'corpus'}>
+          <span className="studio-label studio-label-center">Runs</span>
+          <button
+            className="small-button"
+            onClick={() => setScope('corpus')}
+            data-active={scope === 'corpus'}
+            aria-pressed={scope === 'corpus'}
+            title="List training runs for the active corpus only"
+          >
             This corpus
           </button>
-          <button className="small-button" onClick={() => setScope('all')} data-active={scope === 'all'}>
+          <button
+            className="small-button"
+            onClick={() => setScope('all')}
+            data-active={scope === 'all'}
+            aria-pressed={scope === 'all'}
+            title="List training runs across all corpora"
+          >
             All corpora
           </button>
           <button className="small-button" onClick={onStartRun} disabled={!activeCorpus} data-testid="studio-start-run">
@@ -1866,9 +2027,33 @@ export function TrainingStudio() {
 
       <div className="studio-command-bar">
         <div className="studio-command-group">
-          <button className="small-button" onClick={handleMine} disabled={disabledLegacy}>Mine Triplets</button>
-          <button className="small-button" onClick={handleTrain} disabled={disabledLegacy}>Train</button>
-          <button className="small-button" onClick={handleEvaluate} disabled={disabledLegacy}>Evaluate</button>
+          <button
+            className="small-button"
+            data-testid="studio-mine-triplets"
+            onClick={handleMine}
+            disabled={Boolean(mineBlockReason)}
+            title={mineBlockReason || 'Mine reranker triplets for this corpus'}
+          >
+            Mine Triplets
+          </button>
+          <button
+            className="small-button"
+            data-testid="studio-train"
+            onClick={handleTrain}
+            disabled={Boolean(trainBlockReason)}
+            title={trainBlockReason || 'Train the reranker on the mined triplets'}
+          >
+            Train
+          </button>
+          <button
+            className="small-button"
+            data-testid="studio-evaluate"
+            onClick={handleEvaluate}
+            disabled={Boolean(trainBlockReason)}
+            title={trainBlockReason || 'Evaluate the reranker on the mined triplets'}
+          >
+            Evaluate
+          </button>
           <button
             className="small-button"
             onClick={onPromote}
@@ -1891,8 +2076,8 @@ export function TrainingStudio() {
           <button className="small-button" onClick={() => applyLayoutPreset('balanced')}>
             Reset View
           </button>
-          <button className="small-button" onClick={() => setShowSetupRow(showSetupRow === 1 ? 0 : 1)}>
-            {showSetupRow === 1 ? 'Hide Setup' : 'Show Setup'}
+          <button className="small-button" onClick={() => setShowSetupRow(!showSetupRow)}>
+            {showSetupRow ? 'Hide Setup' : 'Show Setup'}
           </button>
           <button
             className="small-button"
@@ -1920,11 +2105,15 @@ export function TrainingStudio() {
         <span className="studio-help-anchor">Shortcuts: Ctrl/Cmd+Shift+1/2/3 (viz/logs/inspector)</span>
       </div>
 
-      {showSetupRow === 1 ? (
+      {showSetupRow ? (
         <div className="studio-run-setup">
           <div className="studio-run-setup-item">
-            <span className="studio-label">Corpus</span>
+            <span className="studio-label">Active corpus</span>
             <span className="studio-value studio-mono">{activeCorpus || '—'}</span>
+          </div>
+          <div className="studio-run-setup-item">
+            <span className="studio-label">Runs shown</span>
+            <span className="studio-value studio-mono">{scope === 'all' ? 'All corpora' : 'This corpus'}</span>
           </div>
           <div className="studio-run-setup-item">
             <span className="studio-label">
@@ -1954,7 +2143,7 @@ export function TrainingStudio() {
             </div>
           </div>
           <div className="studio-run-setup-item">
-            <span className="studio-label">Triplet status</span>
+            <span className="studio-label">Triplet status{activeCorpus ? ` (${activeCorpus})` : ''}</span>
             <span className="studio-value studio-mono">triplets={stats.tripletCount} · queries={stats.queryCount}</span>
           </div>
         </div>

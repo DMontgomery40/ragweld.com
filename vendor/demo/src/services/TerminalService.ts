@@ -5,6 +5,18 @@
 
 import { apiUrl } from '@/api/client';
 
+/**
+ * A stream error marked `(retrying)` is a transient status, not a failure.
+ *
+ * The producer is still connected and still trying (the Loki tail while the box is busy
+ * re-resolves for two minutes before it gives up), so rendering it as a red ERROR made a
+ * self-healing stream look dead until the operator reloaded the page. The marker is part of
+ * the SSE contract with those producers, not a guess about wording.
+ */
+export function isTransientStreamStatus(message: unknown): boolean {
+  return typeof message === 'string' && /\(retrying\)\s*$/.test(message.trim());
+}
+
 interface TerminalInstance {
   id: string;
   sse?: EventSource;
@@ -17,12 +29,6 @@ interface TerminalInstance {
 
 class TerminalServiceClass {
   private terminals: Map<string, TerminalInstance> = new Map();
-  private baseUrl: string;
-
-  constructor() {
-    // Use relative URL to avoid CORS issues and work with the same origin
-    this.baseUrl = '';
-  }
 
   /**
    * Stream evaluation run logs (raw stdout) via dedicated SSE endpoint
@@ -115,7 +121,7 @@ class TerminalServiceClass {
       onCancelled?: () => void;
     }
   ): void {
-    const { onLine, onProgress, onError, onComplete, ...queryParams } = params;
+    const { onLine, onProgress, onError, onComplete, onCancelled, ...queryParams } = params;
 
     // Backend SSE for index logs is:
     //   GET /api/stream/operations/index?corpus_id=...
@@ -133,7 +139,7 @@ class TerminalServiceClass {
     });
 
     const endpoint = `operations/index${qs.toString() ? `?${qs.toString()}` : ''}`;
-    this.connectToStream(terminalId, endpoint, { onLine, onProgress, onError, onComplete });
+    this.connectToStream(terminalId, endpoint, { onLine, onProgress, onError, onComplete, onCancelled });
   }
 
   /**
@@ -146,6 +152,8 @@ class TerminalServiceClass {
       onLine?: (line: string) => void;
       onProgress?: (percent: number, message: string) => void;
       onError?: (error: string) => void;
+      /** A `(retrying)` status: the stream is still open and the producer is still trying. */
+      onTransient?: (message: string) => void;
       onComplete?: () => void;
       onCancelled?: () => void;
     }
@@ -182,6 +190,16 @@ class TerminalServiceClass {
             break;
 
           case 'error':
+            if (isTransientStreamStatus(data.message)) {
+              // Muted, not red, and no onError: the stream is still open.
+              if (callbacks.onTransient) {
+                callbacks.onTransient(data.message);
+              }
+              if (callbacks.onLine) {
+                callbacks.onLine(`\x1b[90m${data.message}\x1b[0m`);
+              }
+              break;
+            }
             if (callbacks.onError) {
               callbacks.onError(data.message);
             }
@@ -230,140 +248,6 @@ class TerminalServiceClass {
   }
 
   /**
-   * Connect to WebSocket for bidirectional communication
-   */
-  connectWebSocket(
-    terminalId: string,
-    endpoint: string,
-    callbacks: {
-      onLine?: (line: string) => void;
-      onProgress?: (percent: number, message: string) => void;
-      onError?: (error: string) => void;
-      onComplete?: () => void;
-    }
-  ): void {
-    const wsUrl = `${this.baseUrl.replace('http', 'ws')}/ws/${endpoint}`;
-    const ws = new WebSocket(wsUrl);
-
-    ws.onopen = () => {
-      console.log(`[TerminalService] WebSocket connected for ${terminalId}`);
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-
-        switch (data.type) {
-          case 'log':
-            callbacks.onLine?.(data.message);
-            break;
-          case 'progress':
-            callbacks.onProgress?.(data.percent, data.message);
-            break;
-          case 'error':
-            callbacks.onError?.(data.message);
-            callbacks.onLine?.(`\x1b[31mERROR: ${data.message}\x1b[0m`);
-            break;
-          case 'complete':
-            callbacks.onComplete?.();
-            ws.close();
-            break;
-        }
-      } catch (e) {
-        callbacks.onLine?.(event.data);
-      }
-    };
-
-    ws.onerror = (error) => {
-      console.error(`[TerminalService] WebSocket error for ${terminalId}:`, error);
-      callbacks.onError?.('Connection failed');
-    };
-
-    ws.onclose = () => {
-      console.log(`[TerminalService] WebSocket closed for ${terminalId}`);
-      this.terminals.delete(terminalId);
-    };
-
-    // Store WebSocket reference
-    this.terminals.set(terminalId, {
-      id: terminalId,
-      ...callbacks
-    });
-  }
-
-  /**
-   * Stream logs from a specific operation
-   */
-  streamOperation(
-    terminalId: string,
-    operation: string,
-    callbacks: {
-      onLine?: (line: string) => void;
-      onProgress?: (percent: number, message: string) => void;
-      onError?: (error: string) => void;
-      onComplete?: () => void;
-      [key: string]: any; // Allow additional params like backend
-    }
-  ): void {
-    const { onLine, onProgress, onError, onComplete, ...params } = callbacks;
-    const queryParams = params && Object.keys(params).length ? '?' + new URLSearchParams(params).toString() : '';
-    const endpoint = `operations/${operation}${queryParams}`;
-
-    this.connectToStream(terminalId, endpoint, {
-      onLine,
-      onProgress,
-      onError,
-      onComplete
-    });
-  }
-
-  /**
-   * Stream Docker logs
-   */
-  streamDockerLogs(terminalId: string, container?: string): void {
-    const endpoint = container ? `docker/logs/${container}` : 'docker/logs';
-
-    this.connectToStream(terminalId, endpoint, {
-      onLine: (line) => {
-        const terminal = (window as any)[`terminal_${terminalId}`];
-        terminal?.appendLine?.(line);
-      }
-    });
-  }
-
-  /**
-   * Stream build logs (cards, reranker, etc)
-   */
-  streamBuildLogs(
-    terminalId: string,
-    buildType: 'cards' | 'reranker' | 'index',
-    repo?: string
-  ): void {
-    const endpoint = `builds/${buildType}${repo ? `?repo=${encodeURIComponent(repo)}` : ''}`;
-
-    this.connectToStream(terminalId, endpoint, {
-      onLine: (line) => {
-        const terminal = (window as any)[`terminal_${terminalId}`];
-        terminal?.appendLine?.(line);
-      },
-      onProgress: (percent, message) => {
-        const terminal = (window as any)[`terminal_${terminalId}`];
-        terminal?.updateProgress?.(percent, message);
-
-        // Update progress elements if they exist
-        const progressBar = document.querySelector(`#${buildType}-progress-bar`);
-        if (progressBar) {
-          (progressBar as HTMLElement).style.width = `${percent}%`;
-        }
-        const progressText = document.querySelector(`#${buildType}-progress-percent`);
-        if (progressText) {
-          progressText.textContent = `${Math.round(percent)}%`;
-        }
-      }
-    });
-  }
-
-  /**
    * Disconnect a terminal
    */
   disconnect(terminalId: string): void {
@@ -372,13 +256,6 @@ class TerminalServiceClass {
       terminal.sse.close();
     }
     this.terminals.delete(terminalId);
-  }
-
-  /**
-   * Disconnect all terminals
-   */
-  disconnectAll(): void {
-    this.terminals.forEach((_, id) => this.disconnect(id));
   }
 }
 
