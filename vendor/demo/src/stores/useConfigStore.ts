@@ -1,45 +1,100 @@
 import { create } from 'zustand';
 import { configApi } from '@/api/config';
 import type { TriBridConfig } from '@/types/generated';
+import { formatSaveError, type IndexContractConflict } from '@/utils/saveErrorMessage';
+import { indexInvalidatingChanges } from '@/utils/configDiff';
+import { useRepoStore } from './useRepoStore';
 
 interface ConfigStore {
   config: TriBridConfig | null;
+  /** Last server-acknowledged config. `config !== persisted` means unsaved local edits. */
+  persisted: TriBridConfig | null;
   loading: boolean;
   error: string | null;
-  saving: boolean;
   /**
-   * Optional mapping of flat config keys -> UI categories.
-   * Used by Eval drill-down to group config snapshots.
+   * Field-level detail from the last rejected config save, keyed by full dotted TriBridConfig
+   * path (e.g. "enrichment.chunk_summaries_max") -- `NumberField`'s `configPath` prop reads this
+   * directly. Replaced wholesale on each Apply (a fresh attempt supersedes stale errors) and
+   * cleared on a successful save.
    */
-  evalKeyCategories: Record<string, string>;
-
+  fieldErrors: Record<string, string>;
+  /**
+   * Set when a save was refused (HTTP 409) because the change would invalidate the stored index
+   * contract (`_enforce_index_contract_lock`, server/api/config.py). The footer reads this to
+   * offer a reload-and-re-index affordance instead of a bare error string (M-20). Cleared on any
+   * successful load or save, and as soon as the operator edits again.
+   */
+  saveConflict: IndexContractConflict | null;
+  saving: boolean;
   // Actions
   loadConfig: () => Promise<void>;
   saveConfig: (config: TriBridConfig) => Promise<void>;
-  patchSection: (section: keyof TriBridConfig, updates: Record<string, unknown>) => Promise<void>;
   /**
-   * Debounced patch for high-frequency UI changes (typing, sliders).
-   * Applies an optimistic local update immediately, then persists via PATCH after ~300ms.
+   * Stage a field edit LOCALLY, with no network write. The working `config` diverges from
+   * `persisted` (the footer shows the dirty count) and nothing reaches the server until "Apply"
+   * PUTs the whole document. This is the ONE commit model for every config surface: selecting a
+   * chunking strategy, toggling a boolean, dragging a slider, applying a model, saving a field
+   * all stage, so an edit is never a silent immediate PATCH the operator cannot see, undo, or
+   * gate (M-08). The merge mirrors the server's `_deep_merge_dicts` so a nested edit keeps its
+   * siblings.
    */
-  patchSectionDebounced: (section: keyof TriBridConfig, updates: Record<string, unknown>) => void;
-  /** Cancel any pending debounced patch timers (e.g. when switching corpora). */
-  cancelPendingPatches: (corpusId?: string) => void;
-  /** Immediately flush all pending debounced patches for the active corpus. */
+  stageSection: (section: keyof TriBridConfig, updates: Record<string, unknown>) => void;
+  /**
+   * Stage a WHOLE-section replacement (the Raw Section Editor): `config[section]` becomes `value`
+   * exactly, no merge, so a key the operator deleted from the raw JSON is actually dropped. Still
+   * local-only until Apply.
+   */
+  stageSectionReplace: (section: keyof TriBridConfig, value: unknown) => void;
+  /**
+   * Persist staged edits before a server-side action reads scoped config (an index run, a Paths
+   * save). If the staged edits touch a section that invalidates the stored index
+   * (chunking/embedding/tokenization), this THROWS instead of committing them silently — the
+   * operator must Apply (which confirms the re-index) or discard first (M-08/P2-1). Non-index
+   * staged edits are PUT through the safe path so the action sees them.
+   */
   flushPendingPatches: () => Promise<void>;
   resetConfig: () => Promise<void>;
-  loadEvalKeyCategories: () => void;
 
   reset: () => void;
 }
 
+type PatchObject = Record<string, unknown>;
+
+const isPatchObject = (value: unknown): value is PatchObject =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * Merge a staged patch into a config section exactly the way the server does
+ * (`_deep_merge_dicts`, server/api/config.py): recurse into nested objects, replace arrays and
+ * scalars wholesale. A shallow spread is wrong for any nested config group
+ * (`indexing.figures`, `chat.recall`, `chat.multimodal`): `useConfigField('indexing.figures.enabled')`
+ * emits `{ figures: { enabled: true } }`, and spreading that over the section would drop every
+ * sibling key of `figures`.
+ */
+const deepMergePatch = (base: PatchObject, updates: PatchObject): PatchObject => {
+  const merged: PatchObject = { ...base };
+  for (const key of Object.keys(updates)) {
+    if (key === '__proto__') continue;
+    const current = merged[key];
+    const next = updates[key];
+    merged[key] = isPatchObject(current) && isPatchObject(next) ? deepMergePatch(current, next) : next;
+  }
+  return merged;
+};
+
 export const useConfigStore = create<ConfigStore>((set) => {
-  // Debounce + aggregation per top-level section AND per corpus.
-  // This prevents corpus-switch races from canceling/flush-ing the wrong corpus' pending writes.
-  const pendingByCorpus: Record<string, Record<string, Record<string, unknown>>> = {};
-  const timersByCorpus: Record<string, Record<string, ReturnType<typeof setTimeout>>> = {};
-  const DEBOUNCE_MS = 300;
+  // One GET /api/config per corpus in flight at a time. Several hooks call `loadConfig` on the
+  // same mount (app init, `useConfig`'s mount effect, the corpus-changed listener) and each one
+  // used to issue its own request: a single dashboard load spent four round trips fetching the
+  // identical document (M-129). This shares the request; it does not cache the answer.
+  const inFlightLoadByCorpus: Record<string, { epoch: number; promise: Promise<void> }> = {};
+  let scopeEpoch = 0;
 
   const getActiveCorpusId = (): string => {
+    const registry = useRepoStore.getState();
+    // A successful empty registry is explicit global scope. Failed first loads and their pending
+    // retries retain the URL/storage scope until a real registry response resolves that scope.
+    if (registry.resolved) return registry.activeRepo;
     try {
       const u = new URL(window.location.href);
       return (
@@ -58,150 +113,86 @@ export const useConfigStore = create<ConfigStore>((set) => {
     }
   };
 
-  const cancelPendingPatches = (corpusId?: string) => {
-    const corpusKeys = corpusId === undefined ? Object.keys(timersByCorpus) : [String(corpusId || '')];
-    for (const corpusKey of corpusKeys) {
-      const timers = timersByCorpus[corpusKey] || {};
-      for (const sectionKey of Object.keys(timers)) {
-        clearTimeout(timers[sectionKey]);
-        delete timers[sectionKey];
-      }
-      delete timersByCorpus[corpusKey];
-      delete pendingByCorpus[corpusKey];
-    }
-  };
+  let activeScope = getActiveCorpusId();
+  useRepoStore.subscribe(() => {
+    const nextScope = getActiveCorpusId();
+    if (nextScope === activeScope) return;
+    activeScope = nextScope;
+    scopeEpoch += 1;
+    set({ config: null, persisted: null, loading: false, error: null, fieldErrors: {}, saveConflict: null });
+    // Corpus-change hook listeners share this same in-flight request. Registry
+    // refresh and last-corpus removal must also load when no changed event fires.
+    void useConfigStore.getState().loadConfig();
+  });
 
-  const flushSection = async (corpusKey: string, sectionKey: string) => {
-    const updates = pendingByCorpus[corpusKey]?.[sectionKey];
-    if (!updates || Object.keys(updates).length === 0) return;
-    delete pendingByCorpus[corpusKey][sectionKey];
-    if (Object.keys(pendingByCorpus[corpusKey] || {}).length === 0) delete pendingByCorpus[corpusKey];
-    delete (timersByCorpus[corpusKey] || {})[sectionKey];
-    if (Object.keys(timersByCorpus[corpusKey] || {}).length === 0) delete timersByCorpus[corpusKey];
-
-    set({ saving: true, error: null });
-    try {
-      const saved = await configApi.patchSection(sectionKey, updates, corpusKey || undefined);
-      // Only merge the saved config if we're still on the same corpus.
-      if (String(getActiveCorpusId() || '') === String(corpusKey || '')) {
-        set((state) => {
-          const cur = state.config as any;
-          const nextSection = (saved as any)?.[sectionKey];
-          // Merge only the patched section to avoid clobbering other optimistic changes.
-          const nextConfig = cur ? ({ ...cur, [sectionKey]: nextSection } as TriBridConfig) : saved;
-          return { config: nextConfig, saving: false, error: null };
-        });
-      } else {
-        set({ saving: false, error: null });
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to save configuration';
-      set({
-        saving: false,
-        error: message,
-      });
-      throw new Error(message);
-    }
-  };
-
-  const flushAllPendingPatches = async (corpusKey: string) => {
-    const timers = timersByCorpus[corpusKey] || {};
-    for (const sectionKey of Object.keys(timers)) {
-      clearTimeout(timers[sectionKey]);
-      delete timers[sectionKey];
-    }
-    if (Object.keys(timers).length === 0) delete timersByCorpus[corpusKey];
-
-    const pending = pendingByCorpus[corpusKey] || {};
-    const sections = Object.keys(pending);
-    if (sections.length === 0) return;
-    const results = await Promise.allSettled(sections.map((section) => flushSection(corpusKey, section)));
-    const failures = results
-      .filter((res): res is PromiseRejectedResult => res.status === 'rejected')
-      .map((res) => String(res.reason instanceof Error ? res.reason.message : res.reason || '').trim())
-      .filter(Boolean);
-    if (failures.length > 0) {
-      throw new Error(Array.from(new Set(failures)).join(' | '));
-    }
-  };
-
-  const patchSectionDebounced = (section: keyof TriBridConfig, updates: Record<string, unknown>) => {
+  const stageSection = (section: keyof TriBridConfig, updates: Record<string, unknown>) => {
     const sectionKey = String(section);
-    const corpusKey = String(getActiveCorpusId() || '');
-
-    // Optimistic local update so controlled inputs stay responsive.
+    // Local stage only: merge into the working `config` and leave `persisted` alone, so the edit
+    // shows as dirty and nothing is written until Apply. No pending patch, no timer, no request.
     set((state) => {
       const cur = state.config as any;
       if (!cur) return {};
       const curSection = (cur as any)[sectionKey] || {};
-      const nextSection = { ...(curSection as any), ...(updates as any) };
-      return { config: { ...cur, [sectionKey]: nextSection } as TriBridConfig, error: null };
+      const nextSection = deepMergePatch(curSection as PatchObject, updates);
+      return {
+        config: { ...cur, [sectionKey]: nextSection } as TriBridConfig,
+        // Editing again clears a stale save error / conflict banner.
+        error: null,
+        saveConflict: null,
+      };
     });
+  };
 
-    // Merge into pending patch and debounce the network call.
-    pendingByCorpus[corpusKey] = pendingByCorpus[corpusKey] || {};
-    pendingByCorpus[corpusKey][sectionKey] = {
-      ...(pendingByCorpus[corpusKey][sectionKey] || {}),
-      ...(updates || {})
-    };
-    timersByCorpus[corpusKey] = timersByCorpus[corpusKey] || {};
-    if (timersByCorpus[corpusKey][sectionKey]) clearTimeout(timersByCorpus[corpusKey][sectionKey]);
-    timersByCorpus[corpusKey][sectionKey] = setTimeout(() => {
-      void flushSection(corpusKey, sectionKey).catch(() => {
-        // State is already updated with error in flushSection; avoid unhandled promise noise.
-      });
-    }, DEBOUNCE_MS);
+  const stageSectionReplace = (section: keyof TriBridConfig, value: unknown) => {
+    const sectionKey = String(section);
+    set((state) => {
+      const cur = state.config as any;
+      if (!cur) return {};
+      return {
+        config: { ...cur, [sectionKey]: value } as TriBridConfig,
+        error: null,
+        saveConflict: null,
+      };
+    });
+  };
+
+  /** The real load. `loadConfig` wraps it so concurrent callers share one request. */
+  const loadConfigOnce = async (corpusId: string, epoch: number): Promise<void> => {
+    // A load replaces both the working copy and the server snapshot: navigation and corpus
+    // switches never read as an operator edit, and any unapplied staged edits for the old scope
+    // are dropped (the staged-form contract — apply before you leave).
+    set({ loading: true, error: null });
+    try {
+      const config = await configApi.load(corpusId || null);
+      if (scopeEpoch !== epoch || getActiveCorpusId() !== corpusId) return;
+      set({ config, persisted: config, loading: false, error: null, fieldErrors: {}, saveConflict: null });
+    } catch (error) {
+      if (scopeEpoch !== epoch || getActiveCorpusId() !== corpusId) return;
+      set({ loading: false, error: formatSaveError(error).message });
+    }
   };
 
   return ({
   config: null,
+  persisted: null,
   loading: false,
   error: null,
+  fieldErrors: {},
+  saveConflict: null,
   saving: false,
-  evalKeyCategories: {},
 
   loadConfig: async () => {
-    // Critical: do NOT cancel optimistic patches here. Flush them before loading so
-    // debounced saves are not lost and GET does not overwrite local updates.
-    
-    const corpusKey = String(getActiveCorpusId() || '');
+    const key = String(getActiveCorpusId() || '');
+    const epoch = scopeEpoch;
+    const shared = inFlightLoadByCorpus[key];
+    if (shared?.epoch === epoch) return shared.promise;
 
-    // Capture optimistic updates BEFORE flushing (flush will clear pendingByCorpus for this corpus)
-    const optimisticUpdates = { ...(pendingByCorpus[corpusKey] || {}) } as Record<string, Record<string, unknown>>;
-    for (const key in optimisticUpdates) {
-      optimisticUpdates[key] = { ...(optimisticUpdates[key] || {}) };
-    }
-
-    let flushError: string | null = null;
+    const run = loadConfigOnce(key, epoch);
+    inFlightLoadByCorpus[key] = { epoch, promise: run };
     try {
-      await flushAllPendingPatches(corpusKey);
-    } catch (error) {
-      flushError = error instanceof Error ? error.message : 'Failed to save configuration';
-    }
-    
-    set({ loading: true, error: flushError });
-    try {
-      const config = await configApi.load();
-      
-      // Merge server config with optimistic updates that were pending before flush,
-      // but only when flush succeeded. If flush failed, show persisted server state.
-      const mergedConfig = { ...config } as any;
-      if (!flushError) {
-        for (const [sectionKey, updates] of Object.entries(optimisticUpdates)) {
-          if (updates && Object.keys(updates).length > 0) {
-            const curSection = mergedConfig[sectionKey] || {};
-            mergedConfig[sectionKey] = { ...curSection, ...updates };
-          }
-        }
-      }
-      
-      set({ config: mergedConfig as TriBridConfig, loading: false, error: flushError });
-    } catch (error) {
-      const loadError = error instanceof Error ? error.message : 'Failed to load configuration';
-      set({
-        loading: false,
-        error: flushError ? `${flushError} | ${loadError}` : loadError,
-      });
+      await run;
+    } finally {
+      if (inFlightLoadByCorpus[key]?.promise === run) delete inFlightLoadByCorpus[key];
     }
   },
 
@@ -209,79 +200,66 @@ export const useConfigStore = create<ConfigStore>((set) => {
     set({ saving: true, error: null });
     try {
       const saved = await configApi.save(config);
-      cancelPendingPatches(String(getActiveCorpusId() || ''));
-      set({ config: saved, saving: false, error: null });
+      set({ config: saved, persisted: saved, saving: false, error: null, fieldErrors: {}, saveConflict: null });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to save configuration';
+      // A whole-config PUT validates every section atomically, so a 422 attributes to fields
+      // anywhere: replace the field-error map with what this failure named (M-20). A 409/network
+      // failure carries no per-field detail, so the map clears.
+      const presentation = formatSaveError(error);
+      const message = presentation.message;
       set({
         saving: false,
         error: message,
+        fieldErrors: Object.fromEntries(presentation.fieldErrors.map((fe) => [fe.path, fe.message])),
+        // Any 409 (the structured index-contract lock, or a generic "changed elsewhere" conflict)
+        // offers the reload-and-retry affordance; a generic 409 carries no changed legs.
+        saveConflict: presentation.conflict ? presentation.contractConflict ?? { changedLegs: [] } : null,
       });
       throw new Error(message);
     }
   },
 
-  patchSection: async (section: keyof TriBridConfig, updates: Record<string, unknown>) => {
-    const corpusKey = String(getActiveCorpusId() || '');
-    set({ saving: true, error: null });
-    try {
-      const saved = await configApi.patchSection(String(section), updates, corpusKey || undefined);
-      if (String(getActiveCorpusId() || '') === String(corpusKey || '')) {
-        set((state) => {
-          const sectionKey = String(section);
-          const cur = state.config as any;
-          const nextSection = (saved as any)?.[sectionKey];
-          const nextConfig = cur ? ({ ...cur, [sectionKey]: nextSection } as TriBridConfig) : saved;
-          return { config: nextConfig, saving: false, error: null };
-        });
-      } else {
-        set({ saving: false, error: null });
-      }
-    } catch (error) {
-      set({
-        saving: false,
-        error: error instanceof Error ? error.message : 'Failed to save configuration',
-      });
-    }
-  },
-
-  patchSectionDebounced,
-  cancelPendingPatches,
+  stageSection,
+  stageSectionReplace,
   flushPendingPatches: async () => {
-    await flushAllPendingPatches(String(getActiveCorpusId() || ''));
+    const { config, persisted } = useConfigStore.getState();
+    if (!config || JSON.stringify(config) === JSON.stringify(persisted)) return;
+    // An index-invalidating staged edit must never commit silently through a side-door flush
+    // (Index Now, Paths save): block until the operator Applies (which confirms the re-index) or
+    // discards it. Non-index staged edits are persisted so the pending action reads them.
+    const invalidating = indexInvalidatingChanges(persisted, config);
+    if (invalidating.length > 0) {
+      throw new Error(
+        `Staged changes to ${invalidating.join(', ')} change how the current index was built. ` +
+          `Apply them with the "Apply changes" button (which confirms the re-index) or discard them ` +
+          `before starting this action — an index-invalidating change is never committed silently.`
+      );
+    }
+    await useConfigStore.getState().saveConfig(config);
   },
 
   resetConfig: async () => {
     set({ saving: true, error: null });
     try {
       const saved = await configApi.reset();
-      cancelPendingPatches(String(getActiveCorpusId() || ''));
-      set({ config: saved, saving: false, error: null });
+      set({ config: saved, persisted: saved, saving: false, error: null, fieldErrors: {}, saveConflict: null });
     } catch (error) {
       set({
         saving: false,
-        error: error instanceof Error ? error.message : 'Failed to reset configuration',
+        error: formatSaveError(error).message,
       });
     }
   },
 
-  loadEvalKeyCategories: () => {
-    // Minimal implementation: keep empty mapping (everything groups as "Other").
-    // If/when we want richer grouping, we can populate this deterministically from
-    // `TriBridConfig.to_flat_dict()` key prefixes.
-    set({ evalKeyCategories: {} });
-  },
-
   reset: () =>
-    (() => {
-      cancelPendingPatches();
-      set({
+    set({
       config: null,
+      persisted: null,
       loading: false,
       error: null,
+      fieldErrors: {},
+      saveConflict: null,
       saving: false,
-      evalKeyCategories: {},
-      })
-    })(),
+    }),
 });
 });
