@@ -93,7 +93,7 @@
   padding: 4px 10px;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 11.5px;
   font-family: 'SF Mono', monospace;
   transition: all 0.2s ease;
 }
@@ -101,11 +101,11 @@
 .terminal-btn:hover {
   background: var(--bg-elev1);
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .terminal-btn.active {
-  color: var(--accent);
+  color: var(--accent-text);
   border-color: var(--accent);
 }
 
@@ -139,13 +139,13 @@
 
 .progress-label {
   font-family: 'SF Mono', monospace;
-  font-size: 11px;
-  color: var(--accent);
+  font-size: 11.5px;
+  color: var(--accent-text);
 }
 
 .progress-percent {
   font-family: 'SF Mono', monospace;
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--fg-muted);
 }
 
