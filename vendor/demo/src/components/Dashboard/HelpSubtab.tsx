@@ -46,7 +46,7 @@ export function HelpSubtab() {
               margin: '0 0 16px 0',
               fontSize: '16px',
               fontWeight: '600',
-              color: 'var(--accent)',
+              color: 'var(--accent-text)',
               display: 'flex',
               alignItems: 'center',
               gap: '8px'
@@ -58,23 +58,23 @@ export function HelpSubtab() {
 
           <ol style={{ margin: 0, paddingLeft: '24px', lineHeight: '2', fontSize: '14px', color: 'var(--fg)' }}>
             <li>
-              <strong>Index Your Repository:</strong> Navigate to the Dashboard and click "Run Indexer" to create embeddings
-              and indices for your codebase.
+              <strong>Index your corpus:</strong> Register a folder of documents or code as a corpus in Get Started, then
+              build its indexes (embeddings, chunk rows, and the knowledge graph) from RAG &rsaquo; Indexing.
             </li>
             <li>
               <strong>Configure RAG Settings:</strong> Use the RAG tab to adjust retrieval parameters like top_k, hybrid search
               alpha, and reranking options.
             </li>
             <li>
-              <strong>Test Your Setup:</strong> Go to the Chat tab to test queries against your indexed repository.
+              <strong>Test your setup:</strong> Go to the Chat tab to run queries against your indexed corpus.
             </li>
             <li>
               <strong>Evaluate Performance:</strong> Use Eval Analysis → Eval Dataset to manage questions, then run evals
               from Eval Analysis → Analysis to measure retrieval quality.
             </li>
             <li>
-              <strong>Compare Configurations:</strong> Use the Admin tab to save and compare different RAG configurations
-              for different use cases.
+              <strong>Compare Models:</strong> Use the Benchmark tab to send one prompt to several gateway models and
+              compare their answers, latency and cost side by side against this corpus.
             </li>
           </ol>
         </div>
@@ -118,16 +118,16 @@ export function HelpSubtab() {
               description="Pre-computed document summaries that provide context without full content. Enables faster RAG with lower token costs."
             />
             <ConceptCard
-              title="Learning Ranker"
-              description="Train custom reranking models on your query patterns. Uses user feedback (clicks, ratings) to improve relevance over time."
+              title="Learning Reranker"
+              description="Train a custom reranker on your corpus query patterns. Uses operator feedback to improve relevance over time."
             />
             <ConceptCard
               title="Multi-Query Rewrites"
               description="Expands user queries into multiple variations to improve recall. Uses LLMs to generate semantically similar questions."
             />
             <ConceptCard
-              title="Configuration Presets"
-              description="Named configurations that bundle embedding models, chunking strategies, and retrieval settings for easy switching."
+              title="Corpus-scoped Configuration"
+              description="Every setting is tagged corpus or global. A corpus-tagged field is saved against the corpus named in the header and changes nothing for any other corpus; a global field applies to the whole deployment."
             />
           </div>
         </div>
@@ -167,8 +167,8 @@ export function HelpSubtab() {
               description="Try adjusting hybrid_alpha (0.3-0.7), enabling reranking, or increasing final_k in RAG → Retrieval settings."
             />
             <TaskLink
-              title="How do I add a new repository?"
-              description="Use Admin → General to add repository paths, then run the indexer for each repo."
+              title="How do I add a new corpus?"
+              description="Register a folder as a corpus in Get Started (the same flow the corpus picker uses), then build its indexes from RAG → Indexing."
             />
             <TaskLink
               title="How do I set up evaluation datasets?"
@@ -207,9 +207,9 @@ export function HelpSubtab() {
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <ExternalLink
-              title="pgvector Documentation"
-              href="https://github.com/pgvector/pgvector"
-              description="PostgreSQL vector similarity search extension"
+              title="Qdrant Documentation"
+              href="https://qdrant.tech/documentation/"
+              description="Vector store for the dense + sparse retrieval legs"
             />
             <ExternalLink
               title="Neo4j Graph Database"
@@ -248,7 +248,7 @@ function ConceptCard({ title, description }: ConceptCardProps) {
         padding: '16px'
       }}
     >
-      <h5 style={{ margin: '0 0 8px 0', fontSize: '13px', fontWeight: '600', color: 'var(--accent)' }}>{title}</h5>
+      <h5 style={{ margin: '0 0 8px 0', fontSize: '13px', fontWeight: '600', color: 'var(--accent-text)' }}>{title}</h5>
       <p style={{ margin: 0, fontSize: '12px', lineHeight: '1.6', color: 'var(--fg-muted)' }}>{description}</p>
     </div>
   );
