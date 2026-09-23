@@ -4,7 +4,7 @@ export type TooltipMap = Record<string, string>;
 
 type GlossaryLink = { text: string; href: string };
 type GlossaryBadge = { text: string; class: string };
-type GlossaryTerm = {
+export type GlossaryTerm = {
   term: string;
   key: string;
   definition: string; // HTML body (no wrapper div)
@@ -87,6 +87,16 @@ async function fetchGlossaryJson(): Promise<GlossaryJson> {
 
 interface TooltipStore {
   tooltips: TooltipMap;
+  /**
+   * The glossary as it is written, not as it renders.
+   *
+   * The Glossary tab used to re-derive a term's category by keyword-matching its key
+   * against a hardcoded six-bucket table, defaulting everything unmatched to "Advanced" --
+   * so the file's own `category` field, which every term carries, was thrown away and one
+   * chip held most of the glossary (M-133). Surfaces that need the structured record read
+   * it here; `tooltips` stays the rendered-HTML map the hover bubbles use.
+   */
+  terms: GlossaryTerm[];
   loading: boolean;
   initialized: boolean;
 
@@ -98,28 +108,6 @@ interface TooltipStore {
 /**
  * Build tooltip HTML (matches L() function from tooltips.js)
  * Kept here as a utility for fallback generation
- */
-/**
- * ---agentspec
- * what: |
- *   Constructs an HTML string for a tooltip component with label, body text, optional links, and optional badges.
- *   Takes four parameters: label (string, required), body (string, required), links (optional array of [text, href] tuples), badges (optional array of [label, value] tuples).
- *   Returns a single HTML string ready for DOM insertion.
- *   Currently only processes links into anchor tags; badges parameter is accepted but not rendered in the returned HTML.
- *   Applies security attributes (target="_blank" rel="noopener") to all generated links to prevent window.opener access.
- *
- * why: |
- *   Centralizes tooltip HTML generation to ensure consistent markup and security practices across the application.
- *   The rel="noopener" attribute prevents security vulnerabilities when opening external links in new tabs.
- *   Accepts optional links and badges to support flexible tooltip content without requiring conditional logic at call sites.
- *
- * guardrails:
- *   - DO NOT remove rel="noopener" from link generation; it prevents window.opener exploitation attacks
- *   - ALWAYS escape href and link text values to prevent XSS injection before rendering
- *   - NOTE: badges parameter is accepted but currently unused; returned HTML does not include badge markup
- *   - ASK USER: Confirm the intended behavior for badges before implementing badge rendering, as current implementation silently ignores this parameter
- *   - DO NOT use innerHTML to insert this output without sanitization; treat as potentially unsafe HTML
- * ---/agentspec
  */
 function buildTooltipHTML(
   label: string,
@@ -149,6 +137,7 @@ function buildTooltipHTML(
  */
 export const useTooltipStore = create<TooltipStore>((set, get) => ({
   tooltips: {},
+  terms: [],
   loading: false,
   initialized: false,
 
@@ -159,11 +148,13 @@ export const useTooltipStore = create<TooltipStore>((set, get) => ({
     void fetchGlossaryJson()
       .then((glossary) => {
         const tooltips: TooltipMap = {};
+        const terms: GlossaryTerm[] = [];
         for (const t of glossary?.terms || []) {
           if (!t || typeof t.key !== 'string' || !t.key.trim()) continue;
           tooltips[t.key] = buildTooltipHtmlFromGlossaryTerm(t);
+          terms.push(t);
         }
-        set({ tooltips, loading: false, initialized: true });
+        set({ tooltips, terms, loading: false, initialized: true });
       })
       .catch((e) => {
         console.error('[useTooltipStore] Failed to load glossary tooltips:', e);
