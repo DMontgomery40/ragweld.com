@@ -1,6 +1,16 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useConfigStore } from '@/stores/useConfigStore';
+import { SECRET_REDACTED } from '@/api/secrets';
 import { evalApi } from '@/api';
+import { AssistantMarkdown } from '@/components/ui/AssistantMarkdown';
+import { LineageMeta } from '@/components/ui/LineageMeta';
+import { showToast } from '@/utils/toast';
+import {
+  categorizeConfigKey,
+  isResultSafeKey,
+  OPERATIONAL_CATEGORY_ORDER,
+  RESPONSE_CATEGORY_ORDER,
+  type ConfigKeyTier,
+} from '@/utils/configKeyCategories';
 import type { EvalResult, EvalRun } from '@/types/generated';
 
 interface EvalDrillDownProps {
@@ -45,6 +55,21 @@ const CollapsibleValue: React.FC<{ value: string; maxLen?: number }> = ({ value,
 
 // Helper to format config values with proper wrapping
 const formatConfigValue = (value: any, key?: string): React.ReactNode => {
+  // A run pins the configuration that governed it, and that snapshot used to include the
+  // Postgres DSN password and the OTLP authorization header verbatim (M-89). The server
+  // withholds them now; without this the row would read as a literal value called
+  // "[redacted]" and an operator would reasonably try to "fix" it.
+  if (typeof value === 'string' && value.includes(SECRET_REDACTED)) {
+    return (
+      <span
+        data-testid="config-value-withheld"
+        title="Held in the backend and never sent to the browser."
+        style={{ color: 'var(--fg-muted)', fontStyle: 'italic', wordBreak: 'break-word' }}
+      >
+        {value.replace(SECRET_REDACTED, '••••• withheld')}
+      </span>
+    );
+  }
   if (Array.isArray(value)) {
     if (value.length === 0) return <span style={{ color: 'var(--fg-muted)' }}>[]</span>;
     if (value.length <= 3) {
@@ -105,9 +130,6 @@ const formatEvalEmptyDebug = (debug: any): string => {
     pushIf('results graph', d?.fusion_graph_hydrated_chunks);
 
     pushIf('sparse engine', d?.fusion_sparse_engine);
-    if (d?.fusion_sparse_file_path_fallback_used) {
-      lines.push('sparse file_path fallback: used');
-    }
 
     // Errors (best-effort, already redacted server-side)
     pushIf('config error', d?.fusion_config_error);
@@ -152,15 +174,12 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
   const [llmLoading, setLlmLoading] = useState(false);
   const [llmError, setLlmError] = useState<string | null>(null);
   const [modelUsed, setModelUsed] = useState<string | null>(null);
+  // True when the shown analysis was served from the persisted artifact rather
+  // than freshly generated this session (M-73): re-opening a run must not re-charge.
+  const [analysisCached, setAnalysisCached] = useState(false);
 
-  // Zustand - config key categories for grouping (from Pydantic backend)
-  const evalKeyCategories = useConfigStore((s) => s.evalKeyCategories);
-  const loadEvalKeyCategories = useConfigStore((s) => s.loadEvalKeyCategories);
-
-  // Load eval key categories on mount
-  useEffect(() => {
-    loadEvalKeyCategories();
-  }, [loadEvalKeyCategories]);
+  // Whether the operational (non-response-affecting) config tier is expanded
+  const [operationalExpanded, setOperationalExpanded] = useState(false);
 
   // Function to fetch LLM analysis
   const fetchLLMAnalysis = useCallback(async (
@@ -175,7 +194,8 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
     setLlmLoading(true);
     setLlmError(null);
     setLlmAnalysis(null);
-    
+    setAnalysisCached(false);
+
     try {
       const data = await evalApi.analyzeComparison({
         current_run: {
@@ -222,7 +242,8 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
         setLlmError(null);
         setLlmLoading(false);
         setModelUsed(null);
-        
+        setAnalysisCached(false);
+
         const data: EvalRun = await evalApi.getResults(runId);
         console.log('[EvalDrillDown] Fetched data:', data);
         console.log('[EvalDrillDown] Question 0 expected_paths:', data.results?.[0]?.expected_paths);
@@ -234,6 +255,18 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
             setCompareRun(compareData);
           } catch {
             setCompareRun(null);
+          }
+          // Serve a previously-generated analysis for this run/baseline pair from
+          // disk so re-opening the run does not re-charge the gateway (M-73).
+          try {
+            const cached = await evalApi.getCachedAnalysis(runId, compareWithRunId);
+            if (cached) {
+              setLlmAnalysis(cached.analysis);
+              setModelUsed(cached.model_used);
+              setAnalysisCached(true);
+            }
+          } catch {
+            // A cache miss/error just means the operator can generate fresh.
           }
         } else {
           setCompareRun(null);
@@ -253,39 +286,43 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
   // These are safe to call with null evalRun - they just return empty objects
   // ==========================================================================
 
-  // Group config by category using Zustand-backed categories from Pydantic backend
+  // Deterministic prefix-based grouping (utils/configKeyCategories) split into
+  // an honest two-tier layout: keys that can change retrieval/answers vs
+  // operational/UI keys that cannot.
   const groupedConfig = useMemo(() => {
-    if (!evalRun?.config) return {};
-
-    const groups: Record<string, Array<[string, any]>> = {};
-
+    const tiers: Record<ConfigKeyTier, Record<string, Array<[string, any]>>> = {
+      response: {},
+      operational: {},
+    };
+    if (!evalRun?.config) return tiers;
     Object.entries(evalRun.config).forEach(([key, value]) => {
-      // Get category from Zustand (backed by Pydantic), fallback to 'Other'
-      const category = evalKeyCategories?.[key.toUpperCase()] || 'Other';
-      if (!groups[category]) groups[category] = [];
-      groups[category].push([key, value]);
+      const { category, tier } = categorizeConfigKey(key);
+      if (!tiers[tier][category]) tiers[tier][category] = [];
+      tiers[tier][category].push([key, value]);
     });
+    return tiers;
+  }, [evalRun?.config]);
 
-    return groups;
-  }, [evalKeyCategories, evalRun?.config]);
-
-  // Category order for display (derived from Zustand data)
-  const categoryOrder = useMemo(() => {
-    // Preferred display order
-    const preferredOrder = [
-      'BM25 Search', 'Embedding', 'Retrieval', 'Reranking', 'Chunking',
-      'Scoring', 'Layer Bonuses', 'Keywords', 'Query Expansion', 'Other'
-    ];
-
-    // Get unique categories from groupedConfig
-    const presentCategories = new Set(Object.keys(groupedConfig));
-
-    // Return in preferred order, then any remaining
-    return [
-      ...preferredOrder.filter(cat => presentCategories.has(cat)),
-      ...Array.from(presentCategories).filter(cat => !preferredOrder.includes(cat))
-    ];
+  const tierCounts = useMemo(() => {
+    const count = (groups: Record<string, Array<[string, any]>>) =>
+      Object.values(groups).reduce((sum, entries) => sum + entries.length, 0);
+    return {
+      response: count(groupedConfig.response),
+      operational: count(groupedConfig.operational),
+    };
   }, [groupedConfig]);
+
+  const orderedCategories = useCallback(
+    (tier: ConfigKeyTier) => {
+      const preferred = tier === 'response' ? RESPONSE_CATEGORY_ORDER : OPERATIONAL_CATEGORY_ORDER;
+      const present = new Set(Object.keys(groupedConfig[tier]));
+      return [
+        ...preferred.filter((cat) => present.has(cat)),
+        ...Array.from(present).filter((cat) => !preferred.includes(cat)),
+      ];
+    },
+    [groupedConfig],
+  );
 
   // ==========================================================================
   // Early returns for loading/error states (AFTER all hooks)
@@ -311,12 +348,22 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
   const normalizeConfig = (run: EvalRun | null) => {
     if (!run) return {};
     const cfg = { ...(run.config || {}) };
+    // The two eval knobs are carried both in the flat env-style snapshot
+    // (EVAL_MULTI / EVAL_FINAL_K) and as runtime fields (use_multi / final_k).
+    // Writing every alias made one setting appear as two or three changed
+    // params (M-67), so collapse all case/alias variants to one canonical key
+    // before diffing — "N params changed" must count distinct settings.
+    const dropAliases = (aliases: string[]) => {
+      for (const key of Object.keys(cfg)) {
+        if (aliases.includes(key.toLowerCase())) delete cfg[key];
+      }
+    };
     if (run.use_multi !== undefined) {
-      cfg['use_multi'] = run.use_multi;
-      cfg['eval_multi'] = run.use_multi ? 1 : 0;
+      dropAliases(['use_multi', 'eval_multi']);
+      cfg['eval_multi'] = Boolean(run.use_multi);
     }
     if (run.final_k !== undefined) {
-      cfg['final_k'] = run.final_k;
+      dropAliases(['final_k', 'eval_final_k']);
       cfg['eval_final_k'] = run.final_k;
     }
     return cfg;
@@ -373,14 +420,64 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
   };
 
   const configDiffs = getConfigDiff();
+  const resultSafeDiffCount = configDiffs.filter((d: { key: string }) => isResultSafeKey(d.key)).length;
   const results = evalRun.results || [];
   const regressions = results.filter((_, idx) => getRegressionStatus(idx) === 'regression').length;
   const improvements = results.filter((_, idx) => getRegressionStatus(idx) === 'improvement').length;
 
-  // Count total keys (groupedConfig is defined above early returns via useMemo)
-  const retrievalKeyCount = Object.values(groupedConfig).reduce(
-    (sum, params) => sum + (params?.length || 0), 0
-  );
+  const totalConfigKeyCount = tierCounts.response + tierCounts.operational;
+
+  // The AI analysis is a costed, ~1,400-word artifact with only a "Clear" control
+  // (M-73): give the operator copy and Markdown export so re-reading it later does
+  // not mean paying for it again. Both confirm with a toast.
+  const analysisMarkdown = () => {
+    const header = `# Eval analysis — ${runId}${compareWithRunId ? ` vs ${compareWithRunId}` : ''}\n\n`;
+    const model = modelUsed ? `_Model: ${modelUsed}_\n\n` : '';
+    return `${header}${model}${llmAnalysis ?? ''}\n`;
+  };
+  const handleCopyAnalysis = async () => {
+    if (!llmAnalysis) return;
+    try {
+      await navigator.clipboard.writeText(analysisMarkdown());
+      showToast('Analysis copied to clipboard', 'success');
+    } catch {
+      showToast('Could not copy analysis', 'error');
+    }
+  };
+  const handleExportAnalysis = () => {
+    if (!llmAnalysis) return;
+    const blob = new Blob([analysisMarkdown()], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `eval-analysis-${runId}.md`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast('Analysis exported as Markdown', 'success');
+  };
+
+  // Generate (or regenerate) the comparison analysis — the one path that charges
+  // the gateway. Shared by the "Generate" and "Regenerate" controls.
+  const runAnalysis = () => {
+    if (!evalRun || !compareRun) return;
+    const evalResults = evalRun.results || [];
+    const compareResults = compareRun.results || [];
+    const topkRegressions = evalResults.filter((_, idx) => !evalResults[idx]?.topk_hit && compareResults[idx]?.topk_hit);
+    const topkImprovements = evalResults.filter((_, idx) => evalResults[idx]?.topk_hit && !compareResults[idx]?.topk_hit);
+    const top1Regressions = evalResults.filter((_, idx) => !evalResults[idx]?.top1_hit && compareResults[idx]?.top1_hit);
+    const top1Improvements = evalResults.filter((_, idx) => evalResults[idx]?.top1_hit && !compareResults[idx]?.top1_hit);
+    fetchLLMAnalysis(
+      evalRun,
+      compareRun,
+      configDiffs || [],
+      topkRegressions,
+      topkImprovements,
+      top1Regressions.length,
+      top1Improvements.length,
+    );
+  };
 
   return (
     <div className="eval-drill-down" style={{ padding: '24px' }}>
@@ -400,7 +497,7 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
           <div style={{ fontSize: '12px', color: 'var(--fg-muted)', marginBottom: '8px' }}>
             Top-1 Accuracy
           </div>
-          <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--accent)' }}>
+          <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--accent-text)' }}>
             {((evalRun?.top1_accuracy ?? 0) * 100).toFixed(1)}%
           </div>
           <div style={{ fontSize: '11px', color: 'var(--fg-muted)' }}>
@@ -442,6 +539,31 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
           </div>
         </div>
 
+        {evalRun?.metrics?.ragas && Object.keys(evalRun.metrics.ragas).length > 0 ? (
+          <div
+            data-testid="eval-ragas-card"
+            style={{
+              background: 'var(--card-bg)',
+              border: '1px solid var(--line)',
+              borderRadius: '8px',
+              padding: '16px',
+            }}
+          >
+            <div style={{ fontSize: '12px', color: 'var(--fg-muted)', marginBottom: '8px' }}>
+              Ragas (gateway-generated answers)
+            </div>
+            {Object.entries(evalRun.metrics.ragas).map(([metric, value]) => (
+              <div key={metric} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
+                <span style={{ fontSize: '12px', color: 'var(--fg)' }}>{metric}</span>
+                <span style={{ fontSize: '18px', fontWeight: 700, color: 'var(--ok)' }}>{value.toFixed(4)}</span>
+              </div>
+            ))}
+            <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '6px' }}>
+              Mean over {evalRun.total} entries; judged through LiteLLM
+            </div>
+          </div>
+        ) : null}
+
         <div style={{
           background: 'var(--card-bg)',
           border: '1px solid var(--line)',
@@ -475,7 +597,10 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
               <div style={{ fontSize: '12px', color: 'var(--fg-muted)', marginBottom: '8px' }}>
                 Regressions
               </div>
-              <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--err)' }}>
+              <div
+                data-testid="eval-regressions-count"
+                style={{ fontSize: '24px', fontWeight: 700, color: regressions > 0 ? 'var(--err)' : 'var(--fg-muted)' }}
+              >
                 {regressions}
               </div>
               <div style={{ fontSize: '11px', color: 'var(--fg-muted)' }}>
@@ -501,6 +626,14 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
             </div>
           </>
         )}
+      </div>
+
+      <div style={{ marginBottom: '24px' }}>
+        <LineageMeta
+          bundleId={evalRun.bundle_id}
+          inputBundleId={evalRun.input_bundle_id}
+          lineageRef={evalRun.lineage_ref}
+        />
       </div>
 
       {/* Run Configuration - Collapsible */}
@@ -537,7 +670,7 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
               padding: '2px 8px',
               borderRadius: '10px'
             }}>
-              {retrievalKeyCount} retrieval keys
+              {totalConfigKeyCount} config keys · {tierCounts.response} affect results
             </span>
           </div>
           <span style={{ fontSize: '12px', color: 'var(--fg-muted)' }}>
@@ -555,13 +688,21 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
             </div>
           </div>
         ) : configExpanded && (
-          <div style={{ padding: '0 16px 16px' }}>
-            {/* Categories and key mappings from Zustand (backed by Pydantic) */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
-              {categoryOrder
-                .filter(category => groupedConfig[category]?.length > 0)
-                .map(category => {
-                  const params = groupedConfig[category];
+          <div style={{ padding: '0 16px 16px', display: 'grid', gap: '16px' }}>
+            {/* Tier 1: keys that can change what retrieval/answers return */}
+            <div data-testid="config-tier-response">
+              <div style={{
+                fontSize: '12px',
+                fontWeight: 700,
+                color: 'var(--fg)',
+                marginBottom: '10px'
+              }}>
+                Affects retrieval &amp; answers ({tierCounts.response})
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
+                {orderedCategories('response').map((category) => {
+                  const params = groupedConfig.response[category];
+                  if (!params?.length) return null;
                   return (
                     <div key={category} style={{
                       background: 'var(--bg-elev2)',
@@ -571,7 +712,7 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
                       <div style={{
                         fontSize: '10px',
                         fontWeight: 600,
-                        color: 'var(--accent)',
+                        color: 'var(--accent-text)',
                         textTransform: 'uppercase',
                         marginBottom: '8px',
                         letterSpacing: '0.5px'
@@ -615,6 +756,93 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
                     </div>
                   );
                 })}
+              </div>
+            </div>
+
+            {/* Tier 2: operational/UI keys — collapsed by default */}
+            <div data-testid="config-tier-operational">
+              <button
+                type="button"
+                onClick={() => setOperationalExpanded(!operationalExpanded)}
+                aria-expanded={operationalExpanded}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  padding: 0,
+                  cursor: 'pointer',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  color: 'var(--fg-muted)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  marginBottom: operationalExpanded ? '10px' : 0
+                }}
+              >
+                <span aria-hidden="true">{operationalExpanded ? '▼' : '▶'}</span>
+                Operational / UI — observability, workbench, training, infra wiring ({tierCounts.operational})
+              </button>
+              {operationalExpanded && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
+                  {orderedCategories('operational').map((category) => {
+                    const params = groupedConfig.operational[category];
+                    if (!params?.length) return null;
+                    return (
+                      <div key={category} style={{
+                        background: 'var(--bg-elev2)',
+                        borderRadius: '6px',
+                        padding: '10px',
+                        opacity: 0.85
+                      }}>
+                        <div style={{
+                          fontSize: '10px',
+                          fontWeight: 600,
+                          color: 'var(--fg-muted)',
+                          textTransform: 'uppercase',
+                          marginBottom: '8px',
+                          letterSpacing: '0.5px'
+                        }}>
+                          {category} ({params.length})
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          {params.map(([key, value]) => (
+                            <div key={key} style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'flex-start',
+                              gap: '6px',
+                              fontSize: '11px',
+                              padding: '3px 6px',
+                              background: 'var(--card-bg)',
+                              borderRadius: '3px',
+                              minWidth: 0
+                            }}>
+                              <span style={{
+                                color: 'var(--fg)',
+                                fontFamily: 'monospace',
+                                flexShrink: 0,
+                                fontSize: '10px'
+                              }}>{key}</span>
+                              <span style={{
+                                color: 'var(--link)',
+                                fontWeight: 600,
+                                fontFamily: 'monospace',
+                                textAlign: 'right',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                maxWidth: '140px',
+                                fontSize: '10px'
+                              }}>
+                                {formatConfigValue(value, key)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -633,7 +861,7 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
           <h2 style={{
             fontSize: '18px',
             fontWeight: 700,
-            color: 'var(--accent)',
+            color: 'var(--accent-text)',
             marginBottom: '8px',
             display: 'flex',
             alignItems: 'center',
@@ -652,6 +880,21 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
             }}>
               {configDiffs.length} params changed
             </span>
+            {resultSafeDiffCount > 0 && (
+              <span style={{
+                fontSize: '12px',
+                fontWeight: 600,
+                color: 'var(--fg-muted)',
+                background: 'var(--bg-elev2)',
+                border: '1px solid var(--line)',
+                padding: '4px 12px',
+                borderRadius: '12px'
+              }}>
+                {resultSafeDiffCount === configDiffs.length
+                  ? 'all observability/UI/training — cannot affect results'
+                  : `${resultSafeDiffCount} observability/UI/training — cannot affect results`}
+              </span>
+            )}
             {/* Embedding difference badge - highlighted prominently */}
             {hasEmbeddingDiff(configDiffs) && (
               <span 
@@ -679,9 +922,13 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
             {' → '}
             <span style={{ fontFamily: 'monospace', color: 'var(--accent-green)' }}>{evalRun.run_id}</span>
             {' • '}
-            Performance change:
-            <span style={{
-              color: (evalRun.topk_accuracy ?? 0) > (compareRun?.topk_accuracy ?? 0) ? 'var(--accent-green)' : 'var(--err)',
+            Performance change:{' '}
+            <span data-testid="eval-performance-change" style={{
+              color: (evalRun.topk_accuracy ?? 0) > (compareRun?.topk_accuracy ?? 0)
+                ? 'var(--accent-green)'
+                : (evalRun.topk_accuracy ?? 0) < (compareRun?.topk_accuracy ?? 0)
+                  ? 'var(--err)'
+                  : 'var(--fg-muted)',
               fontWeight: 600,
               marginLeft: '8px'
             }}>
@@ -696,8 +943,9 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
 
           <div style={{ display: 'grid', gap: '12px', fontSize: '13px' }}>
             {configDiffs.map(({ key, current, previous }) => {
-              // Determine if this param change correlates with improvement or regression
-              const perfImproved = (evalRun.topk_accuracy ?? 0) > (compareRun?.topk_accuracy ?? 0);
+              // A changed config value is neutral, not good or bad on its own: a
+              // single knob move does not map to the run's overall delta, so it is
+              // never coloured as pass/fail (M-68). Only real regressions get red.
 
               // Check if both values are arrays
               const isArray = Array.isArray(current) && Array.isArray(previous);
@@ -721,7 +969,7 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
                   }}>
                     <summary style={{
                       fontWeight: 700,
-                      color: 'var(--accent)',
+                      color: 'var(--accent-text)',
                       fontFamily: 'monospace',
                       cursor: 'pointer',
                       display: 'flex',
@@ -729,6 +977,18 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
                       gap: '12px'
                     }}>
                       {key}
+                      {categorizeConfigKey(key).tier === 'operational' && (
+                        <span style={{
+                          fontSize: '10px',
+                          fontWeight: 600,
+                          color: 'var(--fg-muted)',
+                          border: '1px solid var(--line)',
+                          borderRadius: '8px',
+                          padding: '1px 6px'
+                        }}>
+                          {isResultSafeKey(key) ? 'operational' : 'infra wiring'}
+                        </span>
+                      )}
                       <span style={{ fontSize: '11px', fontWeight: 400, color: 'var(--fg-muted)' }}>
                         ({onlyInCurrent.length} different in AFTER, {onlyInPrevious.length} different in BEFORE)
                       </span>
@@ -792,14 +1052,28 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
                   flexWrap: 'wrap',
                   position: 'relative'
                 }}>
-                  <div style={{ 
-                    fontWeight: 600, 
-                    color: 'var(--accent)', 
+                  <div style={{
+                    fontWeight: 600,
+                    color: 'var(--accent-text)',
                     fontFamily: 'monospace',
                     minWidth: '160px',
                     fontSize: '13px'
                   }}>
                     {key}
+                    {categorizeConfigKey(key).tier === 'operational' && (
+                      <span style={{
+                        marginLeft: '8px',
+                        fontSize: '10px',
+                        fontWeight: 600,
+                        color: 'var(--fg-muted)',
+                        border: '1px solid var(--line)',
+                        borderRadius: '8px',
+                        padding: '1px 6px',
+                        fontFamily: 'inherit'
+                      }}>
+                        {isResultSafeKey(key) ? 'operational' : 'infra wiring'}
+                      </span>
+                    )}
                   </div>
                   <div style={{ 
                     display: 'flex', 
@@ -825,17 +1099,16 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
                     >
                       {formatValue(previous)}
                     </div>
-                    <span style={{ color: 'var(--accent)', fontSize: '14px' }}>→</span>
-                    <div 
+                    <span style={{ color: 'var(--accent-text)', fontSize: '14px' }}>→</span>
+                    <div
                       title={JSON.stringify(current)}
+                      data-testid="config-diff-value"
                       style={{
                         padding: '4px 10px',
-                        background: perfImproved 
-                          ? 'rgba(var(--accent-green-rgb), 0.15)' 
-                          : 'rgba(var(--err-rgb), 0.15)',
-                        border: `1px solid ${perfImproved ? 'var(--accent-green)' : 'var(--err)'}`,
+                        background: 'var(--bg-elev2)',
+                        border: '1px solid var(--line)',
                         borderRadius: '4px',
-                        color: perfImproved ? 'var(--accent-green)' : 'var(--err)',
+                        color: 'var(--fg)',
                         fontWeight: 600,
                         maxWidth: '150px',
                         overflow: 'hidden',
@@ -876,7 +1149,7 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '12px' }}>
               <div>
-                <span style={{ color: 'var(--err)', fontWeight: 600 }}>{regressions} regressions</span>
+                <span style={{ color: regressions > 0 ? 'var(--err)' : 'var(--fg-muted)', fontWeight: 600 }}>{regressions} regressions</span>
                 <span style={{ color: 'var(--fg-muted)' }}> (questions that got worse)</span>
               </div>
               <div>
@@ -912,7 +1185,7 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
                 </h4>
                 {modelUsed && (
                   <span style={{
-                    fontSize: '10px',
+                    fontSize: '11.5px',
                     padding: '3px 8px',
                     background: 'var(--bg-elev2)',
                     borderRadius: '10px',
@@ -921,48 +1194,27 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
                     {modelUsed}
                   </span>
                 )}
+                {analysisCached && llmAnalysis && (
+                  <span
+                    data-testid="eval-analysis-cached-badge"
+                    title="Served from the saved analysis for this run — no new charge. Use Regenerate to run it again."
+                    style={{
+                      fontSize: '11.5px',
+                      padding: '3px 8px',
+                      background: 'var(--bg-elev2)',
+                      border: '1px solid var(--line)',
+                      borderRadius: '10px',
+                      color: 'var(--fg-muted)'
+                    }}
+                  >
+                    cached
+                  </span>
+                )}
               </div>
-              
+
               {!llmAnalysis && !llmLoading && (
                 <button
-                  onClick={() => {
-                    if (evalRun && compareRun) {
-                      const evalResults = evalRun.results || [];
-                      const compareResults = compareRun.results || [];
-                      // Calculate Top-K changes (what we show in the table)
-                      const topkRegressions = evalResults.filter((_, idx) => {
-                        const currentHit = evalResults[idx]?.topk_hit;
-                        const previousHit = compareResults[idx]?.topk_hit;
-                        return !currentHit && previousHit;
-                      });
-                      const topkImprovements = evalResults.filter((_, idx) => {
-                        const currentHit = evalResults[idx]?.topk_hit;
-                        const previousHit = compareResults[idx]?.topk_hit;
-                        return currentHit && !previousHit;
-                      });
-                      // Calculate Top-1 changes (for complete picture)
-                      const top1Regressions = evalResults.filter((_, idx) => {
-                        const currentHit = evalResults[idx]?.top1_hit;
-                        const previousHit = compareResults[idx]?.top1_hit;
-                        return !currentHit && previousHit;
-                      });
-                      const top1Improvements = evalResults.filter((_, idx) => {
-                        const currentHit = evalResults[idx]?.top1_hit;
-                        const previousHit = compareResults[idx]?.top1_hit;
-                        return currentHit && !previousHit;
-                      });
-                      // Send both metrics for accurate analysis
-                      fetchLLMAnalysis(
-                        evalRun,
-                        compareRun,
-                        configDiffs || [],
-                        topkRegressions,
-                        topkImprovements,
-                        top1Regressions.length,
-                        top1Improvements.length
-                      );
-                    }
-                  }}
+                  onClick={runAnalysis}
                   style={{
                     background: 'var(--link)',
                     color: 'white',
@@ -983,23 +1235,74 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
               )}
               
               {llmAnalysis && (
-                <button
-                  onClick={() => {
-                    setLlmAnalysis(null);
-                    setLlmError(null);
-                  }}
-                  style={{
-                    background: 'transparent',
-                    color: 'var(--fg-muted)',
-                    border: '1px solid var(--line)',
-                    padding: '6px 12px',
-                    borderRadius: '6px',
-                    fontSize: '11px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  Clear
-                </button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {analysisCached && (
+                    <button
+                      data-testid="eval-analysis-regenerate"
+                      onClick={runAnalysis}
+                      title="Run the analysis again against the current baseline (charges the gateway)."
+                      style={{
+                        background: 'transparent',
+                        color: 'var(--link)',
+                        border: '1px solid var(--link)',
+                        padding: '6px 12px',
+                        borderRadius: '6px',
+                        fontSize: '11.5px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Regenerate
+                    </button>
+                  )}
+                  <button
+                    data-testid="eval-analysis-copy"
+                    onClick={() => void handleCopyAnalysis()}
+                    style={{
+                      background: 'transparent',
+                      color: 'var(--fg)',
+                      border: '1px solid var(--line)',
+                      padding: '6px 12px',
+                      borderRadius: '6px',
+                      fontSize: '11.5px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Copy
+                  </button>
+                  <button
+                    data-testid="eval-analysis-export"
+                    onClick={handleExportAnalysis}
+                    style={{
+                      background: 'transparent',
+                      color: 'var(--fg)',
+                      border: '1px solid var(--line)',
+                      padding: '6px 12px',
+                      borderRadius: '6px',
+                      fontSize: '11.5px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Export .md
+                  </button>
+                  <button
+                    data-testid="eval-analysis-clear"
+                    onClick={() => {
+                      setLlmAnalysis(null);
+                      setLlmError(null);
+                    }}
+                    style={{
+                      background: 'transparent',
+                      color: 'var(--fg-muted)',
+                      border: '1px solid var(--line)',
+                      padding: '6px 12px',
+                      borderRadius: '6px',
+                      fontSize: '11.5px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
               )}
             </div>
 
@@ -1032,88 +1335,15 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
             )}
 
             {llmAnalysis && (
-              <div style={{
-                background: 'var(--card-bg)',
-                borderRadius: '8px',
-                padding: '20px',
-                fontSize: '13px',
-                lineHeight: 1.7,
-                color: 'var(--fg)'
-              }}>
-                {/* Render markdown-like content */}
-                {llmAnalysis.split('\n').map((line, idx) => {
-                  // Headers
-                  if (line.startsWith('## ')) {
-                    return (
-                      <h3 key={idx} style={{
-                        fontSize: '15px',
-                        fontWeight: 700,
-                        color: 'var(--accent)',
-                        marginTop: idx > 0 ? '20px' : 0,
-                        marginBottom: '12px',
-                        borderBottom: '1px solid var(--line)',
-                        paddingBottom: '8px'
-                      }}>
-                        {line.replace('## ', '')}
-                      </h3>
-                    );
-                  }
-                  if (line.startsWith('### ')) {
-                    return (
-                      <h4 key={idx} style={{
-                        fontSize: '14px',
-                        fontWeight: 600,
-                        color: 'var(--link)',
-                        marginTop: '16px',
-                        marginBottom: '8px'
-                      }}>
-                        {line.replace('### ', '')}
-                      </h4>
-                    );
-                  }
-                  // Bold text
-                  if (line.startsWith('**') && line.endsWith('**')) {
-                    return (
-                      <div key={idx} style={{
-                        fontWeight: 700,
-                        color: 'var(--fg)',
-                        marginTop: '12px',
-                        marginBottom: '4px'
-                      }}>
-                        {line.replace(/\*\*/g, '')}
-                      </div>
-                    );
-                  }
-                  // List items
-                  if (line.match(/^[\d]+\.\s/) || line.startsWith('- ')) {
-                    return (
-                      <div key={idx} style={{
-                        paddingLeft: '20px',
-                        marginBottom: '6px',
-                        position: 'relative'
-                      }}>
-                        <span style={{
-                          position: 'absolute',
-                          left: 0,
-                          color: 'var(--accent)'
-                        }}>
-                          {line.startsWith('- ') ? '•' : line.match(/^[\d]+/)?.[0] + '.'}
-                        </span>
-                        {line.replace(/^[\d]+\.\s/, '').replace(/^-\s/, '')}
-                      </div>
-                    );
-                  }
-                  // Empty lines
-                  if (line.trim() === '') {
-                    return <div key={idx} style={{ height: '8px' }} />;
-                  }
-                  // Regular paragraph
-                  return (
-                    <p key={idx} style={{ margin: '8px 0' }}>
-                      {line}
-                    </p>
-                  );
-                })}
+              <div
+                data-testid="eval-ai-analysis"
+                style={{
+                  background: 'var(--card-bg)',
+                  borderRadius: '8px',
+                  padding: '20px',
+                }}
+              >
+                <AssistantMarkdown content={llmAnalysis} />
               </div>
             )}
 
@@ -1193,7 +1423,17 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
                 return (
                   <React.Fragment key={idx}>
                     <tr
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={isExpanded}
+                      data-testid={`eval-question-row-${idx}`}
                       onClick={() => setSelectedQuestion(isExpanded ? null : idx)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setSelectedQuestion(isExpanded ? null : idx);
+                        }
+                      }}
                       style={{
                         borderBottom: '1px solid var(--line)',
                         background: isExpanded ? 'var(--bg-elev2)' : 'transparent',
@@ -1264,7 +1504,7 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
                           <div style={{ display: 'grid', gap: '16px', fontSize: '12px' }}>
                             {/* Expected Paths */}
                             <div>
-                              <div style={{ fontWeight: 600, color: 'var(--accent)', marginBottom: '8px' }}>
+                              <div style={{ fontWeight: 600, color: 'var(--accent-text)', marginBottom: '8px' }}>
                                 ✓ Expected Paths:
                                 <span style={{ fontSize: '10px', color: 'var(--fg-muted)', marginLeft: '8px' }}>
                                   (type: {typeof result.expected_paths}, array: {Array.isArray(result.expected_paths) ? 'yes' : 'no'}, count: {result.expected_paths?.length ?? 0})
@@ -1345,42 +1585,96 @@ export const EvalDrillDown: React.FC<EvalDrillDownProps> = ({ runId, compareWith
                               </div>
                             </div>
 
-                            {/* Scores if available */}
+                            {/* Retrieved chunks: rank, leg, score — the per-question retrieval
+                                detail the table header advertises. All from data already loaded
+                                with the run, so opening a row fires no request. */}
                             {result.docs && result.docs.length > 0 && (
-                              <div>
+                              <div data-testid="eval-question-chunks">
                                 <div style={{ fontWeight: 600, color: 'var(--fg)', marginBottom: '8px' }}>
-                                  Document Scores:
+                                  Retrieved chunks ({result.docs.length})
                                   {(() => {
                                     const scores = result.docs.map(d => d?.score ?? 0);
                                     const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
                                     const min = Math.min(...scores);
                                     const max = Math.max(...scores);
                                     return (
-                                      <span style={{ fontSize: '10px', color: 'var(--fg-muted)', marginLeft: '8px', fontWeight: 'normal' }}>
+                                      <span style={{ fontSize: '11px', color: 'var(--fg-muted)', marginLeft: '8px', fontWeight: 'normal' }}>
                                         (avg: {avg.toFixed(4)}, min: {min.toFixed(4)}, max: {max.toFixed(4)})
                                       </span>
                                     );
                                   })()}
                                 </div>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                  {result.docs.map((doc, i) => (
-                                    <div key={i} style={{
-                                      display: 'flex',
-                                      justifyContent: 'space-between',
-                                      fontFamily: 'monospace',
-                                      padding: '6px 10px',
-                                      background: 'var(--card-bg)',
-                                      borderRadius: '4px'
-                                    }}>
-                                      <span style={{ color: 'var(--fg)' }}>{doc.file_path}</span>
-                                      <span style={{ color: 'var(--accent)', fontWeight: 600 }}>
-                                        {(doc?.score ?? 0).toFixed(4)}
-                                      </span>
-                                    </div>
-                                  ))}
+                                  {result.docs.map((doc, i) => {
+                                    const isExpectedDoc = result.expected_paths?.some(exp => doc.file_path.includes(exp));
+                                    return (
+                                      <div key={i} data-testid="eval-question-chunk-row" style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '8px',
+                                        fontFamily: 'monospace',
+                                        padding: '6px 10px',
+                                        background: isExpectedDoc ? 'rgba(var(--accent-green-rgb), 0.1)' : 'var(--card-bg)',
+                                        borderLeft: isExpectedDoc ? '3px solid var(--accent-green)' : '3px solid transparent',
+                                        borderRadius: '4px'
+                                      }}>
+                                        <span style={{
+                                          flex: '0 0 auto', minWidth: '28px', textAlign: 'center', fontWeight: 700,
+                                          color: 'var(--fg-muted)', fontSize: '11.5px'
+                                        }}>#{i + 1}</span>
+                                        {doc.source ? (
+                                          <span data-testid="eval-chunk-leg" style={{
+                                            flex: '0 0 auto', fontSize: '11.5px', fontWeight: 600, color: 'var(--fg-muted)',
+                                            border: '1px solid var(--line)', borderRadius: '8px', padding: '1px 8px'
+                                          }}>{doc.source}</span>
+                                        ) : null}
+                                        <span style={{ color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: '1 1 auto' }}>
+                                          {doc.file_path}{doc.start_line ? `:${doc.start_line}` : ''}
+                                        </span>
+                                        {isExpectedDoc ? (
+                                          <span style={{ flex: '0 0 auto', color: 'var(--accent-green)', fontWeight: 600, fontSize: '11.5px' }}>match</span>
+                                        ) : null}
+                                        <span style={{ flex: '0 0 auto', color: 'var(--accent-text)', fontWeight: 600 }}>
+                                          {(doc?.score ?? 0).toFixed(4)}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               </div>
                             )}
+
+                            {/* The generated answer for this question (present when the gateway
+                                answered it — e.g. a Ragas-scored run). Same markdown renderer as chat. */}
+                            {result.generated_answer ? (
+                              <div data-testid="eval-question-answer">
+                                <div style={{ fontWeight: 600, color: 'var(--link)', marginBottom: '8px' }}>
+                                  Generated answer
+                                </div>
+                                <div style={{ background: 'var(--card-bg)', borderRadius: '6px', padding: '10px 14px' }}>
+                                  <AssistantMarkdown content={result.generated_answer} />
+                                </div>
+                              </div>
+                            ) : null}
+
+                            {/* Judge output: the per-entry Ragas scores the judge assigned. */}
+                            {result.ragas && Object.keys(result.ragas).length > 0 ? (
+                              <div data-testid="eval-question-judge">
+                                <div style={{ fontWeight: 600, color: 'var(--fg)', marginBottom: '8px' }}>
+                                  Judge (Ragas)
+                                </div>
+                                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                  {Object.entries(result.ragas).map(([metric, value]) => (
+                                    <span key={metric} style={{
+                                      fontSize: '11.5px', color: 'var(--fg)', background: 'var(--bg-elev2)',
+                                      border: '1px solid var(--line)', borderRadius: '8px', padding: '3px 10px'
+                                    }}>
+                                      {metric}: <strong>{value.toFixed(3)}</strong>
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
                         </td>
                       </tr>
