@@ -1,6 +1,7 @@
 import type { ActiveSources, Corpus, RecallIntensity } from '@/types/generated';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { TooltipIcon } from '@/components/ui/TooltipIcon';
+import { useRepoStore } from '@/stores/useRepoStore';
 
 type SourceDropdownProps = {
   value: ActiveSources;
@@ -14,6 +15,8 @@ type SourceDropdownProps = {
   onIncludeGraphChange: (v: boolean) => void;
   recallIntensity: RecallIntensity | null;
   onRecallIntensityChange: (v: RecallIntensity | null) => void;
+  webEnabled: boolean;
+  onWebEnabledChange: (v: boolean) => void;
   onCleanupUnindexed?: () => void | Promise<void>;
 };
 
@@ -37,8 +40,12 @@ function toggleInOrderedSet(items: string[], id: string): string[] {
 }
 
 export function SourceDropdown(props: SourceDropdownProps) {
+  const loadRepos = useRepoStore((state) => state.loadRepos);
+  const registryError = useRepoStore((state) => state.error);
   const corpusIds = props.value.corpus_ids ?? [];
   const [confirmCleanup, setConfirmCleanup] = useState(false);
+  const detailsRef = useRef<HTMLDetailsElement | null>(null);
+  const summaryRef = useRef<HTMLElement | null>(null);
   const [cleanupRunning, setCleanupRunning] = useState(false);
 
   const isChecked = (id: string) => corpusIds.includes(id);
@@ -51,8 +58,54 @@ export function SourceDropdown(props: SourceDropdownProps) {
   const availableCorpora = props.corpora.filter((c) => c.corpus_id !== RECALL_CORPUS_ID);
   const unindexedCount = availableCorpora.filter((c) => !c.last_indexed).length;
 
-  const selectedCount = corpusIds.length;
-  const summaryLabel = selectedCount === 0 ? 'None' : `${selectedCount} selected`;
+  // Recall is a source, not a corpus. Counting it as one made "2 selected" read for a single
+  // corpus plus Recall, and would have said "1 selected" with no corpus at all (M-96/B-20).
+  const realCorpusCount = corpusIds.filter((id) => id && id !== RECALL_CORPUS_ID).length;
+  const recallSelected = corpusIds.includes(RECALL_CORPUS_ID);
+  const summaryParts = [
+    realCorpusCount > 0 ? `${realCorpusCount} ${realCorpusCount === 1 ? 'corpus' : 'corpora'}` : null,
+    recallSelected ? 'Recall' : null,
+    props.webEnabled ? 'Web' : null,
+  ].filter(Boolean);
+  const summaryLabel = summaryParts.length > 0 ? summaryParts.join(' + ') : 'None';
+
+  // A native <details> dismisses on neither Escape nor an outside click, so this popover
+  // survived both - and survived opening History and New chat, which is how the drive ended
+  // up with three popovers stacked open at once (M-161/B-28).
+  //
+  // Escape returns focus to the control that opened it, so a keyboard operator is never
+  // left inside a widget they just dismissed. A pointer dismissal does not steal focus:
+  // the operator is already on their way somewhere else, and moving focus back would fight
+  // the control they just pressed.
+  useEffect(() => {
+    const closeIfOpen = (restoreFocus: boolean): void => {
+      const details = detailsRef.current;
+      if (!details || !details.open) return;
+      details.open = false;
+      if (restoreFocus) summaryRef.current?.focus();
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      closeIfOpen(true);
+    };
+    // pointerdown, not click: History and New chat open on their own press, so waiting for
+    // the click would leave both popovers on screen for the length of the gesture.
+    const onPointerDown = (event: PointerEvent) => {
+      const details = detailsRef.current;
+      if (!details || !details.open) return;
+      const target = event.target as Node | null;
+      if (target && details.contains(target)) return;
+      closeIfOpen(false);
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('pointerdown', onPointerDown, true);
+    };
+  }, []);
 
   useEffect(() => {
     if (!confirmCleanup) return;
@@ -78,13 +131,19 @@ export function SourceDropdown(props: SourceDropdownProps) {
 
   return (
     <details
+      ref={detailsRef}
       data-testid="source-dropdown"
+      onToggle={(event) => {
+        if (event.currentTarget.open) void loadRepos({ force: true });
+      }}
       style={{
         position: 'relative',
         display: 'inline-block',
       }}
     >
       <summary
+        ref={summaryRef}
+        data-testid="source-dropdown-trigger"
         style={{
           listStyle: 'none',
           cursor: 'pointer',
@@ -118,7 +177,37 @@ export function SourceDropdown(props: SourceDropdownProps) {
         }}
       >
         <div style={{ fontSize: '12px', color: 'var(--fg-muted)', marginBottom: '8px' }}>
-          Retrieval legs
+          Live sources
+        </div>
+
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            padding: '9px 10px',
+            marginBottom: '12px',
+            borderRadius: '9px',
+            border: props.webEnabled ? '1px solid var(--accent)' : '1px solid var(--line)',
+            background: props.webEnabled ? 'rgba(99, 179, 237, 0.08)' : 'transparent',
+          }}
+        >
+          <input
+            data-testid="source-web"
+            type="checkbox"
+            checked={props.webEnabled}
+            onChange={(event) => props.onWebEnabledChange(event.target.checked)}
+          />
+          <span style={{ flex: 1 }}>
+            <strong>Web</strong>
+            <span style={{ display: 'block', color: 'var(--fg-muted)', fontSize: '11px', marginTop: '2px' }}>
+              Search current public information when the model needs it
+            </span>
+          </span>
+        </label>
+
+        <div style={{ fontSize: '12px', color: 'var(--fg-muted)', marginBottom: '8px' }}>
+          Corpus retrieval legs
         </div>
 
         <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', marginBottom: '14px' }}>
@@ -155,6 +244,11 @@ export function SourceDropdown(props: SourceDropdownProps) {
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', marginBottom: '8px' }}>
           <div style={{ fontSize: '12px', color: 'var(--fg-muted)' }}>Corpora</div>
+          {registryError && (
+            <div role="alert" style={{ fontSize: '12px', color: 'var(--err)' }}>
+              Corpus list refresh failed: {registryError}
+            </div>
+          )}
 
           {props.onCleanupUnindexed && unindexedCount > 0 && (
             <button
@@ -233,6 +327,7 @@ export function SourceDropdown(props: SourceDropdownProps) {
               <input
                 type="checkbox"
                 checked={isChecked(corpus.corpus_id)}
+                data-testid={`source-corpus-${corpus.corpus_id}`}
                 onChange={() => handleCorpusToggle(corpus.corpus_id)}
               />
               <span style={{ flex: 1 }}>{corpus.name}</span>
