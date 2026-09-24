@@ -10,11 +10,16 @@
  */
 
 import { create } from 'zustand';
-import type { Corpus, CorpusCreateRequest, CorpusUpdateRequest } from '@/types/generated';
+import type { Corpus, CorpusAlreadyIndexedResponse, CorpusCreateRequest, CorpusUpdateRequest } from '@/types/generated';
 import { resolveAPIBase } from '@/api/client';
+import { describeIndexRunConflict } from '@/utils/indexRunConflict';
 
 // Re-export for backward compatibility with existing components
 export type Repository = Corpus;
+
+// Registry reads are also called from void mount/event handlers. Carry failures as an explicit
+// result so awaited mutation refreshes can stop without introducing unhandled rejections there.
+type RepoLoadResult = { ok: true } | { ok: false; error: string };
 
 interface RepoStore {
   // State
@@ -25,47 +30,85 @@ interface RepoStore {
   switching: boolean;
   /** True after first load attempt (success or failure) - prevents infinite loops */
   initialized: boolean;
+  /**
+   * True after a registry response has been successfully applied, including a successful empty
+   * list. Unlike `initialized`, this stays false through an initial failure and its pending retry,
+   * so consumers never mistake cleared retry errors for resolved global scope.
+   */
+  resolved: boolean;
 
   // Actions
-  loadRepos: () => Promise<void>;
+  /**
+   * `force` skips the shared in-flight load. A mutation must never resolve against a
+   * registry read that started BEFORE it: `deleteCorpus` awaiting a pre-delete load would
+   * come back with the deleted corpus still in the list. `loadConfig` has the same guard
+   * for pending patches.
+   */
+  loadRepos: (options?: { force?: boolean }) => Promise<RepoLoadResult>;
   setActiveRepo: (repoName: string) => Promise<void>;
   refreshActiveRepo: () => Promise<void>;
   getRepoByName: (name: string) => Corpus | undefined;
   addRepo: (request: CorpusCreateRequest) => Promise<Corpus>;
   updateCorpus: (corpusId: string, updates: CorpusUpdateRequest) => Promise<Corpus>;
   deleteCorpus: (corpusId: string) => Promise<void>;
-  /** Deletes all corpora with last_indexed == null (excludes recall_default). */
+  /** Deletes all corpora with last_indexed == null (excludes runtime-managed corpora). */
   deleteUnindexedCorpora: () => Promise<string[]>;
 }
 
 // Determine API base URL
-/**
- * ---agentspec
- * what: |
- *   Determines the API base URL for HTTP requests based on the current browser environment.
- *   Takes no parameters. Returns a string representing the API endpoint base URL.
- *   Parses window.location.href to extract origin and port information.
- *   If running on development port 5173 (Vite dev server), returns hardcoded backend URL 'http://127.0.0.1:8012/api'.
- *   Otherwise returns the current origin with '/api' appended. Falls back to '/api' if URL parsing fails.
- *
- * why: |
- *   Centralizes API endpoint configuration to handle different deployment environments (local development vs. production).
- *   Development environment (port 5173) typically runs a separate backend server, requiring explicit URL override.
- *   Production deployments serve API from the same origin, so relative path '/api' works correctly.
- *   Try-catch wrapper prevents crashes if window.location is inaccessible in edge cases (SSR, iframe restrictions).
- *
- * guardrails:
- *   - DO NOT hardcode 'http://127.0.0.1:8012/api' in multiple places; this function is the single source of truth for dev backend routing
- *   - ALWAYS verify that port 5173 matches your actual Vite dev server configuration before deploying; mismatched ports will route to wrong backend
- *   - NOTE: Hardcoded backend URL assumes backend runs on localhost:8012 during development; this breaks if backend runs on different host/port
- *   - ASK USER: Before changing the development backend URL or port detection logic, confirm the actual dev environment setup and whether multiple developers use different backend ports
- * ---/agentspec
- */
 const getApiBase = (): string => {
   try {
     return resolveAPIBase();
   } catch {
     return '/api';
+  }
+};
+
+// One GET /api/corpora in flight at a time. The old guard returned early when a load
+// was already running, so the second caller resolved *before* the corpus list existed
+// and carried on with an empty registry; app init awaits `loadRepos()` precisely so the
+// corpus scope is settled before config loads (M-129). Sharing the promise makes every
+// caller wait for the same answer. It is not a cache: the entry is dropped as soon as
+// the load settles, so the next call always goes to the server.
+interface RepoLoadRequest {
+  generation: number;
+  /** Raw request work only. Chaining wrappers must never be stored here or await cycles form. */
+  promise: Promise<RepoLoadResult>;
+}
+
+let inFlightRepoLoad: RepoLoadRequest | null = null;
+// Retain the newest settled result as well: it may settle before a superseded older request.
+// This is not a read cache; only inFlightRepoLoad can be shared by a newly started loadRepos call.
+let latestRepoLoad: RepoLoadRequest | null = null;
+// Only the newest registry request may publish state or canonicalize browser scope. Forced
+// mutation refreshes intentionally supersede an older shared read that may still be pending.
+let repoLoadGeneration = 0;
+
+/**
+ * Wait until the newest request in a supersession chain settles. Mutation callers depend on their
+ * awaited forced refresh having published the winning registry before they inspect it. Shared
+ * non-forced callers need the same transitive guarantee when their raw request is superseded.
+ */
+const waitForWinningRepoLoad = async (initial: RepoLoadRequest): Promise<RepoLoadResult> => {
+  let current = initial;
+  while (true) {
+    const result = await current.promise;
+    const newer = latestRepoLoad;
+    if (!newer || newer.generation <= current.generation) {
+      return result;
+    }
+    current = newer;
+  }
+};
+
+const requireSuccessfulRepoRefresh = (result: RepoLoadResult, completedOperation: string): void => {
+  if (!result.ok) {
+    // The server mutation already happened. Report that fact so the operator does not repeat it,
+    // and leave the winning registry error/state intact until a successful read reconciles it.
+    throw new Error(
+      `${completedOperation}, but the corpus list could not be refreshed. ${result.error}. ` +
+      'Reload the corpus list before continuing.'
+    );
   }
 };
 
@@ -76,14 +119,13 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
   error: null,
   switching: false,
   initialized: false,
+  resolved: false,
 
-  loadRepos: async () => {
-    // Prevent concurrent loads - if already loading, skip
-    const { loading } = get();
-    if (loading) {
-      return;
-    }
-
+  loadRepos: async (options?: { force?: boolean }) => {
+    if (inFlightRepoLoad && !options?.force) return waitForWinningRepoLoad(inFlightRepoLoad);
+    const generation = ++repoLoadGeneration;
+    // Publish request ownership before notifying synchronous Zustand subscribers below.
+    const run = Promise.resolve().then(async (): Promise<RepoLoadResult> => {
     set({ loading: true, error: null });
     try {
       const apiBase = getApiBase();
@@ -95,6 +137,7 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
       }
 
       const repos: Corpus[] = await reposRes.json();
+      if (generation !== repoLoadGeneration) return { ok: true };
 
       // Determine active corpus from URL, localStorage, or first corpus (and validate it exists)
       const url = new URL(window.location.href);
@@ -116,39 +159,50 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
         resolvedFromStored ||
         String(repos[0]?.corpus_id || repos[0]?.slug || repos[0]?.name || '').trim();
 
-      set({
-        repos,
-        activeRepo,
-        loading: false,
-        error: null,
-        initialized: true
-      });
-
-      // Persist + broadcast
+      // Canonicalize every scope, including no corpus, BEFORE publishing state or
+      // events: subscribers may immediately issue a scoped config request.
       if (activeRepo) {
         localStorage.setItem('tribrid_active_corpus', activeRepo);
-        // Keep URL in sync (canonicalize to ?corpus=<id>)
-        try {
-          const nextUrl = new URL(window.location.href);
-          nextUrl.searchParams.set('corpus', activeRepo);
-          nextUrl.searchParams.delete('repo');
-          window.history.replaceState({}, '', nextUrl.toString());
-        } catch {
-          // ignore
-        }
+      } else {
+        localStorage.removeItem('tribrid_active_corpus');
       }
+      localStorage.removeItem('tribrid_active_repo');
+      try {
+        const nextUrl = new URL(window.location.href);
+        if (activeRepo) nextUrl.searchParams.set('corpus', activeRepo);
+        else nextUrl.searchParams.delete('corpus');
+        nextUrl.searchParams.delete('repo');
+        window.history.replaceState({}, '', nextUrl.toString());
+      } catch {
+        // ignore
+      }
+
+      set({ repos, activeRepo, loading: false, error: null, initialized: true, resolved: true });
       window.dispatchEvent(
         new CustomEvent('tribrid-corpus-loaded', {
           detail: { repos, activeRepo }
         })
       );
+      return { ok: true };
 
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load repositories';
+      if (generation !== repoLoadGeneration) return { ok: false, error: message };
       set({
         loading: false,
-        error: error instanceof Error ? error.message : 'Failed to load repositories',
+        error: message,
         initialized: true  // Mark as initialized even on error to prevent retry loops
       });
+      return { ok: false, error: message };
+    }
+    });
+    const request = { generation, promise: run };
+    inFlightRepoLoad = request;
+    latestRepoLoad = request;
+    try {
+      return await waitForWinningRepoLoad(request);
+    } finally {
+      if (inFlightRepoLoad === request) inFlightRepoLoad = null;
     }
   },
 
@@ -220,7 +274,9 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
     }
     const created: Corpus = await response.json();
     // Refresh list and set active
-    await get().loadRepos();
+    requireSuccessfulRepoRefresh(
+      await get().loadRepos({ force: true }), `Corpus "${created.corpus_id}" was created`
+    );
     await get().setActiveRepo(created.corpus_id);
     return created;
   },
@@ -238,7 +294,9 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
     }
     const updated: Corpus = await response.json();
     // Refresh list to reflect changes
-    await get().loadRepos();
+    requireSuccessfulRepoRefresh(
+      await get().loadRepos({ force: true }), `Corpus "${corpusId}" was updated`
+    );
     return updated;
   },
 
@@ -250,11 +308,18 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
     });
     if (!response.ok) {
       const detail = await response.text().catch(() => '');
-      throw new Error(detail || `Failed to delete corpus (${response.status})`);
+      // A corpus held by a live index run is refused with the typed fence envelope. Raw
+      // `{"detail":{...}}` JSON told the operator nothing about which run held it or what
+      // that run was doing, which is the whole question when a delete is refused.
+      throw new Error(
+        describeIndexRunConflict(detail) || detail || `Failed to delete corpus (${response.status})`
+      );
     }
 
     // Refresh list after deletion
-    await get().loadRepos();
+    requireSuccessfulRepoRefresh(
+      await get().loadRepos({ force: true }), `Corpus "${corpusId}" was deleted`
+    );
     const afterActive = String(get().activeRepo || '').trim();
 
     // If the active corpus changed under us, notify listeners that depend on
@@ -278,6 +343,12 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
   },
 
   deleteUnindexedCorpora: async () => {
+    // A corpus can finish indexing while Sources remains open. Never turn the
+    // previously displayed metadata into a destructive cleanup candidate list.
+    const refreshed = await get().loadRepos({ force: true });
+    if (!refreshed.ok) {
+      throw new Error(`No corpora were deleted. The corpus list could not be refreshed. ${refreshed.error}`);
+    }
     const apiBase = getApiBase();
     const { repos, activeRepo } = get();
     const beforeActive = String(activeRepo || '').trim();
@@ -285,7 +356,11 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
     const toDelete = (repos || []).filter((c) => {
       const id = String(c.corpus_id || '').trim();
       if (!id) return false;
-      if (id === 'recall_default') return false;
+      // Runtime-registered corpora are never the operator's to clean up, and they index
+      // through their own path so they look unindexed here. `internal` is the typed answer;
+      // the hardcoded `recall_default` this replaces missed the Codex session corpora and
+      // was exactly the duplicated contract that field was added to remove.
+      if (c.internal) return false;
       return !c.last_indexed;
     });
 
@@ -300,11 +375,23 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
       const id = String(c.corpus_id || '').trim();
       if (!id) continue;
       try {
-        const response = await fetch(`${apiBase}/corpora/${encodeURIComponent(id)}`, {
+        const response = await fetch(`${apiBase}/corpora/${encodeURIComponent(id)}?only_unindexed=true`, {
           method: 'DELETE',
         });
         if (!response.ok) {
           const detail = await response.text().catch(() => '');
+          if (response.status === 409) {
+            try {
+              const refusal = JSON.parse(detail) as CorpusAlreadyIndexedResponse;
+              if (refusal?.detail?.code === 'corpus_already_indexed' && refusal.detail.corpus_id === id) {
+                // Indexing committed after our snapshot. Leave this corpus in
+                // place and reconcile it in the same final registry refresh.
+                continue;
+              }
+            } catch {
+              // A different failure retains the existing cleanup error behavior.
+            }
+          }
           failed.push({ id, status: response.status, detail });
           continue;
         }
@@ -314,7 +401,11 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
       }
     }
 
-    await get().loadRepos();
+    requireSuccessfulRepoRefresh(
+      await get().loadRepos({ force: true }),
+      `Deleted ${deleted.length}/${toDelete.length} corpora` +
+        (failed.length ? `; ${failed.length} deletions failed` : '')
+    );
     const afterActive = String(get().activeRepo || '').trim();
     if (beforeActive && afterActive && beforeActive !== afterActive) {
       window.dispatchEvent(
@@ -337,70 +428,8 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
 }));
 
 // Export selector hooks for convenience
-/**
- * ---agentspec
- * what: |
- *   Exports three custom React hooks that provide selectively-memoized access to repository state from a Zustand store.
- *   useActiveRepo() returns the currently active repository object; useRepos() returns the full array of repositories; useRepoLoading() returns a boolean indicating whether the store is in loading or switching state.
- *   Each hook uses Zustand's selector pattern to subscribe only to its specific state slice, preventing unnecessary re-renders when unrelated state changes.
- *   No parameters are required; hooks automatically connect to the global repoStore context.
- *
- * why: |
- *   Zustand selectors enable fine-grained subscriptions so components only re-render when their specific data changes, not on every store update.
- *   Exporting these as hooks provides a clean, composable API that follows React conventions and hides store implementation details from consumers.
- *   Combining loading and switching flags into a single useRepoLoading hook reduces boilerplate in components that need to show loading UI during either operation.
- *
- * guardrails:
- *   - DO NOT modify the selector logic without understanding Zustand's shallow equality checks; changing state shape may break memoization
- *   - ALWAYS use these hooks instead of direct store access to maintain consistent subscription behavior across the codebase
- *   - NOTE: useRepoLoading combines two separate boolean flags; if loading and switching need independent control, split into separate hooks
- *   - ASK USER: Before adding new repository-related hooks, confirm whether they should be selectors (fine-grained) or if a single useRepo hook returning the entire state object is preferred
- * ---/agentspec
- */
 export const useActiveRepo = () => useRepoStore(state => state.activeRepo);
-/**
- * ---agentspec
- * what: |
- *   Two custom React hooks that provide selector access to the repository store state.
- *   useRepos() returns the repos array from store state; useRepoLoading() returns a boolean indicating whether repos are currently loading or a repo switch is in progress.
- *   Both hooks use Zustand's selector pattern to subscribe only to their specific state slices, preventing unnecessary re-renders when unrelated store state changes.
- *   No parameters required; hooks automatically connect to the global useRepoStore context.
- *   Edge case: useRepoLoading returns true if either loading OR switching is true, combining two related loading states into a single boolean.
- *
- * why: |
- *   These hooks encapsulate store selectors to provide a clean, reusable API for components that need repo data or loading status.
- *   Zustand selectors enable fine-grained subscriptions, so components only re-render when their specific slice of state changes.
- *   Combining loading and switching into one hook simplifies component logic since both states represent "user should see a loading indicator."
- *
- * guardrails:
- *   - DO NOT add additional state slices to these hooks without updating all consuming components; selector changes are breaking changes
- *   - ALWAYS use these hooks instead of accessing useRepoStore directly in components to maintain selector consistency
- *   - NOTE: useRepoLoading combines two separate boolean flags; if you need to distinguish between loading and switching, create a separate hook
- *   - ASK USER: Before adding new repo-related selectors, confirm whether they should be separate hooks or combined with existing ones
- * ---/agentspec
- */
 export const useRepos = () => useRepoStore(state => state.repos);
-/**
- * ---agentspec
- * what: |
- *   Custom React hook that selects and returns a boolean indicating whether a repository is currently loading or switching.
- *   Takes no parameters; accesses the global repo store via useRepoStore.
- *   Returns a boolean: true if either state.loading or state.switching is true, false otherwise.
- *   Used to display loading indicators or disable UI interactions during repo operations.
- *   Combines two separate state flags into a single derived boolean for convenience.
- *
- * why: |
- *   Centralizes the logic for determining "is repo busy" so components don't need to know about both loading and switching states.
- *   Reduces boilerplate in components that need to show loading UI during either operation.
- *   Provides a single source of truth for the "repo is not ready" condition across the application.
- *
- * guardrails:
- *   - DO NOT add additional state flags to this selector without updating all dependent components; this hook is a contract
- *   - ALWAYS use this hook instead of accessing state.loading or state.switching directly in components to maintain consistency
- *   - NOTE: This is a synchronous selector; it does not trigger any state updates or side effects
- *   - ASK USER: Before adding conditional logic (e.g., prioritizing one flag over the other), confirm the intended behavior when both flags are true
- * ---/agentspec
- */
 export const useRepoLoading = () => useRepoStore(state => state.loading || state.switching);
 
 /** Returns true after first load attempt (success or failure) - use to prevent infinite load loops */
