@@ -1,7 +1,8 @@
 /**
  * ModelPicker - Model dropdown from models.json
  *
- * Uses useModels hook to load models filtered by component type (EMB/GEN/RERANK).
+ * Uses useModels to load embedding/reranker catalog rows. Generation aliases
+ * come from the authenticated Chat model picker instead.
  * When `provider` is given, shows models for that provider only.
  * When `provider` is omitted, shows all providers grouped via <optgroup>.
  */
@@ -12,7 +13,9 @@ import { TooltipIcon } from '@/components/ui/TooltipIcon';
 
 interface ModelPickerProps {
   /** Component type filter */
-  componentType: 'EMB' | 'GEN' | 'RERANK';
+  componentType: 'EMB' | 'RERANK';
+  /** Optional runtime selection role filter */
+  selectionRole?: 'embedding_provider' | 'reranker_cloud';
   /** Provider to filter models by. When omitted, all providers shown grouped. */
   provider?: string;
   /** Current selected model name */
@@ -27,10 +30,13 @@ interface ModelPickerProps {
   allowCustom?: boolean;
   /** Disabled state */
   disabled?: boolean;
+  /** Optional model-level filter */
+  modelFilter?: (model: Model) => boolean;
 }
 
 export function ModelPicker({
   componentType,
+  selectionRole,
   provider,
   value,
   onChange,
@@ -38,27 +44,28 @@ export function ModelPicker({
   label,
   allowCustom = false,
   disabled = false,
+  modelFilter,
 }: ModelPickerProps) {
-  const { models, loading, error, providers, getModelsForProvider } = useModels(componentType);
+  const { models, loading, error, providers, getModelsForProvider } = useModels(componentType, { selectionRole });
   const [customMode, setCustomMode] = useState(false);
   const [customValue, setCustomValue] = useState('');
 
   // When provider is given, filter to that provider; otherwise use all models
   const providerModels = useMemo(() => {
-    if (provider) return getModelsForProvider(provider);
-    return models;
-  }, [getModelsForProvider, provider, models]);
+    const baseModels = provider ? getModelsForProvider(provider) : models;
+    return modelFilter ? baseModels.filter(modelFilter) : baseModels;
+  }, [getModelsForProvider, provider, models, modelFilter]);
 
   // Grouped models by provider (used when provider is omitted)
   const groupedModels = useMemo(() => {
     if (provider) return null;
     const groups: Array<{ provider: string; models: Model[] }> = [];
     for (const p of providers) {
-      const pModels = getModelsForProvider(p);
+      const pModels = modelFilter ? getModelsForProvider(p).filter(modelFilter) : getModelsForProvider(p);
       if (pModels.length > 0) groups.push({ provider: p, models: pModels });
     }
     return groups;
-  }, [provider, providers, getModelsForProvider]);
+  }, [provider, providers, getModelsForProvider, modelFilter]);
 
   // Check if current value is in the list (for custom detection)
   const isValueCustom = useMemo(() => {
@@ -166,6 +173,8 @@ export function ModelPicker({
           onChange={handleSelectChange}
           disabled={disabled}
         >
+          {!value && providerModels.length > 0 && <option value="" disabled>Select a model</option>}
+          {isValueCustom && !allowCustom && <option value="__custom__" disabled>Unavailable: {value}</option>}
           {groupedModels ? (
             // No provider given: show all grouped by provider
             groupedModels.length === 0 ? (
@@ -202,7 +211,7 @@ export function ModelPicker({
 
       {/* Show model info if available */}
       {!customMode && value && (
-        <ModelInfo model={providerModels.find(m => m.model === value)} />
+        <ModelInfo model={providerModels.find(m => m.model === value)} componentType={componentType} />
       )}
     </div>
   );
@@ -210,14 +219,19 @@ export function ModelPicker({
 
 /**
  * ModelInfo - Shows additional model details
+ *
+ * The context window is an LLM/chat property; for a reranker it is not a
+ * meaningful knob (a reranker scores query/passage pairs, it does not consume a
+ * long generation context), so it is not shown for RERANK.
  */
-function ModelInfo({ model }: { model?: Model }) {
+function ModelInfo({ model, componentType }: { model?: Model; componentType: 'EMB' | 'RERANK' }) {
   if (!model) return null;
+  const showContext = componentType !== 'RERANK' && model.context != null;
 
   return (
     <div
       style={{
-        fontSize: '11px',
+        fontSize: '11.5px',
         color: 'var(--fg-muted)',
         marginTop: '4px',
         display: 'flex',
@@ -225,7 +239,7 @@ function ModelInfo({ model }: { model?: Model }) {
       }}
     >
       {model.dimensions && <span>Dimensions: {model.dimensions}</span>}
-      {model.context && <span>Context: {model.context.toLocaleString()} tokens</span>}
+      {showContext && <span>Context: {model.context!.toLocaleString()} tokens</span>}
       {model.embed_per_1k != null && (
         <span>Cost: ${model.embed_per_1k.toFixed(5)}/1k tokens</span>
       )}

@@ -3,7 +3,6 @@
 
 import { ReactNode, ComponentType, Suspense, createElement, lazy } from 'react';
 import { Dashboard } from '../pages/Dashboard';
-import Docker from '../pages/Docker';
 // Tab components (all TypeScript)
 import ChatTab from '../components/tabs/ChatTab';
 import GrafanaTab from '../components/tabs/GrafanaTab';
@@ -14,7 +13,9 @@ import InfrastructureTab from '../components/tabs/InfrastructureTab';
 import AdminTab from '../components/tabs/AdminTab';
 import StartTab from '../components/tabs/StartTab';
 
-const RAGTab = lazy(() => import('../components/tabs/RAGTab'));
+// One loader shared by lazy() and the nav prefetch, so hovering the nav item warms the same chunk.
+const loadRAGTab = () => import('../components/tabs/RAGTab');
+const RAGTab = lazy(loadRAGTab);
 const LazyRAGTabRoute: ComponentType = () =>
   createElement(
     Suspense,
@@ -36,6 +37,8 @@ export interface RouteConfig {
   icon: string;
   order: number;
   subtabs?: Subtab[];
+  /** Loads a lazily split route's code ahead of navigation (TabBar calls it on hover/focus). */
+  prefetch?: () => Promise<unknown>;
   nav?: {
     /** If false, route is not rendered in the TabBar. */
     visible?: boolean;
@@ -91,7 +94,9 @@ export const routes: RouteConfig[] = [
     icon: '📈',
     order: 4,
     subtabs: [
-      { id: 'dashboard', title: 'Dashboard' },
+      { id: 'overview', title: 'Overview' },
+      { id: 'dashboards', title: 'Dashboards' },
+      { id: 'incidents', title: 'Incidents' },
       { id: 'config', title: 'Config' }
     ],
     nav: { visible: true, className: 'promoted-tab' }
@@ -103,11 +108,16 @@ export const routes: RouteConfig[] = [
     icon: '🏁',
     order: 5,
     subtabs: [],
-    nav: { visible: false }
+    nav: {
+      visible: true,
+      className: 'promoted-tab',
+      title: 'Visible benchmark surface for runtime and prompt-regression triage'
+    }
   },
   {
     path: '/rag',
     element: LazyRAGTabRoute,
+    prefetch: loadRAGTab,
     label: 'RAG',
     icon: '🧠',
     order: 6,
@@ -115,8 +125,8 @@ export const routes: RouteConfig[] = [
       { id: 'data-quality', title: 'Data Quality' },
       { id: 'retrieval', title: 'Retrieval' },
       { id: 'graph', title: 'Graph' },
-      { id: 'reranker-config', title: 'Reranker' },
-      { id: 'learning-ranker', title: 'Learning Ranker' },
+      { id: 'reranker', title: 'Reranker' },
+      { id: 'learning-reranker', title: 'Learning Reranker' },
       { id: 'learning-agent', title: 'Learning Agent Studio' },
       { id: 'indexing', title: 'Indexing' },
       { id: 'synthetic', title: 'Synthetic Lab' }
@@ -164,20 +174,12 @@ export const routes: RouteConfig[] = [
     icon: '⚙️',
     order: 9,
     subtabs: [
-      { id: 'general', title: 'General' },
-      { id: 'secrets', title: 'Secrets' },
-      { id: 'integrations', title: 'Integrations' }
+      { id: 'basic', title: 'Basic' },
+      { id: 'advanced', title: 'Advanced' },
+      { id: 'raw', title: 'Raw' },
+      { id: 'dependencies', title: 'Dependencies' }
     ],
     nav: { visible: true }
-  },
-  {
-    path: '/docker',
-    element: Docker,
-    label: 'Docker',
-    icon: '🐳',
-    order: 10,
-    subtabs: [],
-    nav: { visible: false }
   }
 ];
 
@@ -187,6 +189,3 @@ export function getRouteByPath(path: string): RouteConfig | undefined {
 }
 
 // Get default route
-export function getDefaultRoute(): RouteConfig {
-  return routes.find(r => r.path === '/dashboard') || routes[0];
-}
