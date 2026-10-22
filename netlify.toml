@@ -12,7 +12,7 @@
   included_files = ["node_modules/@modelcontextprotocol/sdk/dist/cjs/server/**"]
 
 [build.environment]
-  NODE_VERSION = "20"
+  NODE_VERSION = "22.23.4"
 
 [[redirects]]
   from = "/demo/*"
