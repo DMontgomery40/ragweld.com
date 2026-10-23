@@ -5,6 +5,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useNavigate } from 'react-router-dom';
 import 'dockview/dist/styles/dockview.css';
 import { TooltipIcon } from '@/components/ui/TooltipIcon';
+import { LineageMeta } from '@/components/ui/LineageMeta';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useActiveRepo } from '@/stores/useRepoStore';
 import { useConfigField, useNotification, useReranker } from '@/hooks';
@@ -12,6 +13,7 @@ import { rerankerTrainingService, type RerankerTrainRunsScope } from '@/services
 import type {
   CorpusEvalProfile,
   RerankerScoreResponse,
+  RerankerTrainDiagnosticRecord,
   RerankerTrainMetricEvent,
   RerankerTrainRun,
   RerankerTrainRunMeta,
@@ -124,6 +126,7 @@ function metricEventKey(ev: RerankerTrainMetricEvent): string {
     epoch: ev.epoch ?? null,
     percent: ev.percent ?? null,
     message: ev.message ?? null,
+    operator_hint: ev.operator_hint ?? null,
     loss: ev.loss ?? null,
     lr: ev.lr ?? null,
     grad_norm: ev.grad_norm ?? null,
@@ -191,7 +194,7 @@ function presetLabel(preset: LayoutPreset): string {
 }
 
 export function TrainingStudio() {
-  const { success, error: notifyError, info } = useNotification();
+  const { success, error: notifyError, info, notifications, removeNotification } = useNotification();
   const activeCorpus = useActiveRepo();
   const navigate = useNavigate();
   const config = useConfigStore((s) => s.config);
@@ -242,6 +245,8 @@ export function TrainingStudio() {
 
   const [logsLoading, setLogsLoading] = useState(false);
   const [logs, setLogs] = useState<any[]>([]);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<RerankerTrainDiagnosticRecord[]>([]);
 
   const [probeQuery, setProbeQuery] = useState('auth login flow');
   const [probeDocument, setProbeDocument] = useState('auth login token flow good');
@@ -251,7 +256,7 @@ export function TrainingStudio() {
 
   const [modelPath, setModelPath] = useConfigField<string>(
     'training.tribrid_reranker_model_path',
-    'models/learning-reranker-epstein-files-1'
+    'models/learning-reranker-active'
   );
   const [logPath, setLogPath] = useConfigField<string>('tracing.tribrid_log_path', 'data/logs/queries.jsonl');
   const [tripletsPath, setTripletsPath] = useConfigField<string>(
@@ -279,7 +284,7 @@ export function TrainingStudio() {
   );
   const [negativeRatio, setNegativeRatio] = useConfigField<number>('training.learning_reranker_negative_ratio', 5);
   const [gradAccumSteps, setGradAccumSteps] = useConfigField<number>('training.learning_reranker_grad_accum_steps', 8);
-  const [promoteIfImproves, setPromoteIfImproves] = useConfigField<number>('training.learning_reranker_promote_if_improves', 1);
+  const [promoteIfImproves, setPromoteIfImproves] = useConfigField<boolean>('training.learning_reranker_promote_if_improves', true);
   const [promoteEpsilon, setPromoteEpsilon] = useConfigField<number>('training.learning_reranker_promote_epsilon', 0.0);
   const [unloadAfterSec, setUnloadAfterSec] = useConfigField<number>('training.learning_reranker_unload_after_sec', 0);
   const [telemetryIntervalSteps, setTelemetryIntervalSteps] = useConfigField<number>(
@@ -295,7 +300,7 @@ export function TrainingStudio() {
     'ui.learning_reranker_default_preset',
     'balanced'
   );
-  const [showSetupRow, setShowSetupRow] = useConfigField<number>('ui.learning_reranker_show_setup_row', 0);
+  const [showSetupRow, setShowSetupRow] = useConfigField<boolean>('ui.learning_reranker_show_setup_row', false);
   const [logsRenderer, setLogsRenderer] = useConfigField<'json' | 'xterm'>(
     'ui.learning_reranker_logs_renderer',
     'xterm'
@@ -336,13 +341,13 @@ export function TrainingStudio() {
     'ui.learning_reranker_visualizer_motion_intensity',
     1
   );
-  const [visualizerShowVectorField, setVisualizerShowVectorField] = useConfigField<number>(
+  const [visualizerShowVectorField, setVisualizerShowVectorField] = useConfigField<boolean>(
     'ui.learning_reranker_visualizer_show_vector_field',
-    1
+    true
   );
-  const [visualizerReduceMotion, setVisualizerReduceMotion] = useConfigField<number>(
+  const [visualizerReduceMotion, setVisualizerReduceMotion] = useConfigField<boolean>(
     'ui.learning_reranker_visualizer_reduce_motion',
-    0
+    false
   );
 
   const ringLimit = clamp(Number(visualizerMaxPoints || 10000), 1000, 50000);
@@ -562,6 +567,21 @@ export function TrainingStudio() {
 
   useEffect(() => {
     if (bottomTab !== 'logs') return;
+    if (selectedRunId) {
+      setDiagnosticsLoading(true);
+      void rerankerTrainingService
+        .getDiagnostics(selectedRunId, 1000)
+        .then((res) => {
+          setDiagnostics(res?.records || []);
+        })
+        .catch((e) => {
+          notifyError(e instanceof Error ? e.message : 'Failed to load diagnostics');
+        })
+        .finally(() => {
+          setDiagnosticsLoading(false);
+        });
+      return;
+    }
     setLogsLoading(true);
     void getLogs()
       .then((res) => {
@@ -573,7 +593,7 @@ export function TrainingStudio() {
       .finally(() => {
         setLogsLoading(false);
       });
-  }, [bottomTab, getLogs, notifyError]);
+  }, [bottomTab, getLogs, notifyError, selectedRunId]);
 
   const recommended = useMemo(() => {
     if (!profile) return null;
@@ -618,7 +638,8 @@ export function TrainingStudio() {
     if (!q) return events;
     return events.filter((ev) => {
       const msg = String(ev.message || '').toLowerCase();
-      return msg.includes(q) || ev.type.includes(q);
+      const hint = String(ev.operator_hint || '').toLowerCase();
+      return msg.includes(q) || hint.includes(q) || ev.type.includes(q);
     });
   }, [events, eventQuery]);
 
@@ -708,8 +729,21 @@ export function TrainingStudio() {
     try {
       info('Mining triplets…');
       const res = await mineTriplets();
-      if (res?.ok) success('Triplet mining complete');
-      else notifyError(res?.error || 'Triplet mining failed');
+      if (res?.ok) {
+        const evalSource = res.eval_run_id
+          ? `${res.triplets_from_eval_run ?? 0} from eval run ${res.eval_run_id}`
+          : 'no persisted eval run for this corpus';
+        const rejected = [
+          res.triplets_skipped_existing ? `${res.triplets_skipped_existing} already on disk` : '',
+          res.triplets_rejected_placeholder ? `${res.triplets_rejected_placeholder} placeholder queries rejected` : '',
+          res.negatives_rejected_answer_leak ? `${res.negatives_rejected_answer_leak} answer-leaking negatives rejected` : '',
+          res.negatives_rejected_unverifiable ? `${res.negatives_rejected_unverifiable} unreadable candidates rejected` : '',
+          res.entries_without_answer_provenance ? `${res.entries_without_answer_provenance} results without an expected answer` : '',
+        ].filter(Boolean);
+        success(
+          `Mined ${res.triplets_mined ?? 0} triplets (${res.triplets_from_feedback ?? 0} from feedback, ${evalSource}${rejected.length ? `; ${rejected.join(', ')}` : ''}); ${res.triplets_total ?? 0} rows on disk.`
+        );
+      } else notifyError(res?.error || 'Triplet mining failed');
       await refreshStats();
     } catch (e) {
       notifyError(e instanceof Error ? e.message : 'Triplet mining failed');
@@ -1137,8 +1171,8 @@ export function TrainingStudio() {
           targetFps={Number(visualizerTargetFps)}
           tailSeconds={Number(visualizerTailSeconds)}
           motionIntensity={Number(visualizerMotionIntensity)}
-          reduceMotion={Number(visualizerReduceMotion) === 1}
-          showVectorField={Number(visualizerShowVectorField) === 1}
+          reduceMotion={visualizerReduceMotion}
+          showVectorField={visualizerShowVectorField}
         />
       </section>
     );
@@ -1178,31 +1212,42 @@ export function TrainingStudio() {
                 <h3 className="studio-panel-title">Run HUD</h3>
               </header>
               {selectedRun ? (
-                <div className="studio-keyvals">
-                  <div>
-                    <span>status</span>
-                    <span
-                      className="studio-run-status-pill studio-mono"
-                      data-status={hud?.status || 'unknown'}
-                      data-testid="studio-run-hud-status"
-                    >
-                      {hud?.status || 'unknown'}
-                    </span>
-                  </div>
-                  <div><span>backend</span><span className="studio-mono">{hud?.backend || '—'}</span></div>
-                  <div><span>base_model</span><span className="studio-mono studio-truncate" title={hud?.baseModel || ''}>{hud?.baseModel || '—'}</span></div>
-                  <div><span>active_path</span><span className="studio-mono studio-truncate" title={hud?.activePath || ''}>{hud?.activePath || '—'}</span></div>
-                  <div><span>duration</span><span className="studio-mono">{hud?.durationSec == null ? '—' : `${hud.durationSec.toFixed(1)}s`}</span></div>
-                  <div><span>step</span><span className="studio-mono">{hud?.last?.step ?? '—'}</span></div>
-                  <div><span>epoch</span><span className="studio-mono">{hud?.last?.epoch ?? '—'}</span></div>
-                  <div><span>progress</span><span className="studio-mono" data-testid="studio-run-hud-progress">{hud?.progressLabel || '—'}</span></div>
-                  {hud?.terminalMessage ? (
+                <>
+                  <div className="studio-keyvals">
                     <div>
-                      <span>{hud.status === 'cancelled' ? 'cancel_reason' : 'failure_reason'}</span>
-                      <span className="studio-mono studio-truncate" title={hud.terminalMessage}>{hud.terminalMessage}</span>
+                      <span>status</span>
+                      <span
+                        className="studio-run-status-pill studio-mono"
+                        data-status={hud?.status || 'unknown'}
+                        data-testid="studio-run-hud-status"
+                      >
+                        {hud?.status || 'unknown'}
+                      </span>
                     </div>
-                  ) : null}
-                </div>
+                    <div><span>backend</span><span className="studio-mono">{hud?.backend || '—'}</span></div>
+                    <div><span>base_model</span><span className="studio-mono studio-truncate" title={hud?.baseModel || ''}>{hud?.baseModel || '—'}</span></div>
+                    <div><span>active_path</span><span className="studio-mono studio-truncate" title={hud?.activePath || ''}>{hud?.activePath || '—'}</span></div>
+                    <div><span>duration</span><span className="studio-mono">{hud?.durationSec == null ? '—' : `${hud.durationSec.toFixed(1)}s`}</span></div>
+                    <div><span>step</span><span className="studio-mono">{hud?.last?.step ?? '—'}</span></div>
+                    <div><span>epoch</span><span className="studio-mono">{hud?.last?.epoch ?? '—'}</span></div>
+                    <div><span>progress</span><span className="studio-mono" data-testid="studio-run-hud-progress">{hud?.progressLabel || '—'}</span></div>
+                    {hud?.terminalMessage ? (
+                      <div>
+                        <span>{hud.status === 'cancelled' ? 'cancel_reason' : 'failure_reason'}</span>
+                        <span className="studio-mono studio-truncate" title={hud.terminalMessage}>{hud.terminalMessage}</span>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div>
+                    <LineageMeta
+                      bundleId={selectedRun.bundle_id}
+                      inputBundleId={selectedRun.input_bundle_id}
+                      lineageRef={selectedRun.lineage_ref}
+                      modelArtifactRef={selectedRun.model_artifact_ref}
+                      corpusId={activeCorpus}
+                    />
+                  </div>
+                </>
               ) : (
                 <p className="studio-empty">Select a run.</p>
               )}
@@ -1383,11 +1428,19 @@ export function TrainingStudio() {
                     <input type="number" min={1} max={128} value={gradAccumSteps} onChange={(e) => setGradAccumSteps(parseInt(e.target.value || '8', 10))} />
                   </div>
                   <div className="input-group">
-                    <label>Promote if improves <TooltipIcon name="LEARNING_RERANKER_PROMOTE_IF_IMPROVES" /></label>
-                    <select value={String(promoteIfImproves)} onChange={(e) => setPromoteIfImproves(parseInt(e.target.value, 10))}>
-                      <option value="1">Yes</option>
-                      <option value="0">No</option>
-                    </select>
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={promoteIfImproves}
+                        onChange={(e) => setPromoteIfImproves(e.target.checked)}
+                      />
+                      <span className="toggle-track" aria-hidden="true">
+                        <span className="toggle-thumb"></span>
+                      </span>
+                      <span className="toggle-label">
+                        Promote if improves <TooltipIcon name="LEARNING_RERANKER_PROMOTE_IF_IMPROVES" />
+                      </span>
+                    </label>
                   </div>
                   <div className="input-group">
                     <label>Promote epsilon <TooltipIcon name="LEARNING_RERANKER_PROMOTE_EPSILON" /></label>
@@ -1434,11 +1487,19 @@ export function TrainingStudio() {
                     </select>
                   </div>
                   <div className="input-group">
-                    <label>Show setup row <TooltipIcon name="LEARNING_RERANKER_SHOW_SETUP_ROW" /></label>
-                    <select value={String(showSetupRow)} onChange={(e) => setShowSetupRow(parseInt(e.target.value, 10))}>
-                      <option value="0">No</option>
-                      <option value="1">Yes</option>
-                    </select>
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={showSetupRow}
+                        onChange={(e) => setShowSetupRow(e.target.checked)}
+                      />
+                      <span className="toggle-track" aria-hidden="true">
+                        <span className="toggle-thumb"></span>
+                      </span>
+                      <span className="toggle-label">
+                        Show setup row <TooltipIcon name="LEARNING_RERANKER_SHOW_SETUP_ROW" />
+                      </span>
+                    </label>
                   </div>
                   <div className="input-group">
                     <label>Logs renderer <TooltipIcon name="LEARNING_RERANKER_LOGS_RENDERER" /></label>
@@ -1500,18 +1561,34 @@ export function TrainingStudio() {
                     <input type="number" min={0} max={2} step={0.05} value={visualizerMotionIntensity} onChange={(e) => setVisualizerMotionIntensity(parseFloat(e.target.value || '1'))} />
                   </div>
                   <div className="input-group">
-                    <label>Show vector field <TooltipIcon name="LEARNING_RERANKER_VISUALIZER_SHOW_VECTOR_FIELD" /></label>
-                    <select value={String(visualizerShowVectorField)} onChange={(e) => setVisualizerShowVectorField(parseInt(e.target.value, 10))}>
-                      <option value="1">Yes</option>
-                      <option value="0">No</option>
-                    </select>
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={visualizerShowVectorField}
+                        onChange={(e) => setVisualizerShowVectorField(e.target.checked)}
+                      />
+                      <span className="toggle-track" aria-hidden="true">
+                        <span className="toggle-thumb"></span>
+                      </span>
+                      <span className="toggle-label">
+                        Show vector field <TooltipIcon name="LEARNING_RERANKER_VISUALIZER_SHOW_VECTOR_FIELD" />
+                      </span>
+                    </label>
                   </div>
                   <div className="input-group">
-                    <label>Reduce motion <TooltipIcon name="LEARNING_RERANKER_VISUALIZER_REDUCE_MOTION" /></label>
-                    <select value={String(visualizerReduceMotion)} onChange={(e) => setVisualizerReduceMotion(parseInt(e.target.value, 10))}>
-                      <option value="0">No</option>
-                      <option value="1">Yes</option>
-                    </select>
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={visualizerReduceMotion}
+                        onChange={(e) => setVisualizerReduceMotion(e.target.checked)}
+                      />
+                      <span className="toggle-track" aria-hidden="true">
+                        <span className="toggle-thumb"></span>
+                      </span>
+                      <span className="toggle-label">
+                        Reduce motion <TooltipIcon name="LEARNING_RERANKER_VISUALIZER_REDUCE_MOTION" />
+                      </span>
+                    </label>
                   </div>
                 </div>
               </details>
@@ -1664,29 +1741,37 @@ export function TrainingStudio() {
   ]);
 
   const renderLogsBody = useCallback(() => {
+    const activeLogs = selectedRunId ? diagnostics : logs;
+    const activeLoading = selectedRunId ? diagnosticsLoading : logsLoading;
     if (logsRenderer === 'xterm') {
       return (
         <StudioLogTerminal
-          logs={logs}
-          loading={logsLoading}
-          onDownload={downloadLogs}
-          onClear={clearLogs}
+          logs={activeLogs}
+          loading={activeLoading}
+          onDownload={() => {
+            if (selectedRunId) rerankerTrainingService.downloadDiagnostics(selectedRunId);
+            else downloadLogs();
+          }}
+          onClear={() => {
+            if (!selectedRunId) void clearLogs();
+          }}
+          clearDisabled={Boolean(selectedRunId)}
         />
       );
     }
 
     return (
       <div className="studio-log-viewer" data-testid="studio-log-viewer">
-        {logsLoading ? (
-          <p className="studio-empty">Loading logs…</p>
-        ) : logs.length === 0 ? (
-          <p className="studio-empty">No logs.</p>
+        {activeLoading ? (
+          <p className="studio-empty">{selectedRunId ? 'Loading diagnostics…' : 'Loading logs…'}</p>
+        ) : activeLogs.length === 0 ? (
+          <p className="studio-empty">{selectedRunId ? 'No diagnostics.' : 'No logs.'}</p>
         ) : (
-          <pre className="studio-pre">{JSON.stringify(logs, null, 2)}</pre>
+          <pre className="studio-pre">{JSON.stringify(activeLogs, null, 2)}</pre>
         )}
       </div>
     );
-  }, [clearLogs, downloadLogs, logs, logsLoading, logsRenderer]);
+  }, [clearLogs, diagnostics, diagnosticsLoading, downloadLogs, logs, logsLoading, logsRenderer, selectedRunId]);
 
   const renderActivityPanel = useCallback(() => {
     return (
@@ -1704,13 +1789,23 @@ export function TrainingStudio() {
           {bottomTab === 'timeline' ? (
             <input
               className="studio-search"
-              placeholder="Filter events by type/message"
+              placeholder="Filter events by type/message/hint"
               value={eventQuery}
               onChange={(e) => setEventQuery(e.target.value)}
             />
           ) : <span className="studio-tab-spacer"></span>}
-          <button className="small-button" onClick={downloadLogs}>Download</button>
-          <button className="small-button" onClick={clearLogs}>Clear</button>
+          <button
+            className="small-button"
+            onClick={() => {
+              if (selectedRunId) rerankerTrainingService.downloadDiagnostics(selectedRunId);
+              else downloadLogs();
+            }}
+          >
+            Download
+          </button>
+          <button className="small-button" onClick={clearLogs} disabled={Boolean(selectedRunId)}>
+            Clear
+          </button>
         </div>
 
         <div className="studio-bottom-body">
@@ -1738,6 +1833,11 @@ export function TrainingStudio() {
                           {ev.percent != null ? <span className="studio-chip">{ev.percent}%</span> : null}
                         </header>
                         {ev.message ? <p className="studio-event-message">{ev.message}</p> : null}
+                        {ev.operator_hint ? (
+                          <p className="studio-event-message studio-event-operator-hint">
+                            operatorHint: {ev.operator_hint}
+                          </p>
+                        ) : null}
                         {ev.metrics ? (
                           <div className="studio-mini-grid">
                             {Object.entries(ev.metrics).map(([k, v]) => (
@@ -1845,6 +1945,14 @@ export function TrainingStudio() {
 
   return (
     <section className="training-studio-root" data-testid="reranker-training-studio">
+      <div className="notification-container" data-testid="reranker-studio-notifications">
+        {notifications.map((notification) => (
+          <div key={notification.id} className={`notification notification-${notification.type}`} role="status">
+            <span>{notification.message}</span>
+            <button onClick={() => removeNotification(notification.id)} aria-label="Dismiss notification">×</button>
+          </div>
+        ))}
+      </div>
       <header className="training-studio-header">
         <div>
           <h2 className="studio-title">Learning Reranker Training Studio</h2>
@@ -1891,8 +1999,8 @@ export function TrainingStudio() {
           <button className="small-button" onClick={() => applyLayoutPreset('balanced')}>
             Reset View
           </button>
-          <button className="small-button" onClick={() => setShowSetupRow(showSetupRow === 1 ? 0 : 1)}>
-            {showSetupRow === 1 ? 'Hide Setup' : 'Show Setup'}
+          <button className="small-button" onClick={() => setShowSetupRow(!showSetupRow)}>
+            {showSetupRow ? 'Hide Setup' : 'Show Setup'}
           </button>
           <button
             className="small-button"
@@ -1920,7 +2028,7 @@ export function TrainingStudio() {
         <span className="studio-help-anchor">Shortcuts: Ctrl/Cmd+Shift+1/2/3 (viz/logs/inspector)</span>
       </div>
 
-      {showSetupRow === 1 ? (
+      {showSetupRow ? (
         <div className="studio-run-setup">
           <div className="studio-run-setup-item">
             <span className="studio-label">Corpus</span>
