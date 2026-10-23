@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getRouteByPath } from '@/config/routes';
+import { resolveSubtabAlias } from '@/config/subtabAliases';
+import { showToast } from '@/utils/toast';
 
 export type UseSubtabOptions<T extends string = string> = {
   /**
@@ -51,9 +53,15 @@ export function useSubtab<T extends string = string>({
 
   const params = useMemo(() => new URLSearchParams(location.search || ''), [location.search]);
   const raw = params.get(param);
-  const isValid = Boolean(raw && allowedSet.has(raw));
+  const rawValid = Boolean(raw && allowedSet.has(raw));
+  // A renamed slug (its former value listed in subtabAliases) resolves to its canonical id so
+  // old bookmarks/links land on the right subtab instead of the default with an error toast.
+  const aliasTarget = rawValid ? null : resolveSubtabAlias(raw);
+  const aliasValid = Boolean(aliasTarget && allowedSet.has(aliasTarget));
+  const isValid = rawValid || aliasValid;
 
-  const derivedActive = (isValid ? raw : defaultSubtab) as T;
+  const effective = (rawValid ? raw : aliasValid ? aliasTarget : defaultSubtab) as T;
+  const derivedActive = effective;
   const [localSubtab, setLocalSubtab] = useState<T>(derivedActive);
 
   // In docked native views we must NOT mutate the global URL/history. Instead, keep subtab state local.
@@ -86,16 +94,47 @@ export function useSubtab<T extends string = string>({
     [allowed.length, allowedSet, defaultSubtab, isDockContext, location.pathname, location.search, navigate, param, replaceOnChange]
   );
 
-  // Ensure the URL always contains a valid ?subtab=... for deep-linking.
+  // A slug the operator actually typed (or followed from a runbook, doc or bookmark)
+  // and that this route does not have used to be swallowed: the URL was rewritten to
+  // the default subtab with no notice, so `?subtab=reranker` looked exactly like a
+  // working link to Reranker while showing Data Quality (M-126, M-159/X-03). Announce
+  // it once per bad value; an absent param is not a mistake and stays silent.
+  const announcedSubtab = useRef<string | null>(null);
+  useEffect(() => {
+    if (isDockContext) return;
+    if (!allowed.length) return;
+    const typed = String(raw || '').trim();
+    // Clearing on a valid slug too, so pasting the same bad slug a second time in one
+    // mount is announced again rather than silently corrected.
+    if (!typed || isValid) {
+      announcedSubtab.current = null;
+      return;
+    }
+    const key = `${routePath}:${typed}`;
+    if (announcedSubtab.current === key) return;
+    announcedSubtab.current = key;
+    const route = getRouteByPath(routePath);
+    const landing =
+      (route?.subtabs ?? []).find((s) => s.id === String(defaultSubtab))?.title || String(defaultSubtab);
+    const known = (route?.subtabs ?? []).map((s) => s.id).join(', ');
+    showToast(
+      `No "${typed}" tab on ${route?.label || routePath}. Showing ${landing}. Valid values: ${known}.`,
+      'error'
+    );
+  }, [allowed.length, defaultSubtab, isDockContext, isValid, raw, routePath]);
+
+  // Ensure the URL always contains a valid canonical ?subtab=... for deep-linking. When the raw
+  // slug is a renamed alias, `effective` is the canonical id, so the address bar is corrected to
+  // the new slug (silently, no toast); when it is missing/invalid, `effective` is the default.
   useEffect(() => {
     if (!ensureInUrl) return;
     if (isDockContext) return;
     if (!allowed.length) return;
-    if (isValid) return;
+    if (rawValid) return;
     const nextParams = new URLSearchParams(location.search || '');
-    nextParams.set(param, String(defaultSubtab));
+    nextParams.set(param, String(effective));
     navigate({ pathname: location.pathname, search: `?${nextParams.toString()}` }, { replace: true });
-  }, [allowed.length, defaultSubtab, ensureInUrl, isDockContext, isValid, location.pathname, location.search, navigate, param]);
+  }, [allowed.length, effective, ensureInUrl, isDockContext, rawValid, location.pathname, location.search, navigate, param]);
 
   return {
     activeSubtab,
