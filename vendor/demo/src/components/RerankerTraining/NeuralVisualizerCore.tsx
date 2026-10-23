@@ -416,7 +416,11 @@ export function NeuralVisualizerCore({
           setZoom((z) => clamp(z + dir, 0.25, 4.0));
         }}
       >
-        {activeRenderer === 'webgpu' ? (
+        {/* At zero points the 3D scene (cyan point lights, bloom, terrain grid) paints a
+            saturated mass that reads as data (drive D-26). Don't mount any renderer until
+            there is a trajectory to draw — the neutral canvas ground shows through and the
+            empty-state text sits on it legibly. R3F disposes the WebGL context on unmount. */}
+        {pointCount > 0 && activeRenderer === 'webgpu' ? (
           <NeuralVisualizerWebGPU
             points={visiblePoints.projected}
             terrainPoints={visiblePoints.terrainProjected}
@@ -429,7 +433,7 @@ export function NeuralVisualizerCore({
           />
         ) : null}
 
-        {activeRenderer === 'webgl2' ? (
+        {pointCount > 0 && activeRenderer === 'webgl2' ? (
           <NeuralVisualizerWebGL2
             points={visiblePoints.projected}
             terrainPoints={visiblePoints.terrainProjected}
@@ -441,13 +445,21 @@ export function NeuralVisualizerCore({
           />
         ) : null}
 
-        {activeRenderer === 'canvas2d' ? (
+        {pointCount > 0 && activeRenderer === 'canvas2d' ? (
           <NeuralVisualizerCanvas2D points={visiblePoints.projected} targetFps={Number(targetFps || 60)} />
         ) : null}
 
         {pointCount === 0 ? (
+          // The canvas ground is a fixed dark navy in every theme, so the empty-state text
+          // uses explicit light colors (not the theme-following --studio-text, which turns
+          // dark in light mode) to stay legible against it.
           <div className="neural-overlay" data-testid="neural-awaiting-telemetry">
-            Awaiting telemetry...
+            <div className="neural-empty">
+              <div className="neural-empty-title">No training telemetry yet</div>
+              <div className="neural-empty-body">
+                Start a run (or mine triplets and train) to plot the optimization trajectory here.
+              </div>
+            </div>
           </div>
         ) : null}
         {pointCount > 0 && projectionMeta.degenerateProjection ? (

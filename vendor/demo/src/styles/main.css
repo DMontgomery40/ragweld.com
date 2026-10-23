@@ -18,7 +18,8 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            height: 56px;
+            height: var(--topbar-h);
+            flex-shrink: 0;
             position: sticky;
             top: 0;
             z-index: 100;
@@ -42,12 +43,11 @@
 
         .topbar .tagline {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            font-size: 11px;
+            font-size: 11.5px;
             font-weight: 400;
             letter-spacing: 3px;
             text-transform: uppercase;
             color: var(--fg-muted);
-            opacity: 0.6;
         }
 
         .top-actions {
@@ -103,6 +103,7 @@
             font-size: 13px;
             font-family: 'SF Mono', monospace;
             min-width: 60px;
+            white-space: nowrap; /* never split "OK @ 7:46:55 AM" across two lines (M-114/X-15) */
         }
 
         #global-search {
@@ -190,14 +191,34 @@
         :root {
             --sidepanel-width: 360px;
             --sidebar-width: 170px;
+            --topbar-h: 56px;
+        }
+
+        /* The app shell fills exactly the viewport (dynamic vh so mobile browser
+           chrome can't leave a dead band under the footer, M-113/X-14). The
+           topbar keeps its natural height; the layout takes the rest. This
+           retires every `calc(100vh - 56px)` magic number, which was already
+           4px wrong wherever the topbar is not 56px tall (e.g. 52px <=1024px). */
+        #root {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            height: 100dvh;
         }
 
         /* 3-column layout: sidebar | main-content | sidepanel */
         .layout {
             display: grid;
             grid-template-columns: var(--sidebar-width) 1fr var(--sidepanel-width);
-            min-height: calc(100vh - 56px);
+            flex: 1 1 auto;
+            min-height: 0;
             position: relative;
+        }
+
+        /* Preserve the desktop grid while giving mobile panes their own scroll
+           owner, independent of the drawer anchored to the layout boundary. */
+        .layout-panes {
+            display: contents;
         }
 
         /* Left sidebar (wraps TabBar) */
@@ -217,9 +238,9 @@
             flex-direction: column;
             min-width: 0;
             overflow: hidden;
-            /* Constrain to grid cell height */
+            /* Fills its grid row, which stretches to the layout's flex height. */
             height: 100%;
-            max-height: calc(100vh - 56px); /* viewport minus topbar */
+            min-height: 0;
         }
 
         /* Breadcrumbs bar */
@@ -273,7 +294,7 @@
             /* Fixed so the grab area stays within the viewport (prevents offscreen hit testing). */
             position: fixed;
             left: calc(100vw - var(--sidepanel-width) - 3px);
-            top: 56px; /* matches .topbar height */
+            top: var(--topbar-h); /* matches .topbar height */
             bottom: 0;
             width: 10px; /* wider grab area for reliability */
             cursor: col-resize;
@@ -343,7 +364,7 @@
         .sidebar .tab-bar a.active {
             background: var(--bg-elev2);
             border-left-color: var(--accent);
-            color: var(--accent);
+            color: var(--accent-text);
             font-weight: 600;
         }
 
@@ -391,7 +412,7 @@
         .tab-bar a.promoted-tab.active {
             background: var(--bg-elev2);
             border-left-color: var(--accent);
-            color: var(--accent);
+            color: var(--accent-text);
         }
 
         /* RAG Subtabs - Hidden by default, shown when RAG tab active */
@@ -436,6 +457,12 @@
         .tab-content {
             /* React Router only renders active route, so tab-content is always visible */
             /* THIS is the scroll container - sticky subtab-bar sticks to top of THIS */
+            /* Containing block for absolutely positioned children, and ONLY for those.
+               This used to come as a side effect of a `transform: translateZ(0)` GPU hint
+               in micro-interactions.css, which also captured `position: fixed` children
+               and opened every inline modal off-screen. `position: relative` keeps the
+               half the layouts depend on and drops the half that broke them. */
+            position: relative;
             display: flex;
             flex-direction: column;
             flex: 1;
@@ -444,6 +471,12 @@
             padding: 0;
             min-height: 0;
             height: 0; /* Force flex to constrain height - critical for sticky */
+            /* The single-row sticky subtab bar is roughly 48px tall; 64px deliberately
+               leaves another 16px of click clearance. Without it, scroll-into-view
+               (keyboard nav, anchor jumps, Playwright) parks the target under the bar.
+               The bottom guard similarly clears bottom-seam chrome such as chat status. */
+            scroll-padding-top: 64px;
+            scroll-padding-bottom: 48px;
         }
 
         .tab-content.active {
@@ -591,7 +624,7 @@
         }
 
         .settings-section h3 span {
-            font-size: 10px;
+            font-size: 11.5px;
         }
 
         .settings-section p.small {
@@ -713,7 +746,7 @@
         }
 
         .action-buttons button.is-disabled {
-            opacity: 0.6;
+            opacity: 0.8;
             cursor: not-allowed;
             transform: none;
         }
@@ -743,7 +776,7 @@
         #profile-tooltip .tooltip-header {
             font-size: 13px;
             font-weight: 600;
-            color: var(--accent);
+            color: var(--accent-text);
             margin-bottom: 10px;
             padding-bottom: 8px;
             border-bottom: 1px solid var(--line);
@@ -801,6 +834,22 @@
             margin-bottom: 16px;
         }
 
+        .dock-panel {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            min-height: 0;
+        }
+
+        .dock-body {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow: hidden;
+            /* Native pages, source documents and settings inherit wrapping;
+               content that cannot wrap scrolls in its mode's own viewport. */
+            overflow-wrap: anywhere;
+        }
+
         /* Dock panel header - sticky with proper button wrapping */
         .dock-header {
             position: sticky;
@@ -848,15 +897,28 @@
             white-space: nowrap;
         }
 
-        /* Make sidepanel scrollable with sticky header support */
+        /* Right panel: bounded to the viewport like .main-content so a docked
+           page scrolls inside the dock instead of stretching the layout grid
+           (2026-08-25 drive finding M3: the whole window scrolled ~5000px). */
         .sidepanel {
             grid-column: 3 / 4;
             background: var(--card-bg);
             padding: 0;
-            overflow-y: auto;
+            overflow: hidden;
             position: relative;
             display: flex;
             flex-direction: column;
+            height: 100%;
+            min-height: 0;
+        }
+
+        /* A docked page scrolls inside the dock: its .tab-content is the scroll
+           container, never the window (finding M3). */
+        .dock-native > .tab-content {
+            overflow-y: auto;
+            flex: 1 1 auto;
+            min-height: 0;
+            height: 0;
         }
 
         .sidepanel-shell {
@@ -872,6 +934,7 @@
             justify-content: center;
             gap: 0;
             height: 100vh;
+            height: 100dvh;
             background: var(--bg);
             color: var(--fg);
         }
@@ -901,6 +964,7 @@
 
         .app-embed-root {
             height: 100vh;
+            height: 100dvh;
             background: var(--bg);
             color: var(--fg);
             display: flex;
@@ -929,7 +993,7 @@
             font-size: 14px;
             font-weight: 600;
             margin-bottom: 14px;
-            color: var(--accent);
+            color: var(--accent-text);
             display: flex;
             align-items: center;
             gap: 6px;
@@ -942,13 +1006,13 @@
             transition: all 0.2s ease;
         }
 
-        .collapsible-header:hover { color: var(--accent); }
+        .collapsible-header:hover { color: var(--accent-text); }
 
         .collapse-icon {
             display: inline-block;
             margin-right: 8px;
             transition: transform 0.3s ease;
-            color: var(--accent);
+            color: var(--accent-text);
             font-size: 12px;
         }
 
@@ -1002,7 +1066,7 @@
 
         .result-value {
             font-size: 14px;
-            color: var(--accent);
+            color: var(--accent-text);
             font-weight: 600;
             font-family: 'SF Mono', monospace;
         }
@@ -1030,7 +1094,7 @@
 
         .dropzone:hover {
             background: var(--code-bg);
-            color: var(--accent);
+            color: var(--accent-text);
             border-color: var(--accent);
         }
 
@@ -1080,7 +1144,7 @@
 
         .small-button {
             background: var(--bg-elev2);
-            color: var(--accent);
+            color: var(--accent-text);
             border: 1px solid var(--accent);
             padding: 7px 12px;
             border-radius: 4px;
@@ -1104,7 +1168,7 @@
         .help-icon {
             display: inline-flex; align-items: center; justify-content: center;
             width: 14px; height: 14px; margin-left: 6px; border-radius: 50%;
-            background: var(--bg-elev2); color: var(--link); font-size: 10px; line-height: 14px;
+            background: var(--bg-elev2); color: var(--link); font-size: 11.5px; line-height: 14px;
             cursor: help; border: 1px solid var(--line); user-select: none; font-weight: 700;
         }
         .help-icon:hover { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
@@ -1132,10 +1196,10 @@
         .tooltip-bubble .tt-links a:hover { text-decoration: underline; }
         .tooltip-visible { display: block !important; }
         .tooltip-bubble .tt-badges { margin: 6px 0 4px 0; display:flex; gap:6px; flex-wrap:wrap; }
-        .tooltip-bubble .tt-badge { font-size: 10px; text-transform: uppercase; letter-spacing: .4px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line); color: var(--fg-muted); background: var(--bg-elev2); }
+        .tooltip-bubble .tt-badge { font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line); color: var(--fg-muted); background: var(--bg-elev2); }
         .tooltip-bubble .tt-badge.warn { color: var(--warn); border-color: var(--line); background: var(--bg-elev1); }
         .tooltip-bubble .tt-badge.info { color: var(--link); border-color: var(--line); background: var(--bg-elev1); }
-        .tooltip-bubble .tt-badge.reindex { color: var(--accent); border-color: var(--line); background: var(--bg-elev1); }
+        .tooltip-bubble .tt-badge.reindex { color: var(--accent-text); border-color: var(--line); background: var(--bg-elev1); }
 
         /* Keyword Manager - Custom select styling */
         select[id^="kw-all-"],
@@ -1263,6 +1327,31 @@
         }
 
         /* ===================================
+           COMPACT CHROME (<=1200px) - keep the centre column readable (M-114/X-15)
+           A half-screen window must not squeeze the content pane. The rail and
+           sidebar narrow to fixed compact tracks set on grid-template-columns
+           DIRECTLY -- not via --sidepanel-width, which the resizable-sidepanel
+           helper writes inline on <html> where it would beat any media override.
+           Resize is disabled here (as it already is <900px) and the decorative
+           tagline is dropped so the top bar stops wrapping. This narrows the
+           chrome; it does NOT turn the sidebar into an icon strip -- that needs
+           the TabBar to render route.icon (shell lane); see the lane report.
+           =================================== */
+        @media (max-width: 1200px) {
+            .layout {
+                grid-template-columns: 150px 1fr 320px;
+            }
+
+            .resize-handle {
+                display: none;
+            }
+
+            .topbar .tagline {
+                display: none;
+            }
+        }
+
+        /* ===================================
            TABLET RESPONSIVE (768px - 1024px)
            PRIMARY FOCUS - Most Used
            =================================== */
@@ -1272,12 +1361,16 @@
         @media (max-width: 1024px) {
             :root {
                 --sidepanel-width: 320px;
+                --topbar-h: 52px;
             }
 
-            /* More compact topbar */
+            /* Compact chrome still needs its natural height when a corpus
+               name or the action controls require another row. */
             .topbar {
                 padding: 12px 16px;
-                height: 52px;
+                height: auto;
+                min-height: var(--topbar-h);
+                flex-wrap: wrap;
             }
 
             .topbar .brand {
@@ -1285,13 +1378,25 @@
             }
 
             .topbar .tagline {
-                font-size: 10px;
+                font-size: 11.5px;
                 letter-spacing: 2px;
             }
 
             /* Adjust top actions */
             .top-actions {
                 gap: 8px;
+                flex-wrap: wrap;
+                min-width: 0;
+                max-width: 100%;
+            }
+
+            #btn-corpus {
+                max-width: 100%;
+            }
+
+            #btn-corpus span {
+                min-width: 0;
+                overflow-wrap: anywhere;
             }
 
             #global-search {
@@ -1355,15 +1460,19 @@
            SMALL TABLET (<900px) - Hide sidebar, show hamburger
            =================================== */
         @media (max-width: 900px) {
+            .mobile-nav-toggle {
+                display: flex !important;
+            }
+
             .layout {
                 display: grid !important;
                 grid-template-columns: 1fr var(--sidepanel-width) !important;
             }
 
             .sidebar {
-                position: fixed;
+                position: absolute;
                 left: -200px;
-                top: 56px;
+                top: 0;
                 bottom: 0;
                 width: 200px;
                 z-index: 1000;
@@ -1395,36 +1504,82 @@
                 display: flex !important;
                 flex-direction: column !important;
                 grid-template-columns: none !important;
+                overflow: hidden;
             }
 
-            .sidebar {
-                position: fixed;
-                left: -200px;
-                top: 56px;
-                bottom: 0;
-                width: 200px;
-                z-index: 1000;
-                transition: left 0.2s ease;
-            }
-
-            .sidebar.mobile-open {
-                left: 0;
+            .layout-panes {
+                display: flex;
+                flex-direction: column;
+                flex: 1;
+                min-height: 0;
+                /* Scroll the usable pane stack without moving the drawer's
+                   origin above the actual bottom of the wrapped topbar. */
+                overflow-y: auto;
+                overflow-x: hidden;
             }
 
             .main-content {
-                flex: 1 1 auto;
+                flex: 1 0 50%;
+                height: auto;
+                min-height: min-content;
                 order: 1;
             }
 
             .content {
-                min-height: 50vh;
+                height: auto;
+                flex: 1 0 auto;
+                min-height: 0;
+            }
+
+            .content-scroll {
+                /* Footer errors and recovery actions add their own height;
+                   they must never borrow the body's usable scroll viewport. */
+                flex: 1 0 24rem;
+                min-height: 24rem;
+                /* The Apply footer is a sibling in normal flow; reserving its
+                   height again needlessly consumes the mobile body viewport. */
+                padding-bottom: 0;
             }
 
             .sidepanel {
                 order: 2;
-                max-height: 50vh;
+                flex: 1 0 50%;
+                height: auto;
+                /* The header can wrap independently of the body. Let its
+                   intrinsic height add to the usable body minimum below. */
+                min-height: min-content;
+                max-height: none;
                 border-top: 1px solid var(--line);
+            }
+
+            .dock-panel {
+                height: auto;
+                flex: 1 0 auto;
+            }
+
+            .dock-header {
                 flex-shrink: 0;
+            }
+
+            .dock-body {
+                /* A definite flex basis preserves percentage-height source
+                   viewers and their virtualizers, even in a scrolling stack. */
+                flex: 1 0 24rem;
+                min-height: 24rem;
+            }
+
+            .subtab-bar {
+                /* Wrapped RAG navigation can consume the entire pane. Keep
+                   all tabs in one row that pointer and keyboard users scroll. */
+                flex-wrap: nowrap;
+                flex-shrink: 0;
+                overflow-x: auto;
+                padding: 8px 12px;
+            }
+
+            .subtab-bar button {
+                flex-shrink: 0;
+                white-space: nowrap;
             }
 
             /* Hamburger menu button */
@@ -1452,9 +1607,8 @@
             }
 
             .topbar .tagline {
-                font-size: 9px;
+                font-size: 11.5px;
                 letter-spacing: 1.5px;
-                opacity: 0.7;
             }
 
             /* Top actions: stack or wrap */
@@ -1532,13 +1686,9 @@
                 font-size: 13px;
             }
 
-            /* Onboarding: single column */
-            .ob-container {
-                grid-template-columns: 1fr;
-                padding: 20px 12px;
-                gap: 20px;
-            }
-
+            /* Onboarding narrow layout is owned by the #tab-start container
+               query above: the dock pane is narrow at desktop viewports, so a
+               viewport media query is the wrong key for it. */
             .ob-choice-cards {
                 grid-template-columns: 1fr;
             }
@@ -1566,7 +1716,7 @@
 
             .top-actions button {
                 padding: 6px 10px;
-                font-size: 11px;
+                font-size: 11.5px;
                 min-height: 40px;
             }
 
@@ -1589,7 +1739,7 @@
             }
 
             label {
-                font-size: 11px;
+                font-size: 11.5px;
             }
 
             /* Card builder modal: full width on tiny screens */
@@ -1661,7 +1811,7 @@
         .mobile-nav-drawer .nav-header h2 {
             margin: 0;
             font-size: 20px;
-            color: var(--accent);
+            color: var(--accent-text);
         }
 
         .mobile-nav-drawer button {
@@ -1686,7 +1836,7 @@
 
         .mobile-nav-drawer button.active {
             background: var(--bg-elev2);
-            color: var(--accent);
+            color: var(--accent-text);
             border-left-color: var(--accent);
             font-weight: 600;
         }
@@ -1748,7 +1898,7 @@
         .action-btn:hover {
             background: var(--panel);
             border-color: var(--accent);
-            color: var(--accent);
+            color: var(--accent-text);
             transform: translateY(-2px);
             box-shadow: 0 4px 12px rgba(0, 255, 136, 0.2);
         }
@@ -1774,7 +1924,7 @@
 
         .action-btn.loading {
             pointer-events: none;
-            opacity: 0.6;
+            opacity: 0.8;
         }
 
         .action-btn.loading svg {
@@ -1784,7 +1934,7 @@
         .action-btn.success {
             background: color-mix(in oklch, var(--ok) 8%, var(--bg));
             border-color: var(--accent);
-            color: var(--accent);
+            color: var(--accent-text);
         }
 
         .action-btn.success svg {
@@ -1827,14 +1977,39 @@
            All using CSS tokens for light/dark themes
            ============================================ */
 
+        /* Get Started renders both as the main page and inside the ~360px dock
+           pane, so its layout keys off the width of #tab-start (a size
+           container), never the viewport. The old `1fr 300px` grid reserved a
+           300px track for the help panel deleted in the 2026-08-25 wizard
+           rebuild; docked, that phantom track squeezed the content column
+           below zero and step text wrapped one character per line. */
+        #tab-start {
+            container-type: inline-size;
+        }
+
         .ob-container {
             max-width: 1000px;
             margin: 0 auto;
             padding: 40px 20px;
             display: grid;
-            grid-template-columns: 1fr 300px;
+            grid-template-columns: 1fr;
             gap: 40px;
             align-items: start;
+        }
+
+        @container (max-width: 768px) {
+            .ob-container {
+                padding: 20px 12px;
+                gap: 20px;
+            }
+
+            .ob-main {
+                padding: 24px 18px;
+            }
+
+            .ob-title {
+                font-size: 22px;
+            }
         }
 
         .ob-progress-dots {
@@ -1933,7 +2108,7 @@
             display: flex;
             align-items: center;
             gap: 8px;
-            color: var(--accent);
+            color: var(--accent-text);
             font-weight: 600;
             margin-bottom: 8px;
         }
@@ -2146,7 +2321,7 @@
         }
 
         .ob-stage.active span {
-            color: var(--accent);
+            color: var(--accent-text);
             font-weight: 600;
         }
 
@@ -2514,7 +2689,7 @@
         .ob-help-pill:hover {
             background: var(--panel-bg);
             border-color: var(--accent);
-            color: var(--accent);
+            color: var(--accent-text);
         }
 
         .ob-help-link {
@@ -2568,7 +2743,7 @@
         }
 
         .ob-nav-btn:disabled {
-            opacity: 0.5;
+            opacity: 0.8;
             cursor: not-allowed;
         }
 
