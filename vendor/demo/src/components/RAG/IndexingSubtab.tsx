@@ -3,35 +3,88 @@
  *
  * Goal:
  * - Keep the *layout* and UX patterns from the legacy IndexingSubtab (cards, panels, advanced details, slide-down terminal)
- * - Wire everything to TriBridConfig (Pydantic is the law) and corpus-first state (useRepoStore)
+ * - Wire public config to TriBridConfig and corpus-first state to useRepoStore
  * - No hardcoded model lists (load from /api/models)
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useAPI, useConfig, useConfigField, useEmbeddingModel, useEmbeddingStatus, useIndexing, useModels } from '@/hooks';
+import { useLocation, useNavigate } from 'react-router-dom';
+import {
+  useAPI,
+  useConfig,
+  useConfigField,
+  useEmbeddingModel,
+  useEmbeddingStatus,
+  useIndexing,
+  useModels,
+  useRuntimeCapabilities,
+} from '@/hooks';
 import { useRepoStore } from '@/stores/useRepoStore';
 import { LiveTerminal, type LiveTerminalHandle } from '@/components/LiveTerminal/LiveTerminal';
 import { RepositoryConfig } from '@/components/RAG/RepositoryConfig';
 import { SyntheticCallout } from '@/components/RAG/SyntheticCallout';
 import { ModelPicker } from '@/components/RAG/ModelPicker';
+import { ModelPicker as ChatModelPicker } from '@/components/Chat/ModelPicker';
 import { PromptLink } from '@/components/ui/PromptLink';
 import { EmbeddingMismatchWarning } from '@/components/ui/EmbeddingMismatchWarning';
 import { TooltipIcon } from '@/components/ui/TooltipIcon';
+import { confirmDialog } from '@/components/ui/confirmDialog';
 import { indexingApi } from '@/api';
+import type { ReadyIndexEstimate } from '@/api/indexing';
 import { formatBytes, formatCurrency, formatDuration, formatNumber } from '@/utils/formatters';
+import { NumberField } from '@/components/ui/NumberField';
 import type {
-  IndexEstimate,
+  ChatModelInfo,
+  ChatModelsResponse,
+  GraphSchemaProposal,
   IndexRequest,
   IndexRunEvent,
+  IndexRunEventPage,
   IndexRunSummary,
   IndexStats,
   IndexStatus,
-  VocabPreviewResponse,
-  VocabPreviewTerm,
 } from '@/types/generated';
 import { describeEmbeddingProviderStrategy } from '@/utils/embeddingStrategy';
 
-type IndexingComponent = 'embedding' | 'chunking' | 'bm25' | 'enrichment';
+type IndexingComponent = 'embedding' | 'chunking' | 'bm25' | 'enrichment' | 'figures';
+
+/**
+ * One line per conversion instead of forty.
+ *
+ * A Docling conversion emits a "still running" heartbeat while it works, so a long PDF buried
+ * its real events -- the figure summary among them -- under ~40 identical
+ * "Converting A11_MissionReport.pdf: still running (60s...2400s elapsed)" lines. Only the last
+ * beat per file carries information (how long it ended up taking), so the earlier ones are
+ * folded into it and the line says how many there were.
+ */
+const HEARTBEAT_RE = /^(?:.*?\b)?Converting (.+?): still running/;
+
+export function collapseHeartbeats(events: IndexRunEvent[]): IndexRunEvent[] {
+  const beatsByFile = new Map<string, number>();
+  for (const ev of events) {
+    const file = HEARTBEAT_RE.exec(String(ev.message || ''))?.[1];
+    if (file) beatsByFile.set(file, (beatsByFile.get(file) ?? 0) + 1);
+  }
+  const seen = new Map<string, number>();
+  const out: IndexRunEvent[] = [];
+  for (const ev of events) {
+    const file = HEARTBEAT_RE.exec(String(ev.message || ''))?.[1];
+    if (!file) {
+      out.push(ev);
+      continue;
+    }
+    const index = (seen.get(file) ?? 0) + 1;
+    seen.set(file, index);
+    const total = beatsByFile.get(file) ?? 1;
+    if (index < total) continue; // superseded by a later beat for the same file
+    out.push(
+      total > 1
+        ? { ...ev, message: `${String(ev.message || '')} [${total} progress notices]` }
+        : ev
+    );
+  }
+  return out;
+}
 
 const COMPONENT_CARDS: Array<{
   id: IndexingComponent;
@@ -41,26 +94,110 @@ const COMPONENT_CARDS: Array<{
 }> = [
   { id: 'embedding', icon: '🔢', label: 'Embedding', description: 'Provider, model, dimensions, batching' },
   { id: 'chunking', icon: '🧩', label: 'Chunking', description: 'Strategy, size, overlap, limits' },
-  { id: 'bm25', icon: '📝', label: 'Tokenization', description: 'Chunk tokenizer + Postgres FTS tokenizer + large-file mode' },
-  { id: 'enrichment', icon: '🧠', label: 'Graph & Options', description: 'Graph build + dense skip mode' },
+  { id: 'bm25', icon: '📝', label: 'Tokenization', description: 'Chunk tokenizer + Qdrant/BM25 sparse stemming + large-file mode' },
+  { id: 'enrichment', icon: '🧠', label: 'Graph & Enrichment', description: 'Graph build, dense-vector skip, enrichment prompts' },
+  { id: 'figures', icon: '🖼️', label: 'Figures & Vision', description: 'Describe charts, diagrams, drawings via the gateway' },
 ];
 
-const CHUNKING_STRATEGIES = [
+const INDEXING_COMPONENT_IDS = new Set<string>(COMPONENT_CARDS.map((card) => card.id));
+
+function isIndexingComponent(value: string | null): value is IndexingComponent {
+  return value !== null && INDEXING_COMPONENT_IDS.has(value);
+}
+
+/**
+ * A duration in ms for `formatDuration`, rounded.
+ *
+ * `formatDuration` prints sub-second values verbatim, so a phase of 0.148833... seconds
+ * rendered as "148.83333333333334ms" in the estimate dialog. The phases are estimates to one
+ * or two significant figures; printing fourteen decimals of one is noise.
+ */
+function durationMs(seconds: number): number {
+  return Math.round(Number(seconds) * 1000);
+}
+
+/**
+ * Currency for a figure-description cost, which is genuinely sub-cent: one figure at the
+ * vision alias runs about $0.0007, and `Intl` currency (two decimals) prints that as
+ * "$0.00" — the exact misleading zero the Python `_estimate_figures` guard exists to avoid,
+ * reintroduced at the display layer. At or above one cent this is ordinary `formatCurrency`;
+ * below it, show at least three significant figures (trailing zeros trimmed) so the number
+ * the estimate produced is not rounded away. Shared `formatCurrency` is left untouched.
+ */
+function formatFigureCostUsd(amount: number): string {
+  const value = Number(amount) || 0;
+  if (value >= 0.01 || value <= 0) return formatCurrency(value);
+  const digits = Math.min(10, -Math.floor(Math.log10(value)) + 2);
+  const fixed = value.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '');
+  return `$${fixed}`;
+}
+
+/**
+ * The operator-readable reason inside an API error.
+ *
+ * An axios rejection's own `message` is "Request failed with status code 422", which names
+ * nothing the operator can act on; the actionable sentence ("repo_path not found: data/recall")
+ * is in the response body's `detail`, either as a string or as a typed detail object.
+ */
+function errorDetail(error: unknown): string {
+  const body = (error as { response?: { data?: unknown } } | null)?.response?.data;
+  const detail = (body as { detail?: unknown } | null)?.detail;
+  if (typeof detail === 'string' && detail.trim()) return detail.trim();
+  if (detail && typeof detail === 'object') {
+    const message = (detail as { message?: unknown }).message;
+    if (typeof message === 'string' && message.trim()) return message.trim();
+  }
+  if (error instanceof Error && error.message.trim()) return error.message.trim();
+  return 'unknown error';
+}
+
+// Status polling cadence. Fast enough to follow a live run, slow enough that an idle tab
+// is not a request generator.
+const INDEX_POLL_ACTIVE_MS = 3000;
+const INDEX_POLL_IDLE_MS = 30000;
+
+const FALLBACK_CHUNKING_STRATEGIES = [
   { id: 'fixed_tokens', label: 'Fixed tokens', description: 'Token-window chunking (best default for text corpora)' },
   { id: 'recursive', label: 'Recursive', description: 'Separator-based chunking packed by token target (docs/transcripts)' },
   { id: 'markdown', label: 'Markdown', description: 'Split by headings then pack by tokens (docs/notes)' },
   { id: 'sentence', label: 'Sentence', description: 'Sentence boundaries packed by tokens (prose)' },
   { id: 'qa_blocks', label: 'Q/A blocks', description: 'Detect Q:/A: blocks then pack by tokens (interviews/dumps)' },
+  { id: 'greedy', label: 'Greedy', description: 'Legacy fixed-char fallback using the greedy target size' },
   { id: 'fixed_chars', label: 'Fixed chars', description: 'Character windowing with overlap (fallback, legacy)' },
   { id: 'ast', label: 'AST-aware', description: 'Preserve functions/blocks (best for code)' },
   { id: 'hybrid', label: 'Hybrid', description: 'AST with fallback behavior' },
 ];
 
-const RUNTIME_SUPPORTED_PROVIDER_EMBEDDERS = ['openai', 'mlx', 'local', 'huggingface'];
+/**
+ * Mirrors `IndexingFiguresConfig.skip_classes` (server/models/tribrid_config_model.py).
+ * Module-level so the array identity is stable: `useConfigField` memoizes on its default
+ * value, and the skip-classes text field re-syncs off that memo.
+ */
+const FIGURES_SKIP_CLASSES_DEFAULT: string[] = ['logo', 'signature', 'icon'];
+
+/**
+ * Trim, drop blanks and de-duplicate a comma-separated class list.
+ *
+ * Entries are lower-cased: Docling's classifier emits lower-case class names and the skip
+ * is matched against them, so "Logo" and "logo" are the same rule and must collapse rather
+ * than persist as two entries of which only one can ever match.
+ */
+function parseSkipClasses(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of raw.split(',')) {
+    const value = entry.trim().toLowerCase();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
 
 export function IndexingSubtab() {
   const { api } = useAPI();
   const { config, flushPendingPatches } = useConfig();
+  const { capabilities: runtimeCapabilities } = useRuntimeCapabilities();
   const { activeRepo, repos, loadRepos, setActiveRepo } = useRepoStore();
   const {
     fetchStatus: fetchIndexStatus,
@@ -72,14 +209,64 @@ export function IndexingSubtab() {
   // Terminal ref (slide-down UI)
   const terminalRef = useRef<LiveTerminalHandle>(null);
 
-  // UI state
-  const [selectedComponent, setSelectedComponent] = useState<IndexingComponent>('embedding');
+  // UI state. The selected card is addressable as `?component=<id>` so a global-search hit
+  // (or a shared link) can open the card a setting actually lives on. It is a one-shot
+  // navigation aid, so it is CONSUMED: applied, then stripped from the URL. Left in place it
+  // becomes sticky global state that outranks the operator -- `RAGTab` unmounts this subtab
+  // on every subtab change and `useSubtab` copies the whole query string forward, so a
+  // surviving `component=` reopens its card on every return, and survives reload and
+  // sharing. Read reactively rather than at mount only, because the param can also arrive
+  // while this component is already on screen.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const componentParam = useMemo(
+    () => new URLSearchParams(location.search || '').get('component'),
+    [location.search]
+  );
+  const [selectedComponent, setSelectedComponent] = useState<IndexingComponent>(
+    isIndexingComponent(componentParam) ? componentParam : 'embedding'
+  );
+
+  // `/rag` renders native in the Dock (`dockCatalog.ts`), where `location` is the synthetic
+  // `{ key: 'dock' }` one `DockView` passes to `<Routes location=...>`. Navigating from there
+  // would move the real browser URL out from under the page behind the dock, which is the
+  // same hazard `useSubtab` guards. Docked, the param still selects the card; it just is not
+  // rewritten -- and a docked URL is neither shared nor reloaded, so nothing sticks.
+  const isDockContext = (location as { key?: string })?.key === 'dock';
+  // A docked location's synthetic URL cannot be rewritten, so `component=` cannot be
+  // stripped after it is read there. This latches consumption instead, so the param is
+  // applied once and a later return to a docked `/rag` never reopens the card it named.
+  const componentConsumedRef = useRef(false);
+
+  useEffect(() => {
+    if (componentParam === null) return;
+    if (isDockContext) {
+      if (componentConsumedRef.current) return;
+      componentConsumedRef.current = true;
+      if (isIndexingComponent(componentParam)) setSelectedComponent(componentParam);
+      return;
+    }
+    if (isIndexingComponent(componentParam)) setSelectedComponent(componentParam);
+    // Stripped whether or not it named a real card, so a typo cannot stick either.
+    // `replace` keeps the consumed link out of the back stack.
+    const next = new URLSearchParams(location.search || '');
+    next.delete('component');
+    const search = next.toString();
+    navigate({ pathname: location.pathname, search: search ? `?${search}` : '' }, { replace: true });
+  }, [componentParam, isDockContext, location.pathname, location.search, navigate]);
   const [isIndexing, setIsIndexing] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 100, status: 'Ready' });
   const [terminalVisible, setTerminalVisible] = useState(false);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
-  const [indexEstimate, setIndexEstimate] = useState<IndexEstimate | null>(null);
+  // Only a measured estimate is ever stored: indexingApi.estimate cannot return anything
+  // else, and the narrow type stops a future edit putting a warming payload in here.
+  const [indexEstimate, setIndexEstimate] = useState<ReadyIndexEstimate | null>(null);
+  const [graphSchemaProposal, setGraphSchemaProposal] = useState<GraphSchemaProposal | null>(null);
+  const [graphSchemaLoading, setGraphSchemaLoading] = useState(false);
+  const [graphSchemaError, setGraphSchemaError] = useState<string | null>(null);
+  const [graphOverrideReason, setGraphOverrideReason] = useState('');
   const [estimateLoading, setEstimateLoading] = useState(false);
+  const [estimateWarmup, setEstimateWarmup] = useState('');
 
   // Job options
   const [forceReindex, setForceReindex] = useState(false);
@@ -91,7 +278,7 @@ export function IndexingSubtab() {
   const [embeddingDim, setEmbeddingDim] = useConfigField<number>('embedding.embedding_dim', 0);
   const [embeddingBatchSize, setEmbeddingBatchSize] = useConfigField<number>('embedding.embedding_batch_size', 0);
   const [embeddingMaxTokens, setEmbeddingMaxTokens] = useConfigField<number>('embedding.embedding_max_tokens', 0);
-  const [embeddingCacheEnabled, setEmbeddingCacheEnabled] = useConfigField<number>('embedding.embedding_cache_enabled', 1);
+  const [embeddingCacheEnabled, setEmbeddingCacheEnabled] = useConfigField<boolean>('embedding.embedding_cache_enabled', true);
   const [embeddingTimeout, setEmbeddingTimeout] = useConfigField<number>('embedding.embedding_timeout', 0);
   const [embeddingRetryMax, setEmbeddingRetryMax] = useConfigField<number>('embedding.embedding_retry_max', 0);
   const [embeddingBackend, setEmbeddingBackend] =
@@ -131,7 +318,7 @@ export function IndexingSubtab() {
   const [maxIndexableFileSize, setMaxIndexableFileSize] = useConfigField<number>('chunking.max_indexable_file_size', 0);
   const [minChunkChars, setMinChunkChars] = useConfigField<number>('chunking.min_chunk_chars', 0);
   const [greedyFallbackTarget, setGreedyFallbackTarget] = useConfigField<number>('chunking.greedy_fallback_target', 0);
-  const [preserveImports, setPreserveImports] = useConfigField<number>('chunking.preserve_imports', 1);
+  const [preserveImports, setPreserveImports] = useConfigField<boolean>('chunking.preserve_imports', true);
   const [targetTokens, setTargetTokens] = useConfigField<number>('chunking.target_tokens', 512);
   const [overlapTokens, setOverlapTokens] = useConfigField<number>('chunking.overlap_tokens', 64);
   const [separators, setSeparators] = useConfigField<string[]>('chunking.separators', ['\n\n', '\n', '. ', ' ', '']);
@@ -174,34 +361,136 @@ export function IndexingSubtab() {
     'indexing.parquet_extract_max_cell_chars',
     20_000
   );
-  const [parquetExtractTextColumnsOnly, setParquetExtractTextColumnsOnly] = useConfigField<number>(
+  const [parquetExtractTextColumnsOnly, setParquetExtractTextColumnsOnly] = useConfigField<boolean>(
     'indexing.parquet_extract_text_columns_only',
-    1
+    true
   );
-  const [parquetExtractIncludeColumnNames, setParquetExtractIncludeColumnNames] = useConfigField<number>(
+  const [parquetExtractIncludeColumnNames, setParquetExtractIncludeColumnNames] = useConfigField<boolean>(
     'indexing.parquet_extract_include_column_names',
-    1
+    true
   );
 
-  const [skipDense, setSkipDense] = useConfigField<number>('indexing.skip_dense', 0);
+  const [skipDense, setSkipDense] = useConfigField<boolean>('indexing.skip_dense', false);
   const [graphIndexingEnabled, setGraphIndexingEnabled] = useConfigField<boolean>('graph_indexing.enabled', true);
   const [lexicalGraphEnabled, setLexicalGraphEnabled] = useConfigField<boolean>('graph_indexing.build_lexical_graph', true);
-  const [storeChunkEmbeddings, setStoreChunkEmbeddings] = useConfigField<boolean>('graph_indexing.store_chunk_embeddings', true);
-  const [semanticKgEnabled, setSemanticKgEnabled] = useConfigField<boolean>('graph_indexing.semantic_kg_enabled', false);
-  const [semanticKgMode, setSemanticKgMode] = useConfigField<'heuristic' | 'llm'>('graph_indexing.semantic_kg_mode', 'heuristic');
-  const [semanticKgMaxChunks, setSemanticKgMaxChunks] = useConfigField<number>('graph_indexing.semantic_kg_max_chunks', 200);
+  const [buildCodeGraph, setBuildCodeGraph] = useConfigField<boolean>('graph_indexing.build_code_graph', false);
+  const [semanticKgMaxChunks, setSemanticKgMaxChunks] = useConfigField<number>('graph_indexing.semantic_kg_max_chunks', 40000);
   const [semanticKgLlmModel, setSemanticKgLlmModel] = useConfigField<string>('graph_indexing.semantic_kg_llm_model', '');
-  const [semanticKgMaxConcepts, setSemanticKgMaxConcepts] = useConfigField<number>(
-    'graph_indexing.semantic_kg_max_concepts_per_chunk',
-    8
+  const [semanticKgReasoningEffort, setSemanticKgReasoningEffort] = useConfigField<
+    'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  >('graph_indexing.semantic_kg_reasoning_effort', 'medium');
+  const [semanticKgTimeoutS, setSemanticKgTimeoutS] = useConfigField<number>('graph_indexing.semantic_kg_llm_timeout_s', 90);
+  const [astContainsWeight, setAstContainsWeight] = useConfigField<number>('graph_indexing.ast_contains_weight', 1);
+  const [astInheritsWeight, setAstInheritsWeight] = useConfigField<number>('graph_indexing.ast_inherits_weight', 1);
+  const [astImportsWeight, setAstImportsWeight] = useConfigField<number>('graph_indexing.ast_imports_weight', 1);
+  const [astCallsWeight, setAstCallsWeight] = useConfigField<number>('graph_indexing.ast_calls_weight', 1);
+
+  // Figure description (indexing.figures.*). Nested paths: `useConfigField` reads the dotted
+  // path off the loaded config and writes `{ figures: { <field>: value } }` into the `indexing`
+  // section, which the store and `_deep_merge_dicts` on the server both merge in depth.
+  const [figuresEnabled, setFiguresEnabled] = useConfigField<boolean>('indexing.figures.enabled', false);
+  const [figuresDescribe, setFiguresDescribe] = useConfigField<boolean>('indexing.figures.describe', true);
+  const [figuresClassify, setFiguresClassify] = useConfigField<boolean>('indexing.figures.classify', true);
+  const [figuresVisionModel, setFiguresVisionModel] = useConfigField<string>('indexing.figures.vision_model', 'z-ai.glm-5.3-flash');
+  const [figuresPromptProfile, setFiguresPromptProfile] = useConfigField<'technical_figure' | 'schematic'>(
+    'indexing.figures.prompt_profile',
+    'technical_figure'
+  );
+  const [figuresImagesScale, setFiguresImagesScale] = useConfigField<number>('indexing.figures.images_scale', 2.0);
+  const [figuresMinAreaFraction, setFiguresMinAreaFraction] = useConfigField<number>(
+    'indexing.figures.min_area_fraction',
+    0.02
+  );
+  const [figuresSkipClasses, setFiguresSkipClasses] = useConfigField<string[]>(
+    'indexing.figures.skip_classes',
+    FIGURES_SKIP_CLASSES_DEFAULT
+  );
+  const [figuresMaxCompletionTokens, setFiguresMaxCompletionTokens] = useConfigField<number>(
+    'indexing.figures.max_completion_tokens',
+    2500
+  );
+  const [figuresConcurrency, setFiguresConcurrency] = useConfigField<number>('indexing.figures.concurrency', 4);
+  const [figuresTimeoutS, setFiguresTimeoutS] = useConfigField<number>('indexing.figures.timeout_s', 90);
+
+  const [generationModels, setGenerationModels] = useState<ChatModelInfo[]>([]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const scope = String(activeRepo || '').trim();
+    const query = scope ? `?corpus_id=${encodeURIComponent(scope)}` : '';
+    fetch(api(`chat/models${query}`), { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(String(response.status));
+        return response.json();
+      })
+      .then((payload) => {
+        const rows = (payload as ChatModelsResponse).models;
+        setGenerationModels(Array.isArray(rows) ? rows : []);
+      })
+      .catch((cause) => {
+        if (cause instanceof DOMException && cause.name === 'AbortError') return;
+        setGenerationModels([]);
+      });
+    return () => controller.abort();
+  }, [activeRepo, api]);
+
+  // Only vision-capable gateway aliases can describe figures; the run refuses to start
+  // otherwise (HTTP 409 figure_vision_alias), so the picker offers nothing else.
+  const visionModels = useMemo(
+    () => generationModels.filter((model) => Boolean(model.supports_vision)),
+    [generationModels]
+  );
+  const figuresVisionAliasWarning = useMemo(() => {
+    if (!figuresEnabled) return '';
+    if (generationModels.length === 0) return '';
+    if (visionModels.length === 0) {
+      return 'No vision-capable alias is available from LiteLLM. Add one to the model catalog before indexing figures.';
+    }
+    const alias = String(figuresVisionModel || '').trim();
+    if (!alias) return 'Choose a vision-capable alias: figure description has no gateway default.';
+    if (visionModels.some((model) => String(model.id || '').trim() === alias)) return '';
+    if (generationModels.some((model) => String(model.id || '').trim() === alias)) {
+      return `Alias '${alias}' is not flagged vision-capable in the model catalog; indexing will refuse to start.`;
+    }
+    return `Alias '${alias}' is not available from LiteLLM.`;
+  }, [figuresEnabled, figuresVisionModel, generationModels, visionModels]);
+
+  // Comma-separated editing buffer for `indexing.figures.skip_classes`: the operator types a
+  // raw string, the config keeps the parsed list. Re-seeded only when the persisted list stops
+  // matching what the buffer parses to (config load, corpus switch), so typing is never fought.
+  const [skipClassesText, setSkipClassesText] = useState<string>(() => (figuresSkipClasses || []).join(', '));
+  const skipClassesTextRef = useRef<string>(skipClassesText);
+  useEffect(() => {
+    const persisted = JSON.stringify(figuresSkipClasses || []);
+    if (JSON.stringify(parseSkipClasses(skipClassesTextRef.current)) === persisted) return;
+    const next = (figuresSkipClasses || []).join(', ');
+    skipClassesTextRef.current = next;
+    setSkipClassesText(next);
+  }, [figuresSkipClasses]);
+  const onSkipClassesChange = useCallback(
+    (raw: string) => {
+      skipClassesTextRef.current = raw;
+      setSkipClassesText(raw);
+      setFiguresSkipClasses(parseSkipClasses(raw));
+    },
+    [setFiguresSkipClasses]
   );
 
   // (Models loaded via useModels hook below — no manual state needed)
 
   // Index stats + status
   const [_indexStatus, setIndexStatus] = useState<IndexStatus | null>(null);
+  // A run adopted from the server because it was started outside this tab (API, another
+  // operator, a schedule). Progress, current file and events are mirrored by polling.
+  const [foreignRun, setForeignRun] = useState(false);
+  const foreignRunIdRef = useRef<string>('');
+  const foreignEventsSeenRef = useRef(0);
+  const localRunRef = useRef(false);
+  const localRunIdRef = useRef<string>('');
+  const isIndexingRef = useRef(false);
   const [latestRun, setLatestRun] = useState<IndexRunSummary | null>(null);
   const [latestRunEvents, setLatestRunEvents] = useState<IndexRunEvent[]>([]);
+  const [latestRunEventTotal, setLatestRunEventTotal] = useState(0);
   const [indexStats, setIndexStats] = useState<IndexStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsExpanded, setStatsExpanded] = useState(false);
@@ -211,19 +500,15 @@ export function IndexingSubtab() {
   const statusAbortRef = useRef<AbortController | null>(null);
   const statsAbortRef = useRef<AbortController | null>(null);
 
-  // Vocab preview state
-  const [vocabPreview, setVocabPreview] = useState<VocabPreviewTerm[]>([]);
-  const [vocabLoading, setVocabLoading] = useState(false);
-  const [vocabTopN, setVocabTopN] = useState(50);
-  const [vocabTotal, setVocabTotal] = useState(0);
-  const [vocabExpanded, setVocabExpanded] = useState(false);
 
-  // Ensure corpora loaded
+  // One corpus source of truth across subtabs. `if (!repos.length)` meant the list was
+  // fetched once and then never again, so this tab and Data Quality -- which asks the same
+  // store on its own schedule -- could show different corpora, and the drive caught a deleted
+  // test corpus still listed on one of them. Asking on entry makes the list belong to the view
+  // the operator is looking at; the store drops a call that is already in flight.
   useEffect(() => {
-    if (!repos.length) {
-      void loadRepos();
-    }
-  }, [repos.length, loadRepos]);
+    void loadRepos();
+  }, [loadRepos]);
 
   // Resolve selected corpus path from store
   const activeCorpus = useMemo(() => {
@@ -232,12 +517,54 @@ export function IndexingSubtab() {
     return repos.find(r => r.corpus_id === id || r.slug === id || r.name === id);
   }, [activeRepo, repos]);
 
+  const graphCorpusIsInternal = Boolean(activeCorpus?.internal);
+  const graphPolicyLabel = graphCorpusIsInternal
+    ? 'Excluded internal corpus'
+    : !graphIndexingEnabled
+      ? 'Graph disabled'
+      : buildCodeGraph
+        ? 'Code AST graph'
+        : 'Semantic entity graph';
+  const semanticGraphActive = !graphCorpusIsInternal && graphIndexingEnabled && !buildCodeGraph;
+
   const resolvedPath = useMemo(() => String(activeCorpus?.path || ''), [activeCorpus]);
   const effectivePath = useMemo(() => (pathOverride.trim() ? pathOverride.trim() : resolvedPath), [pathOverride, resolvedPath]);
 
+  // The phases the API measured, printed as they are. Deriving the embedding leg by
+  // subtracting the others from the range's midpoint made it disagree with the range beside
+  // it -- the midpoint of a x0.6/x1.9 band is 1.25x the run, so the embed line came out a
+  // quarter of a run too long and could exceed the range's own lower bound.
+  const estimateTimeBreakdown = useMemo(() => {
+    if (!indexEstimate) return '';
+    const embedSeconds = indexEstimate.estimated_seconds_embedding;
+    const kgSeconds = indexEstimate.estimated_seconds_semantic_kg;
+    const figureSeconds = indexEstimate.estimated_seconds_figures;
+    const overheadSeconds = indexEstimate.estimated_seconds_overhead;
+    if (embedSeconds == null) return '';
+    return [
+      `Embed ~${formatDuration(durationMs(Number(embedSeconds)))}`,
+      kgSeconds == null ? null : `KG ~${formatDuration(durationMs(Number(kgSeconds)))}`,
+      figureSeconds == null ? null : `Figures ~${formatDuration(durationMs(Number(figureSeconds)))}`,
+      overheadSeconds == null ? null : `startup ~${formatDuration(durationMs(Number(overheadSeconds)))}`,
+    ]
+      .filter(Boolean)
+      .join(' + ');
+  }, [indexEstimate]);
+
   useEffect(() => {
     setIndexEstimate(null);
-  }, [activeRepo, effectivePath]);
+    setGraphSchemaProposal(null);
+    setGraphSchemaError(null);
+  }, [
+    activeRepo,
+    buildCodeGraph,
+    effectivePath,
+    graphIndexingEnabled,
+    semanticKgLlmModel,
+    semanticKgMaxChunks,
+    semanticKgReasoningEffort,
+    semanticKgTimeoutS,
+  ]);
 
   useEffect(() => {
     activeRepoRef.current = String(activeRepo || '').trim();
@@ -260,27 +587,47 @@ export function IndexingSubtab() {
     loading: modelsLoading,
     error: modelsError,
     findModel: findEmbedModel,
-  } = useModels('EMB');
+  } = useModels('EMB', { selectionRole: 'embedding_provider' });
   const { status: embeddingStatus } = useEmbeddingStatus();
+  const runtimeEmbeddingProviders = useMemo(
+    () =>
+      (runtimeCapabilities?.embedding?.providers || [])
+        .map((provider) => String(provider.provider || '').trim().toLowerCase())
+        .filter(Boolean),
+    [runtimeCapabilities]
+  );
+  const chunkingStrategies = useMemo(
+    () =>
+      runtimeCapabilities?.chunking?.strategies?.length
+        ? runtimeCapabilities.chunking.strategies
+        : FALLBACK_CHUNKING_STRATEGIES,
+    [runtimeCapabilities]
+  );
 
   const normalizedEmbeddingType = useMemo(
     () => String(embeddingType || '').trim().toLowerCase(),
     [embeddingType]
   );
   const supportedRuntimeProvider = useMemo(
-    () => RUNTIME_SUPPORTED_PROVIDER_EMBEDDERS.includes(normalizedEmbeddingType),
-    [normalizedEmbeddingType]
+    () => {
+      const knownProviders = runtimeEmbeddingProviders.length
+        ? runtimeEmbeddingProviders
+        : (embedProviders || []).map((provider) => String(provider || '').trim().toLowerCase()).filter(Boolean);
+      return knownProviders.includes(normalizedEmbeddingType);
+    },
+    [embedProviders, normalizedEmbeddingType, runtimeEmbeddingProviders]
   );
   const visibleEmbedProviders = useMemo(() => {
+    if (!runtimeEmbeddingProviders.length) return embedProviders;
     const filtered = (embedProviders || []).filter((p) =>
-      RUNTIME_SUPPORTED_PROVIDER_EMBEDDERS.includes(String(p || '').trim().toLowerCase())
+      runtimeEmbeddingProviders.includes(String(p || '').trim().toLowerCase())
     );
     if (!filtered.length) return embedProviders;
     if (normalizedEmbeddingType && !filtered.some((p) => String(p).toLowerCase() === normalizedEmbeddingType)) {
       return [normalizedEmbeddingType, ...filtered];
     }
     return filtered;
-  }, [embedProviders, normalizedEmbeddingType]);
+  }, [embedProviders, normalizedEmbeddingType, runtimeEmbeddingProviders]);
   const hasIndexedCorpus = useMemo(() => {
     if (!embeddingStatus) return false;
     return Boolean(embeddingStatus.hasIndex && Number(embeddingStatus.totalChunks || 0) > 0);
@@ -350,27 +697,32 @@ export function IndexingSubtab() {
   );
 
   const tokenizationCompatibility = useMemo(() => {
-    if (skipDense === 1) return { ok: true as const, message: '' };
+    if (skipDense) return { ok: true as const, message: '' };
     if (String(embeddingBackend || '').toLowerCase() !== 'provider') return { ok: true as const, message: '' };
     const provider = normalizedEmbeddingType;
     const strategy = String(tokenizationStrategy || '').trim().toLowerCase();
-    const requiredByProvider: Record<string, string[]> = {
-      openai: ['tiktoken'],
-      mlx: ['huggingface'],
-      local: ['huggingface'],
-      huggingface: ['huggingface'],
-    };
-    const required = requiredByProvider[provider];
-    if (!required) return { ok: true as const, message: '' };
+    const required =
+      (runtimeCapabilities?.embedding?.providers || [])
+        .find((item) => String(item.provider || '').trim().toLowerCase() === provider)
+        ?.tokenizer_strategies || [];
+    if (!required.length) return { ok: true as const, message: '' };
     if (required.includes(strategy)) return { ok: true as const, message: '' };
     return {
       ok: false as const,
       message: `embedding_type=${provider} requires tokenization.strategy=${required.join(' or ')}`,
     };
-  }, [embeddingBackend, normalizedEmbeddingType, skipDense, tokenizationStrategy]);
+  }, [embeddingBackend, normalizedEmbeddingType, runtimeCapabilities, skipDense, tokenizationStrategy]);
 
   const indexBlockingReason = useMemo(() => {
-    if (skipDense !== 1 && String(embeddingBackend || '').toLowerCase() === 'provider' && !supportedRuntimeProvider) {
+    const semanticAlias = String(semanticKgLlmModel || '').trim();
+    if (
+      semanticGraphActive
+      && semanticAlias
+      && !generationModels.some((model) => String(model.id || '').trim() === semanticAlias)
+    ) {
+      return `Semantic KG alias '${semanticAlias}' is not available from LiteLLM.`;
+    }
+    if (!skipDense && String(embeddingBackend || '').toLowerCase() === 'provider' && !supportedRuntimeProvider) {
       return `Embedding provider '${normalizedEmbeddingType}' is not supported by the current backend runtime.`;
     }
     if (!tokenizationCompatibility.ok) {
@@ -385,16 +737,71 @@ export function IndexingSubtab() {
     embeddingStatus?.isMismatched,
     forceReindex,
     normalizedEmbeddingType,
+    generationModels,
+    semanticGraphActive,
+    semanticKgLlmModel,
     skipDense,
     supportedRuntimeProvider,
     tokenizationCompatibility,
   ]);
 
+  // Two real config keys govern one behaviour -- chunking.max_indexable_file_size (bytes) and
+  // indexing.index_max_file_size_mb (MB) -- and the indexer skips a file that exceeds EITHER,
+  // i.e. the smaller wins. Both fields carry this line so an operator editing one is never
+  // left guessing whether the other follows.
+  // The vision alias sat next to an embedding model that shows its catalog price while
+  // showing none of its own. Same catalog fields, same shape of line -- what the run will be
+  // charged per 1k tokens, from the row behind the alias.
+  // Which documents lost figures, from the run's own per-document events. The end-of-run
+  // total ("figures_failed=10") named no document, so there was nowhere to look; the
+  // extractor records counts per document, so that is the granularity offered here.
+  const figureOutcomes = useMemo(() => {
+    const rows: Array<{ file: string; described: number; failed: number; undescribed: number }> = [];
+    for (const ev of latestRunEvents) {
+      const meta = (ev.meta ?? {}) as Record<string, unknown>;
+      if (meta.kind !== 'figure_outcome') continue;
+      const file = String(meta.file || '').trim();
+      if (!file) continue;
+      rows.push({
+        file,
+        described: Number(meta.described ?? 0),
+        failed: Number(meta.failed ?? 0),
+        undescribed: Number(meta.undescribed ?? 0),
+      });
+    }
+    return rows;
+  }, [latestRunEvents]);
+
+  const figureFailureCount = useMemo(
+    () => figureOutcomes.reduce((sum, row) => sum + row.failed, 0),
+    [figureOutcomes]
+  );
+
+  const visionAliasPricing = useMemo(() => {
+    const alias = String(figuresVisionModel || '').trim();
+    if (!alias) return '';
+    const model = visionModels.find((m) => String(m.id || '').trim() === alias);
+    if (!model) return '';
+    const input = model.input_per_1k;
+    const output = model.output_per_1k;
+    if (input == null && output == null) return 'No catalog price for this alias.';
+    return `Cost: $${Number(input ?? 0).toFixed(5)}/1k in · $${Number(output ?? 0).toFixed(5)}/1k out`;
+  }, [figuresVisionModel, visionModels]);
+
+  const effectiveFileSizeLimit = useMemo(() => {
+    const bytesLimit = Math.max(0, Number(maxIndexableFileSize) || 0);
+    const mbLimit = Math.max(0, Number(indexMaxFileSizeMb) || 0) * 1024 * 1024;
+    const effective = Math.min(bytesLimit, mbLimit);
+    const source = bytesLimit <= mbLimit ? 'Chunking' : 'Indexing';
+    return `Files above ${formatBytes(effective)} are skipped — the smaller of the two ceilings wins (currently ${source}).`;
+  }, [indexMaxFileSizeMb, maxIndexableFileSize]);
+
   const canIndex = useMemo(() => {
     const rid = String(activeRepo || '').trim();
     const pathOk = Boolean(effectivePath && effectivePath.trim());
-    return Boolean(rid && pathOk && !isIndexing && !indexBlockingReason);
-  }, [activeRepo, effectivePath, indexBlockingReason, isIndexing]);
+    const schemaReady = !semanticGraphActive || Boolean(graphSchemaProposal);
+    return Boolean(rid && pathOk && schemaReady && !isIndexing && !indexBlockingReason);
+  }, [activeRepo, effectivePath, graphSchemaProposal, indexBlockingReason, isIndexing, semanticGraphActive]);
 
   const refreshStatus = useCallback(async () => {
     const rid = String(activeRepo || '').trim();
@@ -449,9 +856,24 @@ export function IndexingSubtab() {
     t?.setTitle(title);
   }, []);
 
+  const adoptLocalRun = useCallback(
+    async (rid: string, runId: string) => {
+      try {
+        const latestResp = await fetch(api(`index/${encodeURIComponent(rid)}/runs/latest`));
+        if (!latestResp.ok) return;
+        const latest: IndexRunSummary = await latestResp.json();
+        if (String(latest.run_id || '') !== runId || localRunIdRef.current !== runId) return;
+        setLatestRun(latest);
+      } catch {
+        // the stream keeps the terminal truthful; the panel adopts the run on the next line
+      }
+    },
+    [api]
+  );
+
   const loadLatestRunReplay = useCallback(async () => {
     const rid = String(activeRepo || '').trim();
-    if (!rid || isIndexing) {
+    if (!rid || isIndexingRef.current) {
       return;
     }
     try {
@@ -471,12 +893,14 @@ export function IndexingSubtab() {
         setLatestRunEvents([]);
         return;
       }
-      const events: IndexRunEvent[] = await eventsResp.json();
-      setLatestRunEvents(Array.isArray(events) ? events : []);
+      const page: IndexRunEventPage = await eventsResp.json();
+      const events: IndexRunEvent[] = Array.isArray(page.events) ? page.events : [];
+      setLatestRunEvents(events);
+      setLatestRunEventTotal(Number(page.total ?? events.length));
 
-      if (Array.isArray(events) && events.length > 0) {
+      if (events.length > 0) {
         resetTerminal(`Indexing Output (${String(latest.run_id || '').slice(0, 12)})`);
-        for (const ev of events) {
+        for (const ev of collapseHeartbeats(events)) {
           const msg = String(ev.message || '').trim();
           if (!msg) continue;
           if (ev.type === 'error') {
@@ -500,7 +924,11 @@ export function IndexingSubtab() {
     } catch {
       // best effort only
     }
-  }, [activeRepo, api, isIndexing, resetTerminal]);
+  }, [activeRepo, api, resetTerminal]);
+
+  useEffect(() => {
+    isIndexingRef.current = isIndexing;
+  }, [isIndexing]);
 
   useEffect(() => {
     void refreshStatus();
@@ -508,14 +936,129 @@ export function IndexingSubtab() {
     void loadLatestRunReplay();
   }, [refreshStatus, loadStats, loadLatestRunReplay]);
 
+  // Poll the corpus status so a run started anywhere (API, another operator, a schedule)
+  // shows up here exactly like one started from this tab: progress bar, current file,
+  // replayed + live events, Stop button, Start disabled. Without this the tab only knew
+  // about runs it had started itself.
+  useEffect(() => {
+    const rid = String(activeRepo || '').trim();
+    if (!rid) return;
+    let cancelled = false;
+    const appendEvents = (events: IndexRunEvent[]) => {
+      const fresh = events.slice(foreignEventsSeenRef.current);
+      for (const ev of fresh) {
+        const msg = String(ev.message || '').trim();
+        if (!msg) continue;
+        if (ev.type === 'error') terminalRef.current?.appendLine(`\x1b[31m${msg}\x1b[0m`);
+        else if (ev.type === 'warning') terminalRef.current?.appendLine(`\x1b[33m${msg}\x1b[0m`);
+        else if (ev.type === 'complete') terminalRef.current?.appendLine(`\x1b[32m${msg}\x1b[0m`);
+        else terminalRef.current?.appendLine(msg);
+      }
+      foreignEventsSeenRef.current = events.length;
+    };
+    // Returns whether a run is live, which decides how soon to look again.
+    const tick = async (): Promise<boolean> => {
+      if (localRunRef.current) return true; // this tab's own stream owns the UI
+      let data: IndexStatus | null = null;
+      try {
+        data = await fetchIndexStatus(rid, { quiet: true });
+      } catch {
+        return false;
+      }
+      if (cancelled || activeRepoRef.current !== rid || !data) return false;
+      setIndexStatus(data);
+      if (data.status === 'indexing') {
+        // A single-file corpus reports progress 1.0 while its file is still converting; never
+        // show 100% for a run that has not finished.
+        const pct = Math.min(99, Math.max(0, Math.round(Number(data.progress || 0) * 100)));
+        const file = String(data.current_file || '').trim();
+        setIsIndexing(true);
+        setForeignRun(true);
+        setProgress({ current: pct, total: 100, status: file ? `Indexing ${file}` : 'Indexing…' });
+        try {
+          const latestResp = await fetch(api(`index/${encodeURIComponent(rid)}/runs/latest`));
+          if (!latestResp.ok) return true;
+          const latest: IndexRunSummary = await latestResp.json();
+          const runId = String(latest.run_id || '');
+          if (!runId) return true;
+          if (runId !== foreignRunIdRef.current) {
+            foreignRunIdRef.current = runId;
+            foreignEventsSeenRef.current = 0;
+            setLatestRun(latest);
+            setTerminalVisible(true);
+            resetTerminal(`Indexing: ${rid} (run ${runId.slice(0, 12)}, started outside this tab)`);
+          }
+          const eventsResp = await fetch(
+            api(`index/${encodeURIComponent(rid)}/runs/${encodeURIComponent(runId)}/events?limit=500`)
+          );
+          if (!eventsResp.ok) return true;
+          const page: IndexRunEventPage = await eventsResp.json();
+          const events: IndexRunEvent[] = Array.isArray(page.events) ? page.events : [];
+          if (cancelled) return true;
+          appendEvents(events);
+          setLatestRunEvents(events);
+          setLatestRunEventTotal(Number(page.total ?? events.length));
+        } catch {
+          // best effort only
+        }
+        return true;
+      } else if (foreignRunIdRef.current) {
+        // The adopted run ended while we were watching it.
+        foreignRunIdRef.current = '';
+        foreignEventsSeenRef.current = 0;
+        setForeignRun(false);
+        setIsIndexing(false);
+        isIndexingRef.current = false;
+        setProgress(
+          data.status === 'complete'
+            ? { current: 100, total: 100, status: 'Complete' }
+            : data.status === 'error'
+              ? { current: 0, total: 100, status: `Error: ${String(data.error || '')}` }
+              : { current: 0, total: 100, status: 'Cancelled' }
+        );
+        void loadStats();
+        void loadLatestRunReplay();
+      }
+      return false;
+    };
+    // A fixed 3 s interval kept asking about a run that reached a terminal state hours ago:
+    // 307 requests to /api/index/* in 13 minutes on an idle tab. The tab still has to notice a
+    // run started elsewhere, so idle backs off rather than stopping: one poll every 30 s when
+    // nothing is running, 3 s while a run is live.
+    let timer: number | undefined;
+    const loop = async () => {
+      const live = await tick();
+      if (cancelled) return;
+      timer = window.setTimeout(() => void loop(), live ? INDEX_POLL_ACTIVE_MS : INDEX_POLL_IDLE_MS);
+    };
+    void loop();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      if (foreignRunIdRef.current) {
+        foreignRunIdRef.current = '';
+        foreignEventsSeenRef.current = 0;
+        setForeignRun(false);
+        setIsIndexing(false);
+      }
+    };
+  }, [activeRepo, api, fetchIndexStatus, loadLatestRunReplay, loadStats, resetTerminal]);
+
   const handleStopIndex = useCallback(async () => {
     const rid = String(activeRepo || '').trim();
     if (!rid) return;
     try {
-      await stopIndex(rid, { terminalId: 'indexing_terminal' });
+      const stopped = await stopIndex(rid, { terminalId: 'indexing_terminal' });
       setIsIndexing(false);
-      setProgress((prev) => ({ ...prev, status: 'Cancelled' }));
-      terminalRef.current?.appendLine(`\x1b[33m⚠ Indexing cancelled by user\x1b[0m`);
+      if (stopped.status === 'complete') {
+        // The stop landed after the generation manifest was committed: the run is
+        // complete and the new index is live; only best-effort retirement was cut short.
+        setProgress((prev) => ({ ...prev, status: 'Complete', current: 100, total: 100 }));
+        terminalRef.current?.appendLine(`\x1b[32m✓ Stop arrived after the commit: the new index is live\x1b[0m`);
+      } else {
+        setProgress((prev) => ({ ...prev, status: 'Cancelled' }));
+        terminalRef.current?.appendLine(`\x1b[33m⚠ Indexing cancelled by user\x1b[0m`);
+      }
       await loadStats();
       await refreshStatus();
       await loadLatestRunReplay();
@@ -526,90 +1069,219 @@ export function IndexingSubtab() {
     }
   }, [activeRepo, loadLatestRunReplay, loadStats, refreshStatus, stopIndex]);
 
-  const handleStartIndex = useCallback(async () => {
+  const handleGenerateGraphSchema = useCallback(async () => {
     const rid = String(activeRepo || '').trim();
-    if (!rid) return;
-    if (!effectivePath.trim()) return;
+    if (!rid || !semanticGraphActive) return;
+    setGraphSchemaLoading(true);
+    setGraphSchemaError(null);
+    try {
+      await flushPendingPatches();
+      const response = await fetch(api(`index/${encodeURIComponent(rid)}/graph-schema/proposal`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force_refresh: false }),
+      });
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new Error(text || `Schema proposal failed (${response.status})`);
+      }
+      setGraphSchemaProposal((await response.json()) as GraphSchemaProposal);
+    } catch (error) {
+      setGraphSchemaProposal(null);
+      setGraphSchemaError(errorDetail(error));
+    } finally {
+      setGraphSchemaLoading(false);
+    }
+  }, [activeRepo, api, flushPendingPatches, semanticGraphActive]);
+
+  const handleStartIndex = useCallback(async (requestedGraphOverrideReason?: string) => {
+    const rid = String(activeRepo || '').trim();
+    const auditedOverrideReason = String(requestedGraphOverrideReason || '').trim();
+    if (!rid) {
+      setErrorBanner('No corpus is selected. Pick one in the corpus selector before indexing.');
+      return;
+    }
+    if (!effectivePath.trim()) {
+      // The path comes from the corpus registry, so an empty one means the registry has not
+      // loaded or does not hold this corpus. Returning quietly here is what made Index Now
+      // look dead: no dialog, no error, no toast.
+      setErrorBanner(
+        `No source path resolved for "${rid}". The corpus registry has no path for it — ` +
+          'reload the corpus list, or set the path override below.'
+      );
+      return;
+    }
 
     try {
       // Flush any pending debounced config patches so the backend reads
       // up-to-date settings when it loads scoped config for this index run.
       await flushPendingPatches();
 
+      const approvedSchemaHash =
+        graphSchemaProposal?.schema_hash ??
+        (auditedOverrideReason ? latestRun?.graph_metadata?.schema_hash ?? null : null);
+      if (semanticGraphActive && !approvedSchemaHash) {
+        setErrorBanner('Generate and review the current graph schema before semantic indexing.');
+        return;
+      }
+
       const body: IndexRequest = {
         corpus_id: rid,
         repo_path: effectivePath,
         force_reindex: Boolean(forceReindex),
+        approved_graph_schema_hash: approvedSchemaHash,
+        graph_empty_override_reason: auditedOverrideReason || null,
       };
 
       setErrorBanner(null);
       setEstimateLoading(true);
-      let estimate: IndexEstimate | null = null;
+      let estimate: ReadyIndexEstimate;
       try {
-        estimate = await indexingApi.estimate(body);
+        // Waiting out a cold or under-sampled estimator lives in the api layer, so this
+        // component cannot receive a payload with no numbers in it.
+        estimate = await indexingApi.estimate(body, {
+          // Only reached while warming: an insufficient sample throws instead of waiting.
+          onWaiting: (pending) =>
+            setEstimateWarmup(
+              `Preparing the estimator (about ${Math.max(
+                1,
+                Math.ceil(Number(pending.warmup_seconds_remaining ?? 0))
+              )}s)…`
+            ),
+        });
         setIndexEstimate(estimate);
       } catch (e) {
-        estimate = null;
-        // Estimate failures should never block indexing; keep it best-effort.
-        terminalRef.current?.appendLine?.(
-          `\x1b[33m⚠ Index estimate unavailable: ${e instanceof Error ? e.message : 'unknown error'}\x1b[0m`
+        // The estimate IS the consent gate: it is the only place the operator sees the file
+        // count, the chunk count and what the run will cost before it spends anything. A run
+        // that starts without it is a run nobody agreed to, so a failed estimate stops here
+        // and says why.
+        // The estimate samples the corpus through the real tokenizer, which loads its model
+        // on first use in a fresh API process -- so the first estimate after a restart can
+        // outrun the client's 30s timeout even though nothing is wrong. Blocking is still
+        // right (no run without consent), but the operator has to be told to try again.
+        const timedOut =
+          (e as { code?: string } | null)?.code === 'ECONNABORTED' ||
+          /timeout/i.test(e instanceof Error ? e.message : '');
+        setErrorBanner(
+          `Index estimate failed for "${rid}" (${effectivePath}): ` +
+            `${errorDetail(e)}. Indexing was not started.` +
+            (timedOut
+              ? ' The first estimate after a service restart is slow because the tokenizer loads on first use — click Index Now again.'
+              : '')
         );
+        return;
       } finally {
         setEstimateLoading(false);
+        setEstimateWarmup('');
       }
 
-      if (estimate) {
+      // Scope for the dialog copy. The estimate is always present here -- a failed one
+      // returned above rather than falling through to the run.
+      {
         const totalCostUsd = estimate.total_cost_usd ?? estimate.embedding_cost_usd;
         const embedCostUsd = estimate.embedding_cost_usd;
         const semanticKgCostUsd = estimate.semantic_kg_cost_usd;
+        const figureCostUsd = estimate.figure_description_cost_usd;
         const cost = totalCostUsd == null ? 'N/A' : formatCurrency(Number(totalCostUsd || 0));
         const costBreakdown =
-          semanticKgCostUsd == null
+          semanticKgCostUsd == null && figureCostUsd == null
             ? null
-            : `Embed ${embedCostUsd == null ? 'N/A' : formatCurrency(Number(embedCostUsd || 0))} + Semantic KG ${formatCurrency(Number(semanticKgCostUsd || 0))}`;
+            : [
+                `Embed ${embedCostUsd == null ? 'N/A' : formatCurrency(Number(embedCostUsd || 0))}`,
+                semanticKgCostUsd == null ? null : `Semantic KG ${formatCurrency(Number(semanticKgCostUsd || 0))}`,
+                figureCostUsd == null
+                  ? null
+                  : `Figures ≤ ${formatFigureCostUsd(Number(figureCostUsd || 0))}${
+                      estimate.estimated_figures != null
+                        ? ` (~${formatNumber(Number(estimate.estimated_figures))} figures)`
+                        : ''
+                    }`,
+              ]
+                .filter(Boolean)
+                .join(' + ');
+        // One model, so the range and the breakdown can never contradict each other: the
+        // point estimate is the sum of the phases printed beside it, and the range is that
+        // same number scaled.
+        const pointSeconds = estimate.estimated_seconds;
         const time =
-          estimate.estimated_seconds_low != null && estimate.estimated_seconds_high != null
-            ? `${formatDuration(Number(estimate.estimated_seconds_low) * 1000)}–${formatDuration(
-                Number(estimate.estimated_seconds_high) * 1000
-              )}`
+          pointSeconds != null &&
+          estimate.estimated_seconds_low != null &&
+          estimate.estimated_seconds_high != null
+            ? `~${formatDuration(durationMs(Number(pointSeconds)))} (${formatDuration(
+                durationMs(Number(estimate.estimated_seconds_low))
+              )}–${formatDuration(durationMs(Number(estimate.estimated_seconds_high)))})`
             : 'N/A';
         const semanticKgSeconds = estimate.estimated_seconds_semantic_kg;
-        const midTotalSeconds =
-          estimate.estimated_seconds_low != null && estimate.estimated_seconds_high != null
-            ? (Number(estimate.estimated_seconds_low) + Number(estimate.estimated_seconds_high)) / 2
-            : null;
-        const embedSecondsApprox =
-          semanticKgSeconds != null && midTotalSeconds != null ? Math.max(0, midTotalSeconds - Number(semanticKgSeconds)) : null;
+        const figureSeconds = estimate.estimated_seconds_figures;
+        const embedSeconds = estimate.estimated_seconds_embedding;
+        const overheadSeconds = estimate.estimated_seconds_overhead;
+        const timeBreakdown = [
+          embedSeconds == null ? null : `Embed ~${formatDuration(durationMs(Number(embedSeconds)))}`,
+          semanticKgSeconds == null ? null : `Semantic KG ~${formatDuration(durationMs(Number(semanticKgSeconds)))}`,
+          figureSeconds == null ? null : `Figures ~${formatDuration(durationMs(Number(figureSeconds)))}`,
+          overheadSeconds == null ? null : `startup ~${formatDuration(durationMs(Number(overheadSeconds)))}`,
+        ]
+          .filter(Boolean)
+          .join(' + ');
         const msg = [
           `Index estimate for "${rid}"`,
           `Files: ${formatNumber(Number(estimate.total_files || 0))} • Size: ${formatBytes(
             Number(estimate.total_size_bytes || 0)
           )}`,
-          `Tokens (est): ${formatNumber(Number(estimate.estimated_total_tokens || 0))} • Chunks (est): ${formatNumber(
-            Number(estimate.estimated_total_chunks || 0)
-          )}`,
+          `Tokens (est): ${formatNumber(Number(estimate.estimated_total_tokens || 0))} (${formatNumber(
+            Number(estimate.estimated_tokens_low)
+          )}–${formatNumber(Number(estimate.estimated_tokens_high))})`,
+          `Chunks (est): ${formatNumber(Number(estimate.estimated_total_chunks || 0))} (${formatNumber(
+            Number(estimate.estimated_chunks_low)
+          )}–${formatNumber(Number(estimate.estimated_chunks_high))})`,
+          `Measured by chunking ${formatNumber(Number(estimate.sampled_files))} sampled files in ${formatDuration(
+            durationMs(Number(estimate.elapsed_seconds))
+          )} • band ±${Math.round(Number(estimate.estimate_relative_error) * 100)}%`,
           `Embedding: ${String(estimate.embedding_provider || '—')}/${String(estimate.embedding_model || '—')} (${
             estimate.embedding_backend
           }, skip_dense=${estimate.skip_dense ? 'yes' : 'no'})`,
           `Cost (est): ${cost} • Time (est): ${time}`,
           ...(costBreakdown ? [`Cost breakdown: ${costBreakdown}`] : []),
-          ...(semanticKgSeconds != null
+          ...(timeBreakdown ? [`Time breakdown (est): ${timeBreakdown}`] : []),
+          ...(auditedOverrideReason
             ? [
-                `Time breakdown (est): Embed ${
-                  embedSecondsApprox == null ? 'N/A' : `~${formatDuration(embedSecondsApprox * 1000)}`
-                } + Semantic KG ~${formatDuration(Number(semanticKgSeconds) * 1000)}`,
+                'AUDITED ENTITY-SPARSE OVERRIDE: this retry may promote only the complete chunk/vector generation. Graph retrieval remains disabled.',
+                `Reason: ${auditedOverrideReason}`,
+                'The API accepts this only through an authenticated proxy Remote-User and only when the sole failures are zero entities/semantic relationships after complete extraction.',
               ]
             : []),
-          '',
-          'Start indexing now?',
+          // A run does not add to the live index, it replaces it: the new generation is
+          // published on commit and the current one is retired.
+          ...(hasIndexedCorpus
+            ? [
+                forceReindex
+                  ? 'This run CLEARS the current index first, then rebuilds it: searches return nothing until it commits.'
+                  : 'On commit this run publishes a new generation and retires the one now serving searches.',
+              ]
+            : []),
         ].join('\n');
 
-        if (!window.confirm(msg)) {
+        const proceed = await confirmDialog({
+          title: auditedOverrideReason ? 'Retry with audited sparse-graph override?' : 'Start indexing?',
+          message: msg,
+          confirmLabel: auditedOverrideReason ? 'Re-index without graph retrieval' : 'Start indexing',
+          danger: Boolean(auditedOverrideReason),
+        });
+        if (!proceed) {
           return;
         }
       }
 
+      localRunRef.current = true;
+      localRunIdRef.current = '';
       setIsIndexing(true);
+      setForeignRun(false);
+      // The panel must never show the previous run's id and graph verdict under the new
+      // run's badge (Task 8 drive observation D2): drop the replayed run now and adopt the
+      // new run as soon as the stream names it.
+      setLatestRun(null);
+      setLatestRunEvents([]);
+      setLatestRunEventTotal(0);
       setProgress({ current: 0, total: 100, status: 'Starting...' });
       setTerminalVisible(true);
       resetTerminal(`Indexing: ${rid}`);
@@ -618,10 +1290,20 @@ export function IndexingSubtab() {
       terminalRef.current?.appendLine(`   Provider: ${String(embeddingType || '')}, Model: ${String(currentModel || '')}`);
       terminalRef.current?.appendLine(`   Chunk Size: ${chunkSize}, Strategy: ${chunkingStrategy}`);
       terminalRef.current?.appendLine(`   Graph indexing: ${graphIndexingEnabled ? 'enabled' : 'disabled'} • Skip dense: ${skipDense ? 'yes' : 'no'}`);
+      if (auditedOverrideReason) {
+        terminalRef.current?.appendLine(`   Audited sparse override requested: ${auditedOverrideReason}`);
+      }
 
       const st = await startAndStream(body, {
         terminalId: 'indexing_terminal',
-        onLine: (line) => terminalRef.current?.appendLine(line),
+        onLine: (line) => {
+          terminalRef.current?.appendLine(line);
+          const started = /run_id=([0-9a-f]{32})/.exec(String(line || ''));
+          if (started && started[1] !== localRunIdRef.current) {
+            localRunIdRef.current = started[1];
+            void adoptLocalRun(rid, started[1]);
+          }
+        },
         onProgress: (percent, message) => {
           setProgress({ current: percent, total: 100, status: message || `Progress: ${percent}%` });
           terminalRef.current?.updateProgress(percent, message);
@@ -629,6 +1311,7 @@ export function IndexingSubtab() {
         onError: (err) => {
           terminalRef.current?.appendLine(`\x1b[31mERROR: ${err}\x1b[0m`);
           setProgress((prev) => ({ ...prev, status: `Error: ${err}` }));
+          localRunRef.current = false;
           setIsIndexing(false);
           void loadLatestRunReplay();
         },
@@ -636,6 +1319,7 @@ export function IndexingSubtab() {
           terminalRef.current?.updateProgress(100, 'Complete');
           terminalRef.current?.appendLine(`\x1b[32m✓ Indexing complete!\x1b[0m`);
           setProgress({ current: 100, total: 100, status: 'Complete' });
+          localRunRef.current = false;
           setIsIndexing(false);
           void loadStats();
           void refreshStatus();
@@ -644,6 +1328,7 @@ export function IndexingSubtab() {
         onCancelled: () => {
           terminalRef.current?.appendLine(`\x1b[33m⚠ Indexing cancelled\x1b[0m`);
           setProgress((prev) => ({ ...prev, status: 'Cancelled' }));
+          localRunRef.current = false;
           setIsIndexing(false);
           void loadStats();
           void refreshStatus();
@@ -651,10 +1336,12 @@ export function IndexingSubtab() {
         },
       });
       setIndexStatus(st);
+      if (auditedOverrideReason) setGraphOverrideReason('');
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Indexing failed';
       setErrorBanner(msg);
       terminalRef.current?.appendLine(`\x1b[31mFailed: ${msg}\x1b[0m`);
+      localRunRef.current = false;
       setIsIndexing(false);
     }
   }, [
@@ -668,18 +1355,41 @@ export function IndexingSubtab() {
     flushPendingPatches,
     forceReindex,
     graphIndexingEnabled,
+    graphSchemaProposal,
+    hasIndexedCorpus,
     loadLatestRunReplay,
     loadStats,
+    latestRun,
     resetTerminal,
     refreshStatus,
     skipDense,
     startAndStream,
+    semanticGraphActive,
   ]);
+
+  const handleSparseGraphOverride = useCallback(async () => {
+    const reason = graphOverrideReason.trim();
+    if (reason.length < 20) {
+      setErrorBanner('Explain the entity-sparse exception in at least 20 visible characters.');
+      return;
+    }
+    await handleStartIndex(reason);
+  }, [graphOverrideReason, handleStartIndex]);
 
   const handleDeleteIndex = useCallback(async () => {
     const rid = String(activeRepo || '').trim();
     if (!rid) return;
-    if (!confirm(`Delete index for corpus "${rid}"?`)) return;
+    const proceed = await confirmDialog({
+      title: 'Delete index',
+      message:
+        `Permanently delete the index for corpus "${rid}". This removes the stored chunks ` +
+        `and chunk summaries, the dense and sparse Qdrant generations, and the Neo4j graph ` +
+        `for this corpus. The source documents are not touched. This cannot be undone.`,
+      confirmLabel: 'Delete index',
+      danger: true,
+      requireTyped: { expected: rid, label: `Type the corpus id "${rid}" to confirm deletion` },
+    });
+    if (!proceed) return;
 
     setErrorBanner(null);
     setIsIndexing(false);
@@ -701,30 +1411,23 @@ export function IndexingSubtab() {
     }
   }, [activeRepo, api, loadStats, refreshStatus]);
 
-  const loadVocabPreview = useCallback(async () => {
-    const rid = String(activeRepo || '').trim();
-    if (!rid) return;
-    setVocabLoading(true);
-    try {
-      const url = api(`/api/index/vocab-preview?corpus_id=${encodeURIComponent(rid)}&top_n=${encodeURIComponent(String(vocabTopN))}`);
-      const r = await fetch(url);
-      if (!r.ok) {
-        const text = await r.text().catch(() => '');
-        throw new Error(text || `Vocab preview failed (${r.status})`);
-      }
-      const data: VocabPreviewResponse = await r.json();
-      setVocabPreview(Array.isArray(data.terms) ? data.terms : []);
-      setVocabTotal(Number(data.total_terms || 0));
-    } catch (e) {
-      setVocabPreview([]);
-      setVocabTotal(0);
-      terminalRef.current?.appendLine?.(
-        `\x1b[33m⚠ Vocabulary preview unavailable: ${e instanceof Error ? e.message : 'unknown error'}\x1b[0m`
-      );
-    } finally {
-      setVocabLoading(false);
-    }
-  }, [activeRepo, api, vocabTopN]);
+  const graphRunMetadata = latestRun?.graph_metadata ?? null;
+  const graphFailureCodes = Array.isArray(latestRun?.graph_failure_codes)
+    ? latestRun.graph_failure_codes
+    : [];
+  const graphOverrideEligible = Boolean(
+    latestRun?.status === 'error' &&
+      graphRunMetadata?.policy === 'semantic' &&
+      graphFailureCodes.length > 0 &&
+      graphFailureCodes.every(
+        (code) => code === 'zero_entities' || code === 'zero_semantic_relationships'
+      ) &&
+      graphRunMetadata.extraction.selected_chunks > 0 &&
+      graphRunMetadata.extraction.attempted_chunks === graphRunMetadata.extraction.selected_chunks &&
+      graphRunMetadata.extraction.succeeded_chunks === graphRunMetadata.extraction.selected_chunks &&
+      graphRunMetadata.extraction.failed_chunks === 0 &&
+      graphRunMetadata.extraction.truncated_chunks === 0
+  );
 
   // Avoid rendering “blank defaults” before config arrives
   if (!config) {
@@ -751,7 +1454,7 @@ export function IndexingSubtab() {
           }}
         >
           <span style={{ fontSize: '22px' }}>📦</span>
-          Code Indexing
+          Corpus Indexing
           <TooltipIcon name="INDEXING" />
         </h3>
         <p
@@ -763,7 +1466,8 @@ export function IndexingSubtab() {
             margin: 0,
           }}
         >
-          Configure embeddings, chunking, sparse tokenization, and graph build behavior. This is corpus-scoped.
+          Configure how the selected corpus is chunked, embedded, sparse-tokenized, and graph-built. Every
+          setting here applies to that corpus only, whatever it holds: documents, email, or code.
         </p>
       </div>
 
@@ -771,6 +1475,7 @@ export function IndexingSubtab() {
 
       {errorBanner && (
         <div
+          data-testid="index-error-banner"
           style={{
             background: 'rgba(var(--error-rgb), 0.1)',
             border: '1px solid var(--error)',
@@ -797,7 +1502,9 @@ export function IndexingSubtab() {
           data-testid="index-run-status-panel"
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '12px', color: 'var(--fg-muted)' }}>Last run status</span>
+            <span style={{ fontSize: '12px', color: 'var(--fg-muted)' }}>
+              {isIndexing ? 'Current run' : 'Last run status'}
+            </span>
             <span
               style={{
                 fontSize: '11px',
@@ -810,24 +1517,225 @@ export function IndexingSubtab() {
                     ? 'var(--error)'
                     : (_indexStatus?.status || latestRun?.status) === 'complete'
                       ? 'var(--ok)'
-                      : 'var(--fg)',
+                      : (_indexStatus?.status || latestRun?.status) === 'indexing'
+                        ? 'var(--link)'
+                        : 'var(--fg)',
               }}
               data-testid="index-run-status-pill"
             >
               {String(_indexStatus?.status || latestRun?.status || 'idle')}
             </span>
             {latestRun?.run_id ? (
-              <span style={{ fontSize: '11px', color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)' }}>
+              <span
+                data-testid="index-run-id"
+                style={{ fontSize: '11px', color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)' }}
+              >
                 run_id: {String(latestRun.run_id)}
               </span>
             ) : null}
             {latestRunEvents.length > 0 ? (
-              <span style={{ fontSize: '11px', color: 'var(--fg-muted)' }}>
-                {latestRunEvents.length} replayed events
+              <span data-testid="index-run-event-count" style={{ fontSize: '11px', color: 'var(--fg-muted)' }}>
+                {latestRunEventTotal > latestRunEvents.length
+                  ? `showing the most recent ${formatNumber(latestRunEvents.length)} of ${formatNumber(
+                      latestRunEventTotal
+                    )} events`
+                  : `${formatNumber(latestRunEvents.length)} ${isIndexing ? 'events so far' : 'replayed events'}`}
+              </span>
+            ) : null}
+            {foreignRun ? (
+              <span
+                data-testid="index-run-foreign-note"
+                style={{ fontSize: '11.5px', color: 'var(--fg-muted)' }}
+              >
+                started outside this tab (API, another operator, or a schedule) — progress mirrored from the server
               </span>
             ) : null}
           </div>
 
+
+          {graphRunMetadata && (
+            <div
+              data-testid="index-run-graph-telemetry"
+              style={{
+                marginTop: '10px',
+                padding: '10px 12px',
+                borderRadius: '8px',
+                border: `1px solid ${latestRun?.graph_promotable === false ? 'var(--error)' : 'var(--line)'}`,
+                background: latestRun?.graph_promotable === false ? 'rgba(var(--error-rgb), 0.08)' : 'var(--bg-elev2)',
+                fontSize: '12px',
+                color: 'var(--fg)',
+              }}
+            >
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '8px' }}>
+                <strong>Graph generation</strong>
+                <span data-testid="index-run-graph-policy">policy: {graphRunMetadata.policy}</span>
+                <span
+                  data-testid="index-run-graph-verdict"
+                  style={{
+                    fontWeight: 800,
+                    color:
+                      latestRun?.graph_promotable === false
+                        ? 'var(--error)'
+                        : latestRun?.graph_promotable == null
+                          ? 'var(--fg-muted)'
+                        : graphRunMetadata.partial
+                          ? 'var(--warn)'
+                          : 'var(--ok)',
+                  }}
+                >
+                  {latestRun?.graph_promotable === false
+                    ? 'PROMOTION REFUSED'
+                    : latestRun?.graph_promotable == null
+                      ? 'PROMOTION NOT EVALUATED'
+                    : graphRunMetadata.partial
+                      ? 'PARTIAL CHUNK-ONLY OVERRIDE'
+                      : 'PROMOTABLE'}
+                </span>
+              </div>
+              {graphRunMetadata.schema_hash ? (
+                <div style={{ marginBottom: '6px', color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>
+                  schema: {graphRunMetadata.schema_hash}
+                </div>
+              ) : null}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(185px, 1fr))',
+                  gap: '4px 14px',
+                }}
+              >
+                <span>
+                  Chunks: {formatNumber(graphRunMetadata.extraction.selected_chunks)} selected /{' '}
+                  {formatNumber(graphRunMetadata.extraction.attempted_chunks)} attempted /{' '}
+                  {formatNumber(graphRunMetadata.extraction.succeeded_chunks)} succeeded
+                </span>
+                <span>
+                  Extraction failures: {formatNumber(graphRunMetadata.extraction.failed_chunks)} failed /{' '}
+                  {formatNumber(graphRunMetadata.extraction.truncated_chunks)} truncated
+                </span>
+                <span>Entities extracted: {formatNumber(graphRunMetadata.extraction.extracted_entities)}</span>
+                <span>Entities resolved: {formatNumber(graphRunMetadata.resolution.resolved_nodes)}</span>
+                <span>Entities merged: {formatNumber(graphRunMetadata.resolution.merged_nodes)}</span>
+                <span>
+                  Semantic/AST relations: {formatNumber(graphRunMetadata.extraction.semantic_relationships)}
+                </span>
+                <span>
+                  Provenance links: {formatNumber(graphRunMetadata.extraction.from_chunk_relationships)}
+                </span>
+                <span>
+                  Duplicate groups: {formatNumber(graphRunMetadata.resolution.unresolved_duplicate_groups)}
+                </span>
+                <span>
+                  Communities:{' '}
+                  {graphRunMetadata.communities
+                    ? `${formatNumber(graphRunMetadata.communities.community_count)} (${graphRunMetadata.communities.algorithm})`
+                    : 'not run yet'}
+                </span>
+              </div>
+              {graphFailureCodes.length > 0 ? (
+                <div data-testid="index-run-graph-failure-codes" style={{ marginTop: '8px', color: 'var(--error)' }}>
+                  Failed invariants: {graphFailureCodes.join(', ')}
+                </div>
+              ) : null}
+              {graphRunMetadata.override ? (
+                <div data-testid="index-run-graph-override-audit" style={{ marginTop: '8px', color: 'var(--warn)' }}>
+                  Override by {graphRunMetadata.override.actor} at {new Date(graphRunMetadata.override.created_at).toLocaleString()}:
+                  {' '}{graphRunMetadata.override.reason}
+                </div>
+              ) : null}
+            </div>
+          )}
+
+          {graphOverrideEligible && (
+            <div
+              data-testid="index-run-graph-override"
+              style={{
+                marginTop: '10px',
+                padding: '10px 12px',
+                borderRadius: '8px',
+                border: '1px solid var(--warn)',
+                background: 'rgba(var(--warn-rgb), 0.08)',
+              }}
+            >
+              <div style={{ fontWeight: 700, fontSize: '12px', marginBottom: '6px' }}>
+                Authenticated entity-sparse retry
+              </div>
+              <div style={{ fontSize: '11.5px', color: 'var(--fg-muted)', marginBottom: '8px' }}>
+                Available only because the full approved extraction succeeded and found no graph. The retry promotes chunks and vectors only; graph retrieval stays disabled. The proxy identity, reason, timestamp, and telemetry are persisted.
+              </div>
+              <textarea
+                data-testid="index-run-graph-override-reason"
+                value={graphOverrideReason}
+                onChange={(event) => setGraphOverrideReason(event.target.value)}
+                placeholder="Explain why this reviewed corpus is intentionally entity sparse (minimum 20 characters)"
+                rows={3}
+                style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  borderRadius: '6px',
+                  border: '1px solid var(--line)',
+                  background: 'var(--input-bg, var(--card-bg))',
+                  color: 'var(--fg)',
+                  padding: '8px 10px',
+                  resize: 'vertical',
+                  marginBottom: '8px',
+                }}
+              />
+              <button
+                data-testid="index-run-graph-override-retry"
+                disabled={graphOverrideReason.trim().length < 20 || isIndexing}
+                onClick={() => void handleSparseGraphOverride()}
+                style={{
+                  padding: '7px 12px',
+                  borderRadius: '6px',
+                  border: '1px solid var(--warn)',
+                  background: 'transparent',
+                  color: 'var(--warn)',
+                  cursor: graphOverrideReason.trim().length >= 20 && !isIndexing ? 'pointer' : 'not-allowed',
+                  fontWeight: 700,
+                }}
+              >
+                Review override and re-index
+              </button>
+            </div>
+          )}
+
+
+          {figureOutcomes.length > 0 && (
+            <div
+              data-testid="index-run-figure-outcomes"
+              style={{
+                marginTop: '10px',
+                padding: '10px 12px',
+                borderRadius: '8px',
+                // Filtered-out pictures are the configured rules working; only a failed
+                // vision call is worth painting as a warning.
+                border: `1px solid ${figureFailureCount > 0 ? 'var(--warn)' : 'var(--line)'}`,
+                background: figureFailureCount > 0 ? 'rgba(var(--warn-rgb), 0.08)' : 'var(--bg-elev2)',
+                fontSize: '12px',
+                color: 'var(--fg)',
+              }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: '6px' }}>
+                {figureFailureCount > 0
+                  ? `Figures this run failed to describe (${formatNumber(figureFailureCount)})`
+                  : 'Figures this run filtered out, as configured'}
+              </div>
+              <ul style={{ margin: 0, paddingLeft: '18px', display: 'grid', gap: '2px' }}>
+                {figureOutcomes.map((row) => (
+                  <li key={row.file} style={{ fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>
+                    {row.file} — {formatNumber(row.failed)} failed, {formatNumber(row.undescribed)} filtered out,{' '}
+                    {formatNumber(row.described)} described
+                  </li>
+                ))}
+              </ul>
+              <div style={{ marginTop: '6px', fontSize: '11.5px', color: 'var(--fg-muted)' }}>
+                {figureFailureCount > 0
+                  ? '"Failed" means the vision call was made and the gateway returned nothing — check the alias and indexing.figures.max_completion_tokens, then re-run with Force reindex. "Filtered out" means the picture never reached the vision call (indexing.figures.skip_classes, min_area_fraction, or classify).'
+                  : 'Nothing failed. These pictures never reached the vision call, by configuration: indexing.figures.skip_classes, min_area_fraction, or classify.'}
+              </div>
+            </div>
+          )}
           {(_indexStatus?.error || latestRun?.error) && (
             <div
               style={{
@@ -852,6 +1760,7 @@ export function IndexingSubtab() {
       <EmbeddingMismatchWarning variant="inline" showActions />
       {contractLocked && (
         <div
+          data-testid="index-contract-locked-banner"
           style={{
             marginBottom: '16px',
             padding: '10px 12px',
@@ -862,7 +1771,7 @@ export function IndexingSubtab() {
             color: 'var(--fg)',
           }}
         >
-          Index contract is locked for this corpus. Enable <strong>Force reindex</strong> to edit provider/model/dimension/tokenizer fields.
+          Index contract is locked for this corpus. Enable <strong>Force reindex</strong> to edit fields that change dense or sparse index contents.
         </div>
       )}
 
@@ -958,7 +1867,7 @@ export function IndexingSubtab() {
       </details>
 
       {/* Compatibility / mode callouts */}
-      {skipDense === 1 && (
+      {skipDense && (
         <div
           style={{
             background: 'rgba(var(--warn-rgb), 0.1)',
@@ -989,7 +1898,8 @@ export function IndexingSubtab() {
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
+          // Derived so the row never goes stale when a component card is added.
+          gridTemplateColumns: `repeat(${COMPONENT_CARDS.length}, minmax(0, 1fr))`,
           gap: '16px',
           marginBottom: '24px',
         }}
@@ -1033,7 +1943,7 @@ export function IndexingSubtab() {
               style={{
                 fontSize: '14px',
                 fontWeight: 600,
-                color: selectedComponent === comp.id ? 'var(--accent)' : 'var(--fg)',
+                color: selectedComponent === comp.id ? 'var(--accent-text)' : 'var(--fg)',
                 marginBottom: '6px',
               }}
             >
@@ -1078,7 +1988,7 @@ export function IndexingSubtab() {
                 <div style={{ color: 'var(--fg-muted)', fontSize: '12px', marginTop: '4px' }}>{modelsError}</div>
               </div>
             )}
-            {!supportedRuntimeProvider && String(embeddingBackend || '').toLowerCase() === 'provider' && skipDense !== 1 && (
+            {!supportedRuntimeProvider && String(embeddingBackend || '').toLowerCase() === 'provider' && !skipDense && (
               <div
                 style={{
                   padding: '12px',
@@ -1092,7 +2002,7 @@ export function IndexingSubtab() {
                   Unsupported embedding provider for runtime backend
                 </div>
                 <div style={{ color: 'var(--fg-muted)', fontSize: '12px', marginTop: '4px' }}>
-                  Select one of: {RUNTIME_SUPPORTED_PROVIDER_EMBEDDERS.join(', ')}
+                  Select one of: {(runtimeEmbeddingProviders.length ? runtimeEmbeddingProviders : visibleEmbedProviders).join(', ')}
                 </div>
               </div>
             )}
@@ -1132,7 +2042,7 @@ export function IndexingSubtab() {
                     }}
                   >
                     {(() => {
-                      const s = describeEmbeddingProviderStrategy(String(provider));
+                      const s = describeEmbeddingProviderStrategy(String(provider), runtimeCapabilities || undefined);
                       return (
                         <>
                     <div
@@ -1141,7 +2051,7 @@ export function IndexingSubtab() {
                         fontWeight: 600,
                         color:
                           String(embeddingType || '').toLowerCase() === String(provider).toLowerCase()
-                            ? 'var(--accent)'
+                            ? 'var(--accent-text)'
                             : 'var(--fg)',
                       }}
                     >
@@ -1200,8 +2110,9 @@ export function IndexingSubtab() {
             {/* Model + dimensions */}
             <div className="input-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px' }}>
               <div className="input-group">
-                <ModelPicker
+                  <ModelPicker
                   componentType="EMB"
+                  selectionRole="embedding_provider"
                   provider={embeddingType}
                   value={currentModel}
                   onChange={setCurrentModel}
@@ -1216,13 +2127,13 @@ export function IndexingSubtab() {
                   Dimensions
                   <TooltipIcon name="EMBEDDING_DIM" />
                 </label>
-                <input
-                  type="number"
+                <NumberField
                   value={embeddingDim}
-                  onChange={(e) => setEmbeddingDim(parseInt(e.target.value || '0', 10))}
+                  onCommit={setEmbeddingDim}
                   disabled={contractLocked}
                   min={128}
                   max={4096}
+                  step={1}
                   style={{
                     width: '100%',
                     padding: '10px 12px',
@@ -1241,12 +2152,13 @@ export function IndexingSubtab() {
                   Batch size
                   <TooltipIcon name="EMBEDDING_BATCH_SIZE" />
                 </label>
-                <input
-                  type="number"
+                <NumberField
+                  data-testid="embedding-batch-size"
                   value={embeddingBatchSize}
-                  onChange={(e) => setEmbeddingBatchSize(parseInt(e.target.value || '0', 10))}
+                  onCommit={setEmbeddingBatchSize}
                   min={1}
                   max={256}
+                  step={1}
                   style={{
                     width: '100%',
                     padding: '10px 12px',
@@ -1260,7 +2172,12 @@ export function IndexingSubtab() {
               </div>
             </div>
 
-            <details style={{ marginTop: '18px' }}>
+            {/* Default-open: these are real corpus tunables. A collapsed-by-default
+                panel resets on every reload, so a saved value could never be verified
+                against the rendered control after refresh (the exhaustive run reported
+                ui_matches=false for suffix/truncation/contextual for exactly this
+                reason). Operators can still collapse it for the session. */}
+            <details open style={{ marginTop: '18px' }}>
               <summary style={{ cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: 'var(--fg)' }}>
                 Advanced embedding settings
               </summary>
@@ -1275,6 +2192,7 @@ export function IndexingSubtab() {
                       data-testid="embedding-input-truncation"
                       value={embeddingInputTruncation}
                       onChange={(e) => setEmbeddingInputTruncation(e.target.value as any)}
+                      disabled={contractLocked}
                       style={{
                         width: '100%',
                         padding: '10px 12px',
@@ -1283,6 +2201,7 @@ export function IndexingSubtab() {
                         borderRadius: '6px',
                         color: 'var(--fg)',
                         fontSize: '13px',
+                        opacity: contractLocked ? 0.6 : 1,
                       }}
                     >
                       <option value="truncate_end">truncate_end</option>
@@ -1300,6 +2219,7 @@ export function IndexingSubtab() {
                       type="text"
                       value={embedTextPrefix}
                       onChange={(e) => setEmbedTextPrefix(e.target.value)}
+                      disabled={contractLocked}
                       placeholder=""
                       style={{
                         width: '100%',
@@ -1309,6 +2229,7 @@ export function IndexingSubtab() {
                         borderRadius: '6px',
                         color: 'var(--fg)',
                         fontSize: '13px',
+                        opacity: contractLocked ? 0.6 : 1,
                       }}
                     />
                   </div>
@@ -1322,6 +2243,7 @@ export function IndexingSubtab() {
                       type="text"
                       value={embedTextSuffix}
                       onChange={(e) => setEmbedTextSuffix(e.target.value)}
+                      disabled={contractLocked}
                       placeholder=""
                       style={{
                         width: '100%',
@@ -1331,6 +2253,7 @@ export function IndexingSubtab() {
                         borderRadius: '6px',
                         color: 'var(--fg)',
                         fontSize: '13px',
+                        opacity: contractLocked ? 0.6 : 1,
                       }}
                     />
                   </div>
@@ -1346,6 +2269,7 @@ export function IndexingSubtab() {
                       data-testid="embedding-contextual-chunk-embeddings"
                       value={contextualChunkEmbeddings}
                       onChange={(e) => setContextualChunkEmbeddings(e.target.value as any)}
+                      disabled={contractLocked}
                       style={{
                         width: '100%',
                         padding: '10px 12px',
@@ -1354,6 +2278,7 @@ export function IndexingSubtab() {
                         borderRadius: '6px',
                         color: 'var(--fg)',
                         fontSize: '13px',
+                        opacity: contractLocked ? 0.6 : 1,
                       }}
                     >
                       <option value="off">off</option>
@@ -1366,14 +2291,14 @@ export function IndexingSubtab() {
                       Late chunking max doc tokens
                       <TooltipIcon name="EMBEDDING_LATE_CHUNKING_MAX_DOC_TOKENS" />
                     </label>
-                    <input
+                    <NumberField
                       data-testid="embedding-late-chunking-max-doc-tokens"
-                      type="number"
                       value={lateChunkingMaxDocTokens}
-                      onChange={(e) => setLateChunkingMaxDocTokens(parseInt(e.target.value || '0', 10))}
-                      min={512}
+                      onCommit={setLateChunkingMaxDocTokens}
+                      min={256}
                       max={65536}
-                      disabled={String(contextualChunkEmbeddings).toLowerCase() !== 'late_chunking_local_only'}
+                      step={1}
+                      disabled={contractLocked || String(contextualChunkEmbeddings).toLowerCase() !== 'late_chunking_local_only'}
                       style={{
                         width: '100%',
                         padding: '10px 12px',
@@ -1382,7 +2307,7 @@ export function IndexingSubtab() {
                         borderRadius: '6px',
                         color: 'var(--fg)',
                         fontSize: '13px',
-                        opacity: String(contextualChunkEmbeddings).toLowerCase() === 'late_chunking_local_only' ? 1 : 0.6,
+                        opacity: !contractLocked && String(contextualChunkEmbeddings).toLowerCase() === 'late_chunking_local_only' ? 1 : 0.6,
                       }}
                     />
                   </div>
@@ -1395,12 +2320,14 @@ export function IndexingSubtab() {
                       Max tokens
                       <TooltipIcon name="EMBEDDING_MAX_TOKENS" />
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
+                      data-testid="embedding-max-tokens"
                       value={embeddingMaxTokens}
-                      onChange={(e) => setEmbeddingMaxTokens(parseInt(e.target.value || '0', 10))}
+                      onCommit={setEmbeddingMaxTokens}
                       min={512}
                       max={8192}
+                      step={1}
+                      disabled={contractLocked}
                       style={{
                         width: '100%',
                         padding: '10px 12px',
@@ -1409,6 +2336,7 @@ export function IndexingSubtab() {
                         borderRadius: '6px',
                         color: 'var(--fg)',
                         fontSize: '13px',
+                        opacity: contractLocked ? 0.6 : 1,
                       }}
                     />
                   </div>
@@ -1417,12 +2345,12 @@ export function IndexingSubtab() {
                       Timeout (s)
                       <TooltipIcon name="EMBEDDING_TIMEOUT" />
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       value={embeddingTimeout}
-                      onChange={(e) => setEmbeddingTimeout(parseInt(e.target.value || '0', 10))}
+                      onCommit={setEmbeddingTimeout}
                       min={5}
                       max={120}
+                      step={1}
                       style={{
                         width: '100%',
                         padding: '10px 12px',
@@ -1439,12 +2367,12 @@ export function IndexingSubtab() {
                       Max retries
                       <TooltipIcon name="EMBEDDING_RETRY_MAX" />
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       value={embeddingRetryMax}
-                      onChange={(e) => setEmbeddingRetryMax(parseInt(e.target.value || '0', 10))}
+                      onCommit={setEmbeddingRetryMax}
                       min={1}
                       max={5}
+                      step={1}
                       style={{
                         width: '100%',
                         padding: '10px 12px',
@@ -1461,8 +2389,8 @@ export function IndexingSubtab() {
                   <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                     <input
                       type="checkbox"
-                      checked={embeddingCacheEnabled === 1}
-                      onChange={(e) => setEmbeddingCacheEnabled(e.target.checked ? 1 : 0)}
+                      checked={embeddingCacheEnabled}
+                      onChange={(e) => setEmbeddingCacheEnabled(e.target.checked)}
                     />
                     <span style={{ fontSize: '13px', color: 'var(--fg)' }}>Enable embedding cache</span>
                     <TooltipIcon name="EMBEDDING_CACHE_ENABLED" />
@@ -1491,29 +2419,78 @@ export function IndexingSubtab() {
               <TooltipIcon name="CHUNKING_STRATEGY" />
             </h4>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '20px' }}>
-              {CHUNKING_STRATEGIES.map((strat) => (
-                <button
-                  key={strat.id}
-                  onClick={() => setChunkingStrategy(strat.id)}
-                  style={{
-                    padding: '16px',
-                    background:
-                      String(chunkingStrategy || '').toLowerCase() === strat.id
-                        ? 'rgba(var(--accent-rgb), 0.1)'
-                        : 'var(--bg-elev2)',
-                    border:
-                      String(chunkingStrategy || '').toLowerCase() === strat.id ? '2px solid var(--accent)' : '1px solid var(--line)',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    transition: 'all 0.2s ease',
-                  }}
-                >
-                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--fg)', marginBottom: '4px' }}>{strat.label}</div>
-                  <div style={{ fontSize: '11px', color: 'var(--fg-muted)' }}>{strat.description}</div>
-                </button>
-              ))}
+            {/* One choice out of nine, so it is a radiogroup: screen readers announce the
+                selection, arrow keys move it, and the selected card carries a visible mark
+                rather than only a border colour a low-contrast display swallows. */}
+            <div
+              role="radiogroup"
+              aria-label="Chunking strategy"
+              data-testid="chunking-strategy-group"
+              onKeyDown={(e) => {
+                if (contractLocked) return;
+                const keys = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'];
+                if (!keys.includes(e.key)) return;
+                e.preventDefault();
+                const ids = chunkingStrategies.map((s) => s.id);
+                const current = Math.max(0, ids.indexOf(String(chunkingStrategy || '').toLowerCase()));
+                const next =
+                  e.key === 'Home'
+                    ? 0
+                    : e.key === 'End'
+                      ? ids.length - 1
+                      : e.key === 'ArrowRight' || e.key === 'ArrowDown'
+                        ? (current + 1) % ids.length
+                        : (current - 1 + ids.length) % ids.length;
+                setChunkingStrategy(ids[next]);
+                const node = e.currentTarget.querySelector<HTMLElement>(`[data-strategy="${ids[next]}"]`);
+                node?.focus();
+              }}
+              style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '20px' }}
+            >
+              {chunkingStrategies.map((strat) => {
+                const selected = String(chunkingStrategy || '').toLowerCase() === strat.id;
+                return (
+                  <button
+                    key={strat.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    data-strategy={strat.id}
+                    data-testid={`chunking-strategy-${strat.id}`}
+                    tabIndex={selected ? 0 : -1}
+                    onClick={() => setChunkingStrategy(strat.id)}
+                    disabled={contractLocked}
+                    style={{
+                      padding: '16px',
+                      background: selected ? 'rgba(var(--accent-rgb), 0.1)' : 'var(--bg-elev2)',
+                      border: selected ? '2px solid var(--accent)' : '1px solid var(--line)',
+                      borderRadius: '8px',
+                      cursor: contractLocked ? 'not-allowed' : 'pointer',
+                      textAlign: 'left',
+                      transition: 'all 0.2s ease',
+                      opacity: contractLocked ? 0.6 : 1,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        color: selected ? 'var(--accent-text)' : 'var(--fg)',
+                        marginBottom: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                      }}
+                    >
+                      <span aria-hidden="true" style={{ color: selected ? 'var(--accent-text)' : 'var(--fg-muted)' }}>
+                        {selected ? '\u25c9' : '\u25cb'}
+                      </span>
+                      {strat.label}
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--fg-muted)' }}>{strat.description}</div>
+                  </button>
+                );
+              })}
             </div>
 
             <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
@@ -1524,13 +2501,14 @@ export function IndexingSubtab() {
                       Target tokens
                       <TooltipIcon name="TARGET_TOKENS" />
                     </label>
-                    <input
+                    <NumberField
                       data-testid="chunking-target-tokens"
-                      type="number"
                       value={targetTokens}
-                      onChange={(e) => setTargetTokens(parseInt(e.target.value || '0', 10))}
+                      onCommit={setTargetTokens}
                       min={64}
                       max={8192}
+                      step={1}
+                      disabled={contractLocked}
                       style={{
                         width: '100%',
                         padding: '10px 12px',
@@ -1539,6 +2517,7 @@ export function IndexingSubtab() {
                         borderRadius: '6px',
                         color: 'var(--fg)',
                         fontSize: '13px',
+                        opacity: contractLocked ? 0.6 : 1,
                       }}
                     />
                   </div>
@@ -1547,13 +2526,14 @@ export function IndexingSubtab() {
                       Overlap tokens
                       <TooltipIcon name="OVERLAP_TOKENS" />
                     </label>
-                    <input
+                    <NumberField
                       data-testid="chunking-overlap-tokens"
-                      type="number"
                       value={overlapTokens}
-                      onChange={(e) => setOverlapTokens(parseInt(e.target.value || '0', 10))}
+                      onCommit={setOverlapTokens}
                       min={0}
                       max={2048}
+                      step={1}
+                      disabled={contractLocked}
                       style={{
                         width: '100%',
                         padding: '10px 12px',
@@ -1562,6 +2542,7 @@ export function IndexingSubtab() {
                         borderRadius: '6px',
                         color: 'var(--fg)',
                         fontSize: '13px',
+                        opacity: contractLocked ? 0.6 : 1,
                       }}
                     />
                   </div>
@@ -1570,12 +2551,12 @@ export function IndexingSubtab() {
                       AST overlap lines
                       <TooltipIcon name="AST_OVERLAP_LINES" />
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       value={astOverlapLines}
-                      onChange={(e) => setAstOverlapLines(parseInt(e.target.value || '0', 10))}
+                      onCommit={setAstOverlapLines}
                       min={0}
                       max={100}
+                      step={1}
                       disabled
                       style={{
                         width: '100%',
@@ -1597,13 +2578,14 @@ export function IndexingSubtab() {
                       Chunk size (chars)
                       <TooltipIcon name="CHUNK_SIZE" />
                     </label>
-                    <input
+                    <NumberField
                       data-testid="chunking-chunk-size"
-                      type="number"
                       value={chunkSize}
-                      onChange={(e) => setChunkSize(parseInt(e.target.value || '0', 10))}
+                      onCommit={setChunkSize}
                       min={200}
                       max={5000}
+                      step={1}
+                      disabled={contractLocked}
                       style={{
                         width: '100%',
                         padding: '10px 12px',
@@ -1612,6 +2594,7 @@ export function IndexingSubtab() {
                         borderRadius: '6px',
                         color: 'var(--fg)',
                         fontSize: '13px',
+                        opacity: contractLocked ? 0.6 : 1,
                       }}
                     />
                   </div>
@@ -1620,12 +2603,14 @@ export function IndexingSubtab() {
                       Chunk overlap (chars)
                       <TooltipIcon name="CHUNK_OVERLAP" />
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
+                      data-testid="chunking-chunk-overlap"
                       value={chunkOverlap}
-                      onChange={(e) => setChunkOverlap(parseInt(e.target.value || '0', 10))}
+                      onCommit={setChunkOverlap}
                       min={0}
                       max={1000}
+                      step={1}
+                      disabled={contractLocked}
                       style={{
                         width: '100%',
                         padding: '10px 12px',
@@ -1634,6 +2619,7 @@ export function IndexingSubtab() {
                         borderRadius: '6px',
                         color: 'var(--fg)',
                         fontSize: '13px',
+                        opacity: contractLocked ? 0.6 : 1,
                       }}
                     />
                   </div>
@@ -1642,12 +2628,12 @@ export function IndexingSubtab() {
                       AST overlap lines
                       <TooltipIcon name="AST_OVERLAP_LINES" />
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       value={astOverlapLines}
-                      onChange={(e) => setAstOverlapLines(parseInt(e.target.value || '0', 10))}
+                      onCommit={setAstOverlapLines}
                       min={0}
                       max={100}
+                      step={1}
                       style={{
                         width: '100%',
                         padding: '10px 12px',
@@ -1679,7 +2665,9 @@ export function IndexingSubtab() {
                       value={separatorsText}
                       onChange={(e) => updateSeparatorsFromText(e.target.value)}
                       rows={5}
+                      disabled={contractLocked}
                       style={{
+                        opacity: contractLocked ? 0.6 : 1,
                         width: '100%',
                         padding: '10px 12px',
                         background: 'var(--input-bg)',
@@ -1697,8 +2685,10 @@ export function IndexingSubtab() {
                       <TooltipIcon name="SEPARATOR_KEEP" />
                     </label>
                     <select
+                      data-testid="chunking-separator-keep"
                       value={separatorKeep}
                       onChange={(e) => setSeparatorKeep(e.target.value as any)}
+                      disabled={contractLocked}
                       style={{
                         width: '100%',
                         padding: '10px 12px',
@@ -1707,6 +2697,7 @@ export function IndexingSubtab() {
                         borderRadius: '6px',
                         color: 'var(--fg)',
                         fontSize: '13px',
+                        opacity: contractLocked ? 0.6 : 1,
                       }}
                     >
                       <option value="suffix">Suffix</option>
@@ -1718,12 +2709,14 @@ export function IndexingSubtab() {
                         Max recursion depth
                         <TooltipIcon name="RECURSIVE_MAX_DEPTH" />
                       </label>
-                      <input
-                        type="number"
+                      <NumberField
+                        data-testid="chunking-recursive-max-depth"
                         value={recursiveMaxDepth}
-                        onChange={(e) => setRecursiveMaxDepth(parseInt(e.target.value || '0', 10))}
+                        onCommit={setRecursiveMaxDepth}
                         min={1}
                         max={50}
+                        step={1}
+                        disabled={contractLocked}
                         style={{
                           width: '100%',
                           padding: '10px 12px',
@@ -1732,6 +2725,7 @@ export function IndexingSubtab() {
                           borderRadius: '6px',
                           color: 'var(--fg)',
                           fontSize: '13px',
+                          opacity: contractLocked ? 0.6 : 1,
                         }}
                       />
                     </div>
@@ -1747,12 +2741,14 @@ export function IndexingSubtab() {
                     Max heading level
                     <TooltipIcon name="MARKDOWN_MAX_HEADING_LEVEL" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
+                    data-testid="chunking-markdown-max-heading-level"
                     value={markdownMaxHeadingLevel}
-                    onChange={(e) => setMarkdownMaxHeadingLevel(parseInt(e.target.value || '0', 10))}
+                    onCommit={setMarkdownMaxHeadingLevel}
                     min={1}
                     max={6}
+                    step={1}
+                    disabled={contractLocked}
                     style={{
                       width: '100%',
                       padding: '10px 12px',
@@ -1761,15 +2757,18 @@ export function IndexingSubtab() {
                       borderRadius: '6px',
                       color: 'var(--fg)',
                       fontSize: '13px',
+                      opacity: contractLocked ? 0.6 : 1,
                     }}
                   />
                 </div>
                 <div className="input-group">
                   <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '28px' }}>
                     <input
+                      data-testid="chunking-markdown-include-code-fences"
                       type="checkbox"
                       checked={markdownIncludeCodeFences}
                       onChange={(e) => setMarkdownIncludeCodeFences(e.target.checked)}
+                      disabled={contractLocked}
                     />
                     Include code fences
                     <TooltipIcon name="MARKDOWN_INCLUDE_CODE_FENCES" />
@@ -1785,12 +2784,14 @@ export function IndexingSubtab() {
                   Max chunk tokens
                   <TooltipIcon name="MAX_CHUNK_TOKENS" />
                 </label>
-                <input
-                  type="number"
+                <NumberField
+                  data-testid="chunking-max-chunk-tokens"
                   value={maxChunkTokens}
-                  onChange={(e) => setMaxChunkTokens(parseInt(e.target.value || '0', 10))}
+                  onCommit={setMaxChunkTokens}
                   min={100}
                   max={32000}
+                  step={1}
+                  disabled={contractLocked}
                   style={{
                     width: '100%',
                     padding: '10px 12px',
@@ -1799,6 +2800,7 @@ export function IndexingSubtab() {
                     borderRadius: '6px',
                     color: 'var(--fg)',
                     fontSize: '13px',
+                    opacity: contractLocked ? 0.6 : 1,
                   }}
                 />
               </div>
@@ -1807,12 +2809,14 @@ export function IndexingSubtab() {
                   Min chunk chars
                   <TooltipIcon name="MIN_CHUNK_CHARS" />
                 </label>
-                <input
-                  type="number"
+                <NumberField
+                  data-testid="chunking-min-chunk-chars"
                   value={minChunkChars}
-                  onChange={(e) => setMinChunkChars(parseInt(e.target.value || '0', 10))}
+                  onCommit={setMinChunkChars}
                   min={10}
                   max={500}
+                  step={1}
+                  disabled={contractLocked}
                   style={{
                     width: '100%',
                     padding: '10px 12px',
@@ -1821,20 +2825,23 @@ export function IndexingSubtab() {
                     borderRadius: '6px',
                     color: 'var(--fg)',
                     fontSize: '13px',
+                    opacity: contractLocked ? 0.6 : 1,
                   }}
                 />
               </div>
               <div className="input-group">
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
-                  Max file size (bytes)
+                  Chunking file-size ceiling (bytes)
                   <TooltipIcon name="MAX_INDEXABLE_FILE_SIZE" />
                 </label>
-                <input
-                  type="number"
+                <NumberField
+                  data-testid="chunking-max-indexable-file-size"
                   value={maxIndexableFileSize}
-                  onChange={(e) => setMaxIndexableFileSize(parseInt(e.target.value || '0', 10))}
+                  onCommit={setMaxIndexableFileSize}
                   min={10000}
                   max={2000000000}
+                  step={1}
+                  disabled={contractLocked}
                   style={{
                     width: '100%',
                     padding: '10px 12px',
@@ -1843,8 +2850,15 @@ export function IndexingSubtab() {
                     borderRadius: '6px',
                     color: 'var(--fg)',
                     fontSize: '13px',
+                    opacity: contractLocked ? 0.6 : 1,
                   }}
                 />
+                <div
+                  data-testid="chunking-file-size-note"
+                  style={{ fontSize: '11.5px', color: 'var(--fg-muted)', marginTop: '6px' }}
+                >
+                  {effectiveFileSizeLimit}
+                </div>
               </div>
             </div>
 
@@ -1852,25 +2866,29 @@ export function IndexingSubtab() {
               <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                   <input
+                    data-testid="chunking-emit-chunk-ordinal"
                     type="checkbox"
                     checked={emitChunkOrdinal}
                     onChange={(e) => setEmitChunkOrdinal(e.target.checked)}
+                    disabled={contractLocked}
                   />
                   <span style={{ fontSize: '13px', color: 'var(--fg)' }}>Emit chunk ordinal</span>
                   <TooltipIcon name="EMIT_CHUNK_ORDINAL" />
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                   <input
+                    data-testid="chunking-emit-parent-doc-id"
                     type="checkbox"
                     checked={emitParentDocId}
                     onChange={(e) => setEmitParentDocId(e.target.checked)}
+                    disabled={contractLocked}
                   />
                   <span style={{ fontSize: '13px', color: 'var(--fg)' }}>Emit parent doc id</span>
                   <TooltipIcon name="EMIT_PARENT_DOC_ID" />
                 </label>
               </div>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                <input type="checkbox" checked={preserveImports === 1} onChange={(e) => setPreserveImports(e.target.checked ? 1 : 0)} />
+                <input data-testid="chunking-preserve-imports" type="checkbox" checked={preserveImports} onChange={(e) => setPreserveImports(e.target.checked)} disabled={contractLocked} />
                 <span style={{ fontSize: '13px', color: 'var(--fg)' }}>Preserve imports in chunks</span>
                 <TooltipIcon name="PRESERVE_IMPORTS" />
               </label>
@@ -1878,10 +2896,45 @@ export function IndexingSubtab() {
                 Keeps import statements near the top of each chunk for better code understanding.
               </div>
             </div>
+
+            <details style={{ marginTop: '18px' }}>
+              <summary style={{ cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: 'var(--fg)' }}>
+                Advanced chunking controls
+              </summary>
+              <div style={{ marginTop: '12px' }}>
+                <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
+                  <div className="input-group">
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+                      Greedy fallback target
+                      <TooltipIcon name="GREEDY_FALLBACK_TARGET" />
+                    </label>
+                    <NumberField
+                      data-testid="greedy-fallback-target"
+                      value={greedyFallbackTarget}
+                      onCommit={setGreedyFallbackTarget}
+                      min={200}
+                      max={2000}
+                      step={1}
+                      disabled={contractLocked}
+                      style={{
+                        width: '100%',
+                        padding: '10px 12px',
+                        background: 'var(--input-bg)',
+                        border: '1px solid var(--line)',
+                        borderRadius: '6px',
+                        color: 'var(--fg)',
+                        fontSize: '13px',
+                        opacity: contractLocked ? 0.6 : 1,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </details>
           </div>
         )}
 
-        {/* TOKENIZER + VOCAB */}
+        {/* SPARSE TOKENIZATION */}
         {selectedComponent === 'bm25' && (
           <div>
             <h4
@@ -2037,13 +3090,13 @@ export function IndexingSubtab() {
                     Max tokens per chunk (hard)
                     <TooltipIcon name="TOKENIZATION_MAX_TOKENS_PER_CHUNK_HARD" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     value={maxTokensPerChunkHard}
-                    onChange={(e) => setMaxTokensPerChunkHard(parseInt(e.target.value || '0', 10))}
+                    onCommit={setMaxTokensPerChunkHard}
                     disabled={contractLocked}
                     min={256}
                     max={65536}
+                    step={1}
                     style={{
                       width: '100%',
                       padding: '10px 12px',
@@ -2076,15 +3129,17 @@ export function IndexingSubtab() {
               <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
                 <div className="input-group">
                   <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
-                    Max file size (MB)
+                    Indexing file-size ceiling (MB)
                     <TooltipIcon name="INDEX_MAX_FILE_SIZE_MB" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
+                    data-testid="tokenization-index-max-file-size-mb"
                     value={indexMaxFileSizeMb}
-                    onChange={(e) => setIndexMaxFileSizeMb(parseInt(e.target.value || '0', 10))}
+                    onCommit={setIndexMaxFileSizeMb}
                     min={1}
                     max={1024}
+                    step={1}
+                    disabled={contractLocked}
                     style={{
                       width: '100%',
                       padding: '10px 12px',
@@ -2093,8 +3148,15 @@ export function IndexingSubtab() {
                       borderRadius: '6px',
                       color: 'var(--fg)',
                       fontSize: '13px',
+                      opacity: contractLocked ? 0.6 : 1,
                     }}
                   />
+                  <div
+                    data-testid="tokenization-file-size-note"
+                    style={{ fontSize: '11.5px', color: 'var(--fg-muted)', marginTop: '6px' }}
+                  >
+                    {effectiveFileSizeLimit}
+                  </div>
                 </div>
                 <div className="input-group">
                   <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
@@ -2105,6 +3167,7 @@ export function IndexingSubtab() {
                     data-testid="large-file-mode"
                     value={largeFileMode}
                     onChange={(e) => setLargeFileMode(e.target.value as any)}
+                    disabled={contractLocked}
                     style={{
                       width: '100%',
                       padding: '10px 12px',
@@ -2113,6 +3176,7 @@ export function IndexingSubtab() {
                       borderRadius: '6px',
                       color: 'var(--fg)',
                       fontSize: '13px',
+                      opacity: contractLocked ? 0.6 : 1,
                     }}
                   >
                     <option value="stream">stream</option>
@@ -2124,13 +3188,14 @@ export function IndexingSubtab() {
                     Stream block chars
                     <TooltipIcon name="LARGE_FILE_STREAM_CHUNK_CHARS" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
+                    data-testid="tokenization-large-file-stream-chunk-chars"
                     value={largeFileStreamChunkChars}
-                    onChange={(e) => setLargeFileStreamChunkChars(parseInt(e.target.value || '0', 10))}
+                    onCommit={setLargeFileStreamChunkChars}
                     min={100000}
                     max={50000000}
-                    disabled={largeFileMode !== 'stream'}
+                    step={1}
+                    disabled={contractLocked || largeFileMode !== 'stream'}
                     style={{
                       width: '100%',
                       padding: '10px 12px',
@@ -2139,7 +3204,7 @@ export function IndexingSubtab() {
                       borderRadius: '6px',
                       color: 'var(--fg)',
                       fontSize: '13px',
-                      opacity: largeFileMode === 'stream' ? 1 : 0.6,
+                      opacity: !contractLocked && largeFileMode === 'stream' ? 1 : 0.6,
                     }}
                   />
                 </div>
@@ -2152,10 +3217,11 @@ export function IndexingSubtab() {
             <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '20px' }}>
               <div className="input-group">
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
-                  Postgres FTS tokenizer
+                  Sparse stemming (Qdrant/bm25)
                   <TooltipIcon name="BM25_TOKENIZER" />
                 </label>
                 <select
+                  data-testid="sparse-bm25-tokenizer"
                   value={bm25Tokenizer}
                   onChange={(e) => setBm25Tokenizer(e.target.value)}
                   disabled={contractLocked}
@@ -2181,6 +3247,7 @@ export function IndexingSubtab() {
                   <TooltipIcon name="BM25_STEMMER_LANG" />
                 </label>
                 <input
+                  data-testid="sparse-bm25-stemmer-lang"
                   type="text"
                   value={bm25StemmerLang}
                   onChange={(e) => setBm25StemmerLang(e.target.value)}
@@ -2203,113 +3270,109 @@ export function IndexingSubtab() {
             <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--fg-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <strong style={{ color: 'var(--fg)' }}>Resolved:</strong> {resolvedTokenizerDesc}
             </div>
-
             <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--fg-muted)' }}>
-              Vocabulary Preview reads from Postgres built-in FTS (<code>chunks.tsv</code>). If you switch sparse retrieval to <code>pg_search_bm25</code>, this preview may not reflect the active BM25 index.
+              Sparse vectors are IDF-modified BM25 (<code>Qdrant/bm25</code> via fastembed) stored in Qdrant next to the dense
+              vectors. Stemming, language, k1, and b are part of the sparse index contract: changing them requires a re-index.
             </div>
 
-            <details open={vocabExpanded} onToggle={(e) => setVocabExpanded((e.target as HTMLDetailsElement).open)} style={{ marginTop: '20px' }}>
-              <summary style={{ cursor: 'pointer', fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>
-                🔍 Vocabulary Preview
-                <TooltipIcon name="BM25_VOCAB_PREVIEW" />
-              </summary>
-
+            <div style={{ marginTop: '16px' }}>
               <div
                 style={{
-                  marginTop: '12px',
                   padding: '16px',
                   background: 'var(--bg-elev2)',
                   borderRadius: '8px',
                   border: '1px solid var(--line)',
                 }}
               >
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap' }}>
-                  <label style={{ fontSize: '12px', color: 'var(--fg-muted)' }}>
-                    Top N:
-                    <input
-                      type="number"
-                      value={vocabTopN}
-                      onChange={(e) => setVocabTopN(Math.max(10, Math.min(500, parseInt(e.target.value || '50', 10))))}
-                      min={10}
-                      max={500}
-                      style={{
-                        width: '80px',
-                        marginLeft: '8px',
-                        padding: '4px 8px',
-                        background: 'var(--input-bg)',
-                        border: '1px solid var(--line)',
-                        borderRadius: '4px',
-                        color: 'var(--fg)',
-                        fontSize: '12px',
-                      }}
-                    />
-                  </label>
-                  <button
-                    onClick={loadVocabPreview}
-                    disabled={vocabLoading || !String(activeRepo || '').trim()}
-                    style={{
-                      padding: '6px 12px',
-                      fontSize: '12px',
-                      background: 'var(--accent)',
-                      color: 'var(--accent-contrast)',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: vocabLoading ? 'wait' : 'pointer',
-                      opacity: vocabLoading ? 0.7 : 1,
-                    }}
-                  >
-                    {vocabLoading ? 'Loading…' : 'Load Vocabulary'}
-                  </button>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>Parquet ingestion (bounded)</div>
+                    <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '2px' }}>
+                      Prevents huge Parquet files from dominating memory/time during indexing.
+                    </div>
+                  </div>
+                  <TooltipIcon name="PARQUET_EXTRACT_MAX_ROWS" />
                 </div>
 
-                {vocabPreview.length > 0 ? (
-                  <>
-                    <div
-                      style={{
-                        maxHeight: '280px',
-                        overflowY: 'auto',
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
-                        gap: '6px',
-                        fontFamily: 'var(--font-mono)',
-                        fontSize: '11px',
-                      }}
-                    >
-                      {vocabPreview.map((item, idx) => (
-                        <div
-                          key={`${item.term}-${idx}`}
-                          style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            padding: '6px 8px',
-                            background: 'var(--bg)',
-                            borderRadius: '6px',
-                            border: '1px solid var(--line)',
-                          }}
-                        >
-                          <span style={{ color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.term}</span>
-                          <span style={{ color: 'var(--fg-muted)', marginLeft: '10px' }}>{item.doc_count}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <div style={{ marginTop: '10px', fontSize: '11px', color: 'var(--fg-muted)', display: 'flex', justifyContent: 'space-between' }}>
-                      <span>Tokenizer: {bm25Tokenizer || '—'}</span>
-                      <span>
-                        Showing {vocabPreview.length} of {vocabTotal || '—'} terms
-                      </span>
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ fontSize: '12px', color: 'var(--fg-muted)', textAlign: 'center', padding: '20px' }}>
-                    Click “Load Vocabulary” to inspect tokenized terms.
+                <div style={{ marginTop: '12px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px' }}>
+                  <div className="input-group">
+                    <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>
+                      Max rows
+                    </label>
+                    <NumberField
+                      data-testid="parquet-extract-max-rows"
+                      min={1}
+                      max={200000}
+                      step={1}
+                      value={parquetExtractMaxRows}
+                      onCommit={setParquetExtractMaxRows}
+                      disabled={contractLocked}
+                      style={{ width: '100%', opacity: contractLocked ? 0.6 : 1 }}
+                    />
                   </div>
-                )}
+                  <div className="input-group">
+                    <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>
+                      Max chars
+                    </label>
+                    <NumberField
+                      data-testid="parquet-extract-max-chars"
+                      min={10_000}
+                      max={50_000_000}
+                      step={1}
+                      value={parquetExtractMaxChars}
+                      onCommit={setParquetExtractMaxChars}
+                      disabled={contractLocked}
+                      style={{ width: '100%', opacity: contractLocked ? 0.6 : 1 }}
+                    />
+                  </div>
+                  <div className="input-group">
+                    <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>
+                      Max cell chars
+                    </label>
+                    <NumberField
+                      data-testid="parquet-extract-max-cell-chars"
+                      min={100}
+                      max={200_000}
+                      step={1}
+                      value={parquetExtractMaxCellChars}
+                      onCommit={setParquetExtractMaxCellChars}
+                      disabled={contractLocked}
+                      style={{ width: '100%', opacity: contractLocked ? 0.6 : 1 }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ marginTop: '12px', display: 'flex', gap: '18px', flexWrap: 'wrap' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input
+                      data-testid="parquet-extract-text-columns-only"
+                      type="checkbox"
+                      checked={parquetExtractTextColumnsOnly}
+                      onChange={(e) => setParquetExtractTextColumnsOnly(e.target.checked)}
+                      disabled={contractLocked}
+                    />
+                    <span style={{ fontSize: '12px', color: 'var(--fg)' }}>Text columns only</span>
+                    <TooltipIcon name="PARQUET_EXTRACT_TEXT_COLUMNS_ONLY" />
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input
+                      data-testid="parquet-extract-include-column-names"
+                      type="checkbox"
+                      checked={parquetExtractIncludeColumnNames}
+                      onChange={(e) => setParquetExtractIncludeColumnNames(e.target.checked)}
+                      disabled={contractLocked}
+                    />
+                    <span style={{ fontSize: '12px', color: 'var(--fg)' }}>Include column names</span>
+                    <TooltipIcon name="PARQUET_EXTRACT_INCLUDE_COLUMN_NAMES" />
+                  </label>
+                </div>
               </div>
-            </details>
+            </div>
+
           </div>
         )}
 
-        {/* GRAPH + OPTIONS */}
+        {/* GRAPH + ENRICHMENT */}
         {selectedComponent === 'enrichment' && (
           <div>
             <h4
@@ -2336,21 +3399,49 @@ export function IndexingSubtab() {
                   border: graphIndexingEnabled ? '2px solid var(--accent)' : '1px solid var(--line)',
                 }}
               >
-                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    cursor: graphCorpusIsInternal ? 'not-allowed' : 'pointer',
+                  }}
+                >
                   <input
                     data-testid="graph-indexing-enabled"
                     type="checkbox"
                     checked={graphIndexingEnabled}
+                    disabled={graphCorpusIsInternal}
                     onChange={(e) => setGraphIndexingEnabled(e.target.checked)}
                     style={{ width: '18px', height: '18px' }}
                   />
                   <div>
-                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>Build graph during indexing</div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>Build a real graph during indexing</div>
                     <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '2px' }}>
-                      When enabled, indexing also extracts entities/relationships into Neo4j for GraphRAG.
+                      External documents use semantic extraction by default; code corpora can select the AST policy below.
                     </div>
                   </div>
                 </label>
+                <div
+                  data-testid="graph-policy-badge"
+                  style={{
+                    display: 'inline-flex',
+                    marginTop: 12,
+                    borderRadius: 999,
+                    padding: '5px 9px',
+                    background: graphCorpusIsInternal ? 'rgba(var(--warn-rgb), 0.12)' : 'rgba(var(--accent-rgb), 0.12)',
+                    color: graphCorpusIsInternal ? 'var(--warn)' : 'var(--fg)',
+                    fontSize: 12,
+                    fontWeight: 700,
+                  }}
+                >
+                  {graphPolicyLabel}
+                </div>
+                {graphCorpusIsInternal ? (
+                  <div style={{ marginTop: 8, color: 'var(--fg-muted)', fontSize: 12, lineHeight: 1.45 }}>
+                    Runtime-managed corpora are excluded from this graph phase. Their own indexing path remains authoritative.
+                  </div>
+                ) : null}
               </div>
 
               <div
@@ -2368,7 +3459,7 @@ export function IndexingSubtab() {
                     type="checkbox"
                     checked={lexicalGraphEnabled}
                     onChange={(e) => setLexicalGraphEnabled(e.target.checked)}
-                    disabled={!graphIndexingEnabled}
+                    disabled={graphCorpusIsInternal || !graphIndexingEnabled}
                     style={{ width: '18px', height: '18px' }}
                   />
                   <div>
@@ -2385,139 +3476,248 @@ export function IndexingSubtab() {
                   padding: '16px',
                   background: 'var(--bg-elev2)',
                   borderRadius: '8px',
-                  border: storeChunkEmbeddings ? '1px solid var(--line)' : '1px solid var(--line)',
-                  opacity: graphIndexingEnabled && lexicalGraphEnabled ? 1 : 0.6,
+                  border: buildCodeGraph ? '2px solid rgba(var(--accent-rgb), 0.6)' : '1px solid var(--line)',
+                  opacity: graphIndexingEnabled && lexicalGraphEnabled && !graphCorpusIsInternal ? 1 : 0.6,
                 }}
               >
                 <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
                   <input
-                    data-testid="graph-store-chunk-embeddings"
+                    data-testid="graph-build-code"
                     type="checkbox"
-                    checked={storeChunkEmbeddings}
-                    onChange={(e) => setStoreChunkEmbeddings(e.target.checked)}
-                    disabled={!graphIndexingEnabled || !lexicalGraphEnabled}
+                    checked={buildCodeGraph}
+                    onChange={(e) => setBuildCodeGraph(e.target.checked)}
+                    disabled={graphCorpusIsInternal || !graphIndexingEnabled || !lexicalGraphEnabled}
                     style={{ width: '18px', height: '18px' }}
                   />
                   <div>
-                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>Store chunk embeddings in Neo4j</div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>Use the code AST graph policy</div>
                     <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '2px' }}>
-                      Enables Neo4j native vector index over Chunk nodes (requires dense embeddings).
+                      Select this only for code corpora. Otherwise every enabled external corpus uses semantic entity extraction.
                     </div>
                   </div>
                 </label>
-                {skipDense === 1 && storeChunkEmbeddings && (
+
+                {buildCodeGraph ? (
+                  <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+                    {[
+                      ['Contains weight', astContainsWeight, setAstContainsWeight],
+                      ['Inherits weight', astInheritsWeight, setAstInheritsWeight],
+                      ['Imports weight', astImportsWeight, setAstImportsWeight],
+                      ['Calls weight', astCallsWeight, setAstCallsWeight],
+                    ].map(([label, value, onCommit]) => (
+                      <div className="input-group" key={String(label)}>
+                        <label>{String(label)}</label>
+                        <NumberField
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={Number(value)}
+                          onCommit={onCommit as (next: number) => void}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+
+              {!buildCodeGraph && !graphCorpusIsInternal && graphIndexingEnabled ? (
+                <div
+                  data-testid="semantic-graph-settings"
+                  style={{
+                    padding: 16,
+                    background: 'var(--bg-elev2)',
+                    borderRadius: 8,
+                    border: '2px solid rgba(var(--accent-rgb), 0.6)',
+                  }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--fg)' }}>Semantic extraction policy</div>
+                  <div style={{ marginTop: 4, color: 'var(--fg-muted)', fontSize: 11, lineHeight: 1.45 }}>
+                    Neo4j GraphRAG structured extraction is required for this external corpus. Failed extraction fails the run; the chunk ceiling refuses a partial graph instead of truncating it.
+                  </div>
+                  <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+                    <div className="input-group">
+                      <label>KG LLM Alias</label>
+                      <ChatModelPicker
+                        value={semanticKgLlmModel}
+                        onChange={setSemanticKgLlmModel}
+                        models={generationModels}
+                        valueMode="id"
+                        allowEmpty
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label>Reasoning effort</label>
+                      <select
+                        data-testid="semantic-kg-reasoning-effort"
+                        value={semanticKgReasoningEffort}
+                        onChange={(event) => setSemanticKgReasoningEffort(event.target.value as typeof semanticKgReasoningEffort)}
+                      >
+                        {['minimal', 'low', 'medium', 'high', 'xhigh'].map((effort) => (
+                          <option key={effort} value={effort}>{effort}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="input-group">
+                      <label>Semantic chunk ceiling</label>
+                      <NumberField
+                        data-testid="semantic-kg-max-chunks"
+                        min={1}
+                        max={100000}
+                        step={1}
+                        value={semanticKgMaxChunks}
+                        onCommit={setSemanticKgMaxChunks}
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label>Per-chunk timeout (seconds)</label>
+                      <NumberField
+                        data-testid="semantic-kg-timeout"
+                        min={5}
+                        max={600}
+                        step={5}
+                        value={semanticKgTimeoutS}
+                        onCommit={setSemanticKgTimeoutS}
+                      />
+                    </div>
+                  </div>
                   <div
                     style={{
-                      marginTop: '10px',
-                      padding: '8px 12px',
-                      background: 'rgba(var(--warn-rgb), 0.1)',
-                      borderRadius: '6px',
-                      color: 'var(--warn)',
-                      fontSize: '11px',
+                      marginTop: 14,
+                      paddingTop: 14,
+                      borderTop: '1px solid var(--line)',
+                      display: 'grid',
+                      gap: 10,
                     }}
                   >
-                    skip_dense=1 disables embeddings. Re-index with dense enabled to populate Neo4j vectors.
-                  </div>
-                )}
-              </div>
-
-              <div
-                style={{
-                  padding: '16px',
-                  background: 'var(--bg-elev2)',
-                  borderRadius: '8px',
-                  border: semanticKgEnabled ? '2px solid rgba(var(--accent-rgb), 0.6)' : '1px solid var(--line)',
-                  opacity: graphIndexingEnabled && lexicalGraphEnabled ? 1 : 0.6,
-                }}
-              >
-                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
-                  <input
-                    data-testid="semantic-kg-enabled"
-                    type="checkbox"
-                    checked={semanticKgEnabled}
-                    onChange={(e) => setSemanticKgEnabled(e.target.checked)}
-                    disabled={!graphIndexingEnabled || !lexicalGraphEnabled}
-                    style={{ width: '18px', height: '18px' }}
-                  />
-                  <div>
-                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>Semantic KG (concepts + relations)</div>
-                    <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '2px' }}>
-                      Extracts concept entities + related_to edges and links them to chunk_ids for graph expansion.
-                    </div>
-                  </div>
-                </label>
-
-                {semanticKgEnabled && (
-                  <div style={{ marginTop: '12px' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
-                      <div className="input-group">
-                        <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Mode</label>
-                        <select
-                          data-testid="semantic-kg-mode"
-                          value={semanticKgMode}
-                          onChange={(e) => setSemanticKgMode(e.target.value as any)}
-                          style={{ width: '100%' }}
-                        >
-                          <option value="heuristic">Heuristic</option>
-                          <option value="llm">LLM</option>
-                        </select>
-                      </div>
-                      <div className="input-group">
-                        <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Max chunks</label>
-                        <input
-                          data-testid="semantic-kg-max-chunks"
-                          type="number"
-                          min={0}
-                          max={100000}
-                          value={semanticKgMaxChunks}
-                          onChange={(e) => setSemanticKgMaxChunks(parseInt(e.target.value || '0', 10))}
-                          style={{ width: '100%' }}
-                        />
-                      </div>
-                      <div className="input-group">
-                        <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Max concepts / chunk</label>
-                        <input
-                          data-testid="semantic-kg-max-concepts"
-                          type="number"
-                          min={0}
-                          max={50}
-                          value={semanticKgMaxConcepts}
-                          onChange={(e) => setSemanticKgMaxConcepts(parseInt(e.target.value || '0', 10))}
-                          style={{ width: '100%' }}
-                        />
-                      </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        data-testid="generate-graph-schema"
+                        onClick={() => void handleGenerateGraphSchema()}
+                        disabled={graphSchemaLoading}
+                        aria-busy={graphSchemaLoading}
+                        style={{
+                          padding: '8px 14px',
+                          border: '1px solid var(--accent)',
+                          borderRadius: 7,
+                          background: graphSchemaLoading ? 'var(--bg-elev2)' : 'rgba(var(--accent-rgb), 0.12)',
+                          color: graphSchemaLoading ? 'var(--fg-muted)' : 'var(--accent-text)',
+                          cursor: graphSchemaLoading ? 'wait' : 'pointer',
+                          fontWeight: 750,
+                        }}
+                      >
+                        {graphSchemaLoading
+                          ? 'Generating proposed schema…'
+                          : graphSchemaProposal
+                            ? 'Regenerate proposed schema'
+                            : 'Generate proposed schema'}
+                      </button>
+                      <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+                        Samples documents deterministically; bulk extraction starts only after approval.
+                      </span>
                     </div>
 
-                    {semanticKgMode === 'llm' && (
-                      <div style={{ marginTop: '12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', alignItems: 'end' }}>
-                        <ModelPicker
-                          componentType="GEN"
-                          value={semanticKgLlmModel}
-                          onChange={setSemanticKgLlmModel}
-                          label="KG LLM Model"
-                          tooltipKey="SEMANTIC_KG_LLM_MODEL"
-                          allowCustom
-                        />
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          <span style={{ fontSize: '11px', color: 'var(--fg-muted)' }}>empty = uses enrich_model</span>
-                          <PromptLink promptKey="semantic_kg_extraction">Edit KG Prompt</PromptLink>
+                    {graphSchemaError ? (
+                      <div data-testid="graph-schema-error" role="alert" style={{ color: 'var(--err)', fontSize: 12 }}>
+                        {graphSchemaError}
+                      </div>
+                    ) : null}
+
+                    {graphSchemaProposal ? (
+                      <div
+                        data-testid="graph-schema-proposal"
+                        style={{
+                          padding: 12,
+                          border: '1px solid rgba(var(--accent-rgb), 0.45)',
+                          borderRadius: 7,
+                          background: 'var(--bg)',
+                          display: 'grid',
+                          gap: 9,
+                          fontSize: 11,
+                        }}
+                      >
+                        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--fg)' }}>
+                          Proposed closed-world graph contract
+                        </div>
+                        <div style={{ display: 'grid', gap: 3, color: 'var(--fg-muted)' }}>
+                          <span>Model: <strong style={{ color: 'var(--fg)' }}>{graphSchemaProposal.model_alias}</strong></span>
+                          <span>Neo4j GraphRAG: {graphSchemaProposal.graphrag_version}</span>
+                          <span>
+                            Schema hash:{' '}
+                            <code data-testid="graph-schema-hash" style={{ overflowWrap: 'anywhere', color: 'var(--fg)' }}>
+                              {graphSchemaProposal.schema_hash}
+                            </code>
+                          </span>
+                          <span>Sample recipe: {graphSchemaProposal.sample.recipe}</span>
+                          <span>
+                            Estimated bulk cost:{' '}
+                            {indexEstimate?.semantic_kg_cost_usd == null
+                              ? 'measured before the final approval; indexing cannot start without that estimate'
+                              : formatCurrency(Number(indexEstimate.semantic_kg_cost_usd))}
+                          </span>
+                        </div>
+                        {[
+                          ['Node types & properties', 'node_types'],
+                          ['Relationships', 'relationship_types'],
+                          ['Directed patterns', 'patterns'],
+                          ['Constraints', 'constraints'],
+                        ].map(([label, key]) => (
+                          <details key={key} data-testid={`graph-schema-${key.replace(/_/g, '-')}`}>
+                            <summary style={{ cursor: 'pointer', fontWeight: 750, color: 'var(--fg)' }}>{label}</summary>
+                            <pre
+                              style={{
+                                margin: '7px 0 0',
+                                padding: 8,
+                                maxHeight: 220,
+                                overflow: 'auto',
+                                borderRadius: 5,
+                                background: 'var(--bg-elev2)',
+                                color: 'var(--fg-muted)',
+                                whiteSpace: 'pre-wrap',
+                                overflowWrap: 'anywhere',
+                              }}
+                            >
+                              {JSON.stringify(
+                                (graphSchemaProposal.schema as Record<string, unknown>)[key] ?? [],
+                                null,
+                                2
+                              )}
+                            </pre>
+                          </details>
+                        ))}
+                        <details data-testid="graph-schema-sample">
+                          <summary style={{ cursor: 'pointer', fontWeight: 750, color: 'var(--fg)' }}>
+                            Sample documents & positions ({graphSchemaProposal.sample.chunk_ids.length} chunks)
+                          </summary>
+                          <ol style={{ margin: '7px 0 0', paddingLeft: 24, color: 'var(--fg-muted)' }}>
+                            {graphSchemaProposal.sample.chunk_ids.map((chunkId, index) => (
+                              <li key={`${chunkId}:${index}`} style={{ marginBottom: 4, overflowWrap: 'anywhere' }}>
+                                <code>{chunkId}</code>
+                                <span> · SHA-256 {graphSchemaProposal.sample.chunk_hashes[index]}</span>
+                              </li>
+                            ))}
+                          </ol>
+                        </details>
+                        <div style={{ color: 'var(--warn)', lineHeight: 1.45 }}>
+                          Approval is bound to this exact schema hash, model, GraphRAG version, and source fingerprint.
+                          Changing any of them invalidates this review.
                         </div>
                       </div>
-                    )}
+                    ) : null}
                   </div>
-                )}
-              </div>
+                </div>
+              ) : null}
 
               <div
                 style={{
                   padding: '16px',
                   background: 'var(--bg-elev2)',
                   borderRadius: '8px',
-                  border: skipDense === 1 ? '2px solid var(--warn)' : '1px solid var(--line)',
+                  border: skipDense ? '2px solid var(--warn)' : '1px solid var(--line)',
                 }}
               >
                 <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={skipDense === 1} onChange={(e) => setSkipDense(e.target.checked ? 1 : 0)} style={{ width: '18px', height: '18px' }} />
+                  <input data-testid="graph-skip-dense" type="checkbox" checked={skipDense} onChange={(e) => setSkipDense(e.target.checked)} disabled={contractLocked} style={{ width: '18px', height: '18px' }} />
                   <div>
                     <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>Skip dense vectors</div>
                     <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '2px' }}>
@@ -2526,94 +3726,13 @@ export function IndexingSubtab() {
                   </div>
                   <TooltipIcon name="SKIP_DENSE" />
                 </label>
-                {skipDense === 1 && (
+                {skipDense && (
                   <div style={{ marginTop: '10px', padding: '8px 12px', background: 'rgba(var(--warn-rgb), 0.1)', borderRadius: '6px', color: 'var(--warn)', fontSize: '11px' }}>
                     Vector search will not work until you re-index with dense enabled.
                   </div>
                 )}
               </div>
 
-              <div
-                style={{
-                  padding: '16px',
-                  background: 'var(--bg-elev2)',
-                  borderRadius: '8px',
-                  border: '1px solid var(--line)',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-                  <div>
-                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>Parquet ingestion (bounded)</div>
-                    <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '2px' }}>
-                      Prevents huge Parquet files from dominating memory/time during indexing.
-                    </div>
-                  </div>
-                  <TooltipIcon name="PARQUET_EXTRACT_MAX_ROWS" />
-                </div>
-
-                <div style={{ marginTop: '12px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px' }}>
-                  <div className="input-group">
-                    <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>
-                      Max rows
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={200000}
-                      value={parquetExtractMaxRows}
-                      onChange={(e) => setParquetExtractMaxRows(parseInt(e.target.value || '0', 10))}
-                      style={{ width: '100%' }}
-                    />
-                  </div>
-                  <div className="input-group">
-                    <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>
-                      Max chars
-                    </label>
-                    <input
-                      type="number"
-                      min={10_000}
-                      max={50_000_000}
-                      value={parquetExtractMaxChars}
-                      onChange={(e) => setParquetExtractMaxChars(parseInt(e.target.value || '0', 10))}
-                      style={{ width: '100%' }}
-                    />
-                  </div>
-                  <div className="input-group">
-                    <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>
-                      Max cell chars
-                    </label>
-                    <input
-                      type="number"
-                      min={100}
-                      max={200_000}
-                      value={parquetExtractMaxCellChars}
-                      onChange={(e) => setParquetExtractMaxCellChars(parseInt(e.target.value || '0', 10))}
-                      style={{ width: '100%' }}
-                    />
-                  </div>
-                </div>
-
-                <div style={{ marginTop: '12px', display: 'flex', gap: '18px', flexWrap: 'wrap' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={parquetExtractTextColumnsOnly === 1}
-                      onChange={(e) => setParquetExtractTextColumnsOnly(e.target.checked ? 1 : 0)}
-                    />
-                    <span style={{ fontSize: '12px', color: 'var(--fg)' }}>Text columns only</span>
-                    <TooltipIcon name="PARQUET_EXTRACT_TEXT_COLUMNS_ONLY" />
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={parquetExtractIncludeColumnNames === 1}
-                      onChange={(e) => setParquetExtractIncludeColumnNames(e.target.checked ? 1 : 0)}
-                    />
-                    <span style={{ fontSize: '12px', color: 'var(--fg)' }}>Include column names</span>
-                    <TooltipIcon name="PARQUET_EXTRACT_INCLUDE_COLUMN_NAMES" />
-                  </label>
-                </div>
-              </div>
 
               <div
                 style={{
@@ -2632,37 +3751,232 @@ export function IndexingSubtab() {
               </div>
             </div>
 
-            <details style={{ marginTop: '18px' }}>
-              <summary style={{ cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: 'var(--fg)' }}>
-                Advanced chunking controls
-              </summary>
-              <div style={{ marginTop: '12px' }}>
-                <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
-                  <div className="input-group">
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
-                      Greedy fallback target
-                      <TooltipIcon name="GREEDY_FALLBACK_TARGET" />
-                    </label>
-                    <input
-                      type="number"
-                      value={greedyFallbackTarget}
-                      onChange={(e) => setGreedyFallbackTarget(parseInt(e.target.value || '0', 10))}
-                      min={200}
-                      max={2000}
-                      style={{
-                        width: '100%',
-                        padding: '10px 12px',
-                        background: 'var(--input-bg)',
-                        border: '1px solid var(--line)',
-                        borderRadius: '6px',
-                        color: 'var(--fg)',
-                        fontSize: '13px',
-                      }}
-                    />
+          </div>
+        )}
+
+        {/* FIGURES & VISION */}
+        {selectedComponent === 'figures' && (
+          <div>
+            <h4
+              style={{
+                fontSize: '14px',
+                fontWeight: 600,
+                color: 'var(--fg)',
+                marginBottom: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+              }}
+            >
+              🖼️ Figures & Vision
+              <TooltipIcon name="FIGURES_ENABLED" />
+            </h4>
+
+            <div style={{ display: 'grid', gap: '16px' }}>
+              <div
+                data-testid="figures-card"
+                style={{
+                  padding: '16px',
+                  background: 'var(--bg-elev2)',
+                  borderRadius: '8px',
+                  border: figuresEnabled ? '2px solid var(--accent)' : '1px solid var(--line)',
+                }}
+              >
+                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                  <input
+                    data-testid="figures-enabled"
+                    type="checkbox"
+                    checked={figuresEnabled}
+                    onChange={(e) => setFiguresEnabled(e.target.checked)}
+                    style={{ width: '18px', height: '18px' }}
+                  />
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>
+                      Figures — describe charts, diagrams and drawings so they become searchable, citable chunks
+                    </div>
+                    <div style={{ fontSize: '11.5px', color: 'var(--fg-muted)', marginTop: '2px' }}>
+                      Vision calls go through the gateway. Index Now prices them before the run starts.
+                    </div>
                   </div>
-                </div>
+                  <TooltipIcon name="FIGURES_ENABLED" />
+                </label>
+
+                {figuresEnabled && (
+                  <div style={{ marginTop: '12px', display: 'grid', gap: '12px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                        <input
+                          data-testid="figures-describe"
+                          type="checkbox"
+                          checked={figuresDescribe}
+                          onChange={(e) => setFiguresDescribe(e.target.checked)}
+                          style={{ width: '18px', height: '18px' }}
+                        />
+                        <span style={{ fontSize: '11.5px', color: 'var(--fg)' }}>Describe with the vision alias</span>
+                        <TooltipIcon name="FIGURES_DESCRIBE" />
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                        <input
+                          data-testid="figures-classify"
+                          type="checkbox"
+                          checked={figuresClassify}
+                          onChange={(e) => setFiguresClassify(e.target.checked)}
+                          style={{ width: '18px', height: '18px' }}
+                        />
+                        <span style={{ fontSize: '11.5px', color: 'var(--fg)' }}>Classify figures locally first</span>
+                        <TooltipIcon name="FIGURES_CLASSIFY" />
+                      </label>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', alignItems: 'start' }}>
+                      <div className="input-group">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11.5px', color: 'var(--fg-muted)', marginBottom: '6px' }}>
+                          Vision alias
+                          <TooltipIcon name="FIGURES_VISION_MODEL" />
+                        </label>
+                        <ChatModelPicker
+                          testId="figures-vision-model"
+                          value={figuresVisionModel}
+                          onChange={setFiguresVisionModel}
+                          models={visionModels}
+                          valueMode="id"
+                        />
+                        {figuresVisionAliasWarning ? (
+                          <div
+                            data-testid="figures-vision-model-warning"
+                            style={{ marginTop: '6px', fontSize: '11.5px', color: 'var(--warn)' }}
+                          >
+                            {figuresVisionAliasWarning}
+                          </div>
+                        ) : (
+                          <div style={{ marginTop: '6px', fontSize: '11.5px', color: 'var(--fg-muted)' }}>
+                            Only vision-capable catalog aliases are listed.
+                          </div>
+                        )}
+                        {visionAliasPricing ? (
+                          <div
+                            data-testid="figures-vision-model-price"
+                            style={{ marginTop: '4px', fontSize: '11.5px', color: 'var(--fg-muted)' }}
+                          >
+                            {visionAliasPricing}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="input-group">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11.5px', color: 'var(--fg-muted)', marginBottom: '6px' }}>
+                          Prompt profile
+                          <TooltipIcon name="FIGURES_PROMPT_PROFILE" />
+                        </label>
+                        <select
+                          data-testid="figures-prompt-profile"
+                          value={figuresPromptProfile}
+                          onChange={(e) => setFiguresPromptProfile(e.target.value as 'technical_figure' | 'schematic')}
+                          style={{ width: '100%' }}
+                        >
+                          <option value="technical_figure">Technical figure (charts, diagrams, photos)</option>
+                          <option value="schematic">Schematic (engineering drawings)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+                      <div className="input-group">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11.5px', color: 'var(--fg-muted)', marginBottom: '6px' }}>
+                          Image scale
+                          <TooltipIcon name="FIGURES_IMAGES_SCALE" />
+                        </label>
+                        <NumberField
+                          data-testid="figures-images-scale"
+                          min={1}
+                          max={4}
+                          step={0.5}
+                          value={figuresImagesScale}
+                          onCommit={setFiguresImagesScale}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                      <div className="input-group">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11.5px', color: 'var(--fg-muted)', marginBottom: '6px' }}>
+                          Min area fraction
+                          <TooltipIcon name="FIGURES_MIN_AREA_FRACTION" />
+                        </label>
+                        <NumberField
+                          data-testid="figures-min-area-fraction"
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          value={figuresMinAreaFraction}
+                          onCommit={setFiguresMinAreaFraction}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                      <div className="input-group">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11.5px', color: 'var(--fg-muted)', marginBottom: '6px' }}>
+                          Max completion tokens
+                          <TooltipIcon name="FIGURES_MAX_COMPLETION_TOKENS" />
+                        </label>
+                        <NumberField
+                          data-testid="figures-max-completion-tokens"
+                          min={64}
+                          max={8000}
+                          step={1}
+                          value={figuresMaxCompletionTokens}
+                          onCommit={setFiguresMaxCompletionTokens}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+                      <div className="input-group">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11.5px', color: 'var(--fg-muted)', marginBottom: '6px' }}>
+                          Concurrency
+                          <TooltipIcon name="FIGURES_CONCURRENCY" />
+                        </label>
+                        <NumberField
+                          data-testid="figures-concurrency"
+                          min={1}
+                          max={16}
+                          step={1}
+                          value={figuresConcurrency}
+                          onCommit={setFiguresConcurrency}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                      <div className="input-group">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11.5px', color: 'var(--fg-muted)', marginBottom: '6px' }}>
+                          Timeout (s)
+                          <TooltipIcon name="FIGURES_TIMEOUT_S" />
+                        </label>
+                        <NumberField
+                          data-testid="figures-timeout-s"
+                          min={5}
+                          max={600}
+                          step={1}
+                          value={figuresTimeoutS}
+                          onCommit={setFiguresTimeoutS}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                      <div className="input-group">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11.5px', color: 'var(--fg-muted)', marginBottom: '6px' }}>
+                          Skip classes
+                          <TooltipIcon name="FIGURES_SKIP_CLASSES" />
+                        </label>
+                        <input
+                          data-testid="figures-skip-classes"
+                          type="text"
+                          value={skipClassesText}
+                          onChange={(e) => onSkipClassesChange(e.target.value)}
+                          placeholder="logo, signature, icon"
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
-            </details>
+            </div>
           </div>
         )}
       </div>
@@ -2676,43 +3990,58 @@ export function IndexingSubtab() {
           marginBottom: '24px',
         }}
       >
-        <button
-          onClick={() => setStatsExpanded(!statsExpanded)}
+        {/* Toggle and Refresh are SIBLING buttons: nesting an interactive
+            control inside another (button-in-button or role=button) is
+            invalid and steals keyboard activation. */}
+        <div
           style={{
             width: '100%',
             padding: '16px',
-            background: 'transparent',
-            border: 'none',
-            cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
+            gap: '10px',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '16px' }}>📊</span>
-            <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--fg)' }}>Index Stats</span>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                void loadStats();
-                void refreshStatus();
-              }}
-              style={{
-                padding: '4px 8px',
-                fontSize: '11px',
-                background: 'var(--bg-elev2)',
-                border: '1px solid var(--line)',
-                borderRadius: '6px',
-                color: 'var(--fg-muted)',
-                cursor: 'pointer',
-              }}
-            >
-              ↻ Refresh
-            </button>
-          </div>
-          <span style={{ fontSize: '12px', color: 'var(--fg-muted)' }}>{statsExpanded ? '▼' : '▶'}</span>
-        </button>
+          <button
+            aria-expanded={statsExpanded}
+            onClick={() => setStatsExpanded(!statsExpanded)}
+            style={{
+              flex: 1,
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '10px',
+              padding: 0,
+            }}
+          >
+            <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '16px' }}>📊</span>
+              <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--fg)' }}>Index Stats</span>
+            </span>
+            <span style={{ fontSize: '12px', color: 'var(--fg-muted)' }}>{statsExpanded ? '▼' : '▶'}</span>
+          </button>
+          <button
+            onClick={() => {
+              void loadStats();
+              void refreshStatus();
+            }}
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              background: 'var(--bg-elev2)',
+              border: '1px solid var(--line)',
+              borderRadius: '6px',
+              color: 'var(--fg-muted)',
+              cursor: 'pointer',
+            }}
+          >
+            ↻ Refresh
+          </button>
+        </div>
 
         {statsExpanded && (
           <div style={{ padding: '0 16px 16px' }}>
@@ -2793,7 +4122,7 @@ export function IndexingSubtab() {
               <div style={{ flex: 1, minWidth: '260px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px' }}>
                   <span style={{ color: 'var(--fg)' }}>{progress.status}</span>
-                  <span style={{ color: 'var(--accent)', fontWeight: 800 }}>{progress.current}%</span>
+                  <span style={{ color: 'var(--accent-text)', fontWeight: 800 }}>{progress.current}%</span>
                 </div>
                 <div style={{ height: '6px', background: 'var(--line)', borderRadius: '3px', overflow: 'hidden' }}>
                   <div
@@ -2811,33 +4140,54 @@ export function IndexingSubtab() {
           ) : (
             <>
               <button
-                onClick={handleStartIndex}
+                onClick={() => void handleStartIndex()}
                 data-testid="index-now-button"
-                disabled={!canIndex || estimateLoading}
-                aria-busy={estimateLoading}
+                disabled={!canIndex || estimateLoading || graphSchemaLoading}
+                aria-busy={estimateLoading || graphSchemaLoading}
                 style={{
                   padding: '12px 32px',
                   fontSize: '14px',
                   fontWeight: 800,
-                  background: canIndex && !estimateLoading ? 'var(--accent)' : 'var(--bg-elev2)',
-                  color: canIndex && !estimateLoading ? 'var(--accent-contrast)' : 'var(--fg-muted)',
+                  background: canIndex && !estimateLoading && !graphSchemaLoading ? 'var(--accent)' : 'var(--bg-elev2)',
+                  color: canIndex && !estimateLoading && !graphSchemaLoading ? 'var(--accent-contrast)' : 'var(--fg-muted)',
                   border: 'none',
                   borderRadius: '8px',
-                  cursor: canIndex && !estimateLoading ? 'pointer' : 'not-allowed',
+                  cursor: canIndex && !estimateLoading && !graphSchemaLoading ? 'pointer' : 'not-allowed',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '8px',
                 }}
               >
                 <span>🚀</span>
-                {estimateLoading ? 'Estimating…' : 'Index Now'}
+                {estimateWarmup
+                  ? 'Preparing…'
+                  : estimateLoading
+                    ? 'Estimating…'
+                    : semanticGraphActive
+                      ? graphSchemaProposal
+                        ? 'Approve schema & index'
+                        : 'Generate schema first'
+                      : 'Index Now'}
               </button>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--fg-muted)' }}>
-                <input type="checkbox" checked={forceReindex} onChange={(e) => setForceReindex(e.target.checked)} />
-                Force reindex
+              <label
+                data-testid="force-reindex-toggle"
+                style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '12px', color: 'var(--fg)', maxWidth: '340px' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={forceReindex}
+                  onChange={(e) => setForceReindex(e.target.checked)}
+                  style={{ marginTop: '2px' }}
+                />
+                <span>
+                  <strong style={{ color: 'var(--err)' }}>Force reindex</strong> — clears the current index
+                  before rebuilding (destructive). Searches return nothing until the new generation commits,
+                  and it unlocks the provider/model/dimension/tokenizer fields so the contract can change.
+                </span>
               </label>
               <button
                 onClick={() => setTerminalVisible(!terminalVisible)}
+                data-testid="indexing-show-logs"
                 style={{
                   padding: '10px 14px',
                   background: 'var(--bg-elev2)',
@@ -2852,6 +4202,7 @@ export function IndexingSubtab() {
               </button>
               <button
                 onClick={handleDeleteIndex}
+                data-testid="delete-index"
                 disabled={!String(activeRepo || '').trim()}
                 style={{
                   padding: '10px 14px',
@@ -2862,13 +4213,22 @@ export function IndexingSubtab() {
                   fontSize: '13px',
                   cursor: 'pointer',
                 }}
-                title="Deletes embeddings, FTS, chunks, and graph for this corpus"
+                title="Deletes the dense and sparse vectors, chunks, documents, and graph for this corpus"
               >
                 🗑 Delete index
               </button>
             </>
           )}
         </div>
+        {estimateWarmup && (
+          <div
+            data-testid="index-estimate-warmup"
+            style={{ marginTop: '10px', fontSize: '12px', color: 'var(--fg-muted)' }}
+          >
+            {estimateWarmup}
+          </div>
+        )}
+
         {!isIndexing && indexBlockingReason && (
           <div
             style={{
@@ -2902,24 +4262,20 @@ export function IndexingSubtab() {
                   Number(indexEstimate.semantic_kg_cost_usd || 0)
                 )})`
               : ''}
+            {indexEstimate.figure_description_cost_usd != null
+              ? ` + Figures ≤ ${formatFigureCostUsd(Number(indexEstimate.figure_description_cost_usd || 0))}${
+                  indexEstimate.estimated_figures != null
+                    ? ` (~${formatNumber(Number(indexEstimate.estimated_figures))} figures)`
+                    : ''
+                }`
+              : ''}
             {' • '}
             {indexEstimate.estimated_seconds_low != null && indexEstimate.estimated_seconds_high != null
-              ? `${formatDuration(Number(indexEstimate.estimated_seconds_low) * 1000)}–${formatDuration(
-                  Number(indexEstimate.estimated_seconds_high) * 1000
+              ? `${formatDuration(durationMs(Number(indexEstimate.estimated_seconds_low)))}–${formatDuration(
+                  durationMs(Number(indexEstimate.estimated_seconds_high))
                 )}`
               : 'N/A'}
-            {indexEstimate.estimated_seconds_semantic_kg != null &&
-            indexEstimate.estimated_seconds_low != null &&
-            indexEstimate.estimated_seconds_high != null
-              ? ` (Embed ~${formatDuration(
-                  Math.max(
-                    0,
-                    ((Number(indexEstimate.estimated_seconds_low) + Number(indexEstimate.estimated_seconds_high)) / 2 -
-                      Number(indexEstimate.estimated_seconds_semantic_kg)) *
-                      1000
-                  )
-                )} + KG ~${formatDuration(Number(indexEstimate.estimated_seconds_semantic_kg) * 1000)})`
-              : ''}
+            {estimateTimeBreakdown ? ` (${estimateTimeBreakdown})` : ''}
             {' '}
             • {formatNumber(Number(indexEstimate.total_files || 0))} files • {formatBytes(Number(indexEstimate.total_size_bytes || 0))}
           </div>
