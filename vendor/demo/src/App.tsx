@@ -6,6 +6,8 @@ import { useHealthStore } from '@/stores';
 import { TabBar } from './components/Navigation/TabBar';
 import { TabRouter } from './components/Navigation/TabRouter';
 import { Breadcrumbs } from './components/Navigation/Breadcrumbs';
+import { HealthPill } from './components/Navigation/HealthPill';
+import { CorpusParamGuard, DocumentTitle } from './components/Navigation/RouteGuards';
 
 // Right panel (Dock / Settings)
 import { DockPanel } from './components/Dock/DockPanel';
@@ -19,17 +21,37 @@ import { SubtabErrorFallback } from '@/components/ui/SubtabErrorFallback';
 import { useAppInit, useApplyButton, useTheme } from '@/hooks';
 import { GlobalSearch } from '@/components/Search/GlobalSearch';
 import { UiHelpers } from '@/utils/uiHelpers';
+import { CorpusRegistry } from '@/components/ui/CorpusRegistry';
+import { useRepoStore } from '@/stores/useRepoStore';
+
+/** How often a VISIBLE tab re-checks health. Unchanged from the original interval. */
+const HEALTH_POLL_INTERVAL_MS = 30_000;
 
 function App() {
-  const [healthDisplay, setHealthDisplay] = useState('—');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const { status, checkHealth } = useHealthStore();
+  const [showCorpusRegistry, setShowCorpusRegistry] = useState(false);
+  const activeRepo = useRepoStore((state) => state.activeRepo);
+  const corpusName = useRepoStore(
+    (state) => state.repos.find((repo) => repo.corpus_id === state.activeRepo)?.name,
+  );
+  // The pill (HealthPill) reads status from the store; App keeps the visibility-aware poll
+  // that feeds it so the top bar reflects live health without the pill being open.
+  const checkHealth = useHealthStore((s) => s.checkHealth);
   const navigate = useNavigate();
   const isEmbed = new URLSearchParams(window.location.search).get('embed') === '1';
 
   // Initialize hooks
   const { isInitialized, initError } = useAppInit();
-  const { handleApply: handleSaveAllChanges, isDirty, isSaving, saveError } = useApplyButton();
+  const {
+    handleApply: handleSaveAllChanges,
+    reloadLatest,
+    isDirty,
+    dirtyCount,
+    justSaved,
+    saveConflict,
+    isSaving,
+    saveError,
+  } = useApplyButton();
 
   // Initialize theme
   const { theme, applyTheme } = useTheme();
@@ -80,22 +102,37 @@ function App() {
     setMobileNavOpen(false);
   };
 
+  // Health polling follows the tab's visibility. A tab nobody is looking at has nothing to
+  // report, and the drive found an idle Chat page still paying for a header no one could
+  // see - every probe also shipping a Faro event with it (M-130/B-35). Becoming visible
+  // re-checks immediately, so the indicator is never stale on return.
   useEffect(() => {
-    // Initial health check
-    checkHealth();
+    let interval: number | undefined;
 
-    // Poll health status
-    const interval = setInterval(checkHealth, 30000);
-    return () => clearInterval(interval);
+    const stopPolling = () => {
+      if (interval === undefined) return;
+      window.clearInterval(interval);
+      interval = undefined;
+    };
+
+    const syncToVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        stopPolling();
+        return;
+      }
+      checkHealth();
+      if (interval === undefined) {
+        interval = window.setInterval(checkHealth, HEALTH_POLL_INTERVAL_MS);
+      }
+    };
+
+    syncToVisibility();
+    document.addEventListener('visibilitychange', syncToVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', syncToVisibility);
+      stopPolling();
+    };
   }, [checkHealth]);
-
-  useEffect(() => {
-    if (status) {
-      const isOk = status.ok || status.status === 'healthy';
-      const timestamp = status.ts ? new Date(status.ts).toLocaleTimeString() : new Date().toLocaleTimeString();
-      setHealthDisplay(isOk ? `OK @ ${timestamp}` : 'Not OK');
-    }
-  }, [status]);
 
   // Show loading screen while app initializes
   if (!isInitialized) {
@@ -113,6 +150,7 @@ function App() {
   if (isEmbed) {
     return (
       <div className="app-embed-root">
+        <DocumentTitle />
         <div className="app-embed-scroll">
           <ErrorBoundary
             context="embed-tab-router"
@@ -136,6 +174,8 @@ function App() {
 
   return (
     <>
+      <DocumentTitle />
+      <CorpusParamGuard />
       {/* Topbar */}
       <div className="topbar">
         <button 
@@ -162,12 +202,15 @@ function App() {
         </button>
         <h1>
           <span className="brand">ragweld</span>
-          <span className="tagline">MLOps Platform · API / MCP</span>
+          <span className="tagline">Versioned Config · API / MCP</span>
         </h1>
         <div className="top-actions">
+          {/* One name for one thing. This was labelled LEARN, named "Open Parameter
+              Glossary" to assistive tech, and navigated to a tab called Glossary
+              (M-160/A-39). */}
           <button
             id="btn-learn"
-            title="Open Parameter Glossary"
+            title="Open the parameter glossary"
             className="icon-btn"
             onClick={() => navigate('/dashboard?subtab=glossary')}
           >
@@ -176,7 +219,20 @@ function App() {
               <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
               <line x1="12" y1="17" x2="12.01" y2="17"></line>
             </svg>
-            <span>Learn</span>
+            <span>Glossary</span>
+          </button>
+          <button
+            id="btn-corpus"
+            className="icon-btn"
+            data-testid="topbar-corpus"
+            title={activeRepo ? `Corpus registry - active: ${activeRepo}` : 'Choose a corpus'}
+            aria-haspopup="dialog"
+            onClick={() => setShowCorpusRegistry(true)}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+            </svg>
+            <span>{corpusName || activeRepo || 'Choose corpus'}</span>
           </button>
           <GlobalSearch />
           <select
@@ -191,10 +247,12 @@ function App() {
             <option value="dark">Dark</option>
             <option value="light">Light</option>
           </select>
-          <button id="btn-health" onClick={checkHealth}>Health</button>
-          <span id="health-status">{healthDisplay}</span>
+          <HealthPill />
         </div>
       </div>
+
+      {/* The corpus registry is reachable from every page through the top bar (M-163). */}
+      <CorpusRegistry isOpen={showCorpusRegistry} onClose={() => setShowCorpusRegistry(false)} />
 
       {/* Main Layout - 3-column grid: sidebar | main | sidepanel */}
       <div className="layout">
@@ -245,19 +303,68 @@ function App() {
             <div className="action-buttons app-footer-actions">
               <button
                 id="save-btn"
+                data-testid="apply-changes"
+                data-dirty-count={dirtyCount}
                 onClick={handleSaveAllChanges}
                 disabled={!isDirty || isSaving}
                 className={!isDirty || isSaving ? 'is-disabled' : ''}
+                title={
+                  isDirty
+                    ? `Apply ${dirtyCount} staged change${dirtyCount === 1 ? '' : 's'} to the server`
+                    : 'No staged changes to apply'
+                }
+                // Disabled paint must read as clearly OFF, not a near-identical dim of the
+                // enabled accent (X-04). Inline styles win over the shared stylesheet so the
+                // muted surface applies without touching main.css. Text stays full-opacity for
+                // legibility (no opacity dimming on control text).
+                style={
+                  !isDirty || isSaving
+                    ? {
+                        background: 'var(--surface-2, #2a2d31)',
+                        color: 'var(--fg-muted, #9aa0a6)',
+                        boxShadow: 'none',
+                        opacity: 1,
+                        cursor: isSaving ? 'progress' : 'not-allowed',
+                      }
+                    : undefined
+                }
               >
-                {isSaving ? 'Saving...' : 'Apply All Changes'}
-                {isDirty && !isSaving && ' *'}
+                {isSaving
+                  ? 'Saving…'
+                  : isDirty
+                    ? `Apply ${dirtyCount} change${dirtyCount === 1 ? '' : 's'}`
+                    : justSaved
+                      ? 'Saved'
+                      : 'No changes to apply'}
               </button>
               {saveError && (
-                <span className="save-error-text">
-                  Error: {saveError}
+                <span className="save-error-text" data-testid="apply-error" role="alert">
+                  {saveError}
                 </span>
               )}
-              {/* Global embedding mismatch warning - appears next to Apply button */}
+              {saveConflict && (
+                <button
+                  type="button"
+                  data-testid="apply-reload-latest"
+                  onClick={reloadLatest}
+                  title="Discard staged edits and reload the current server config"
+                  style={{
+                    background: 'transparent',
+                    color: 'var(--accent-text)',
+                    border: '1px solid var(--accent)',
+                    boxShadow: 'none',
+                    fontWeight: 600,
+                  }}
+                >
+                  Reload latest
+                </button>
+              )}
+              {/* Embedding config-vs-index drift badge. This keys on IndexStats, which today
+                  exposes only the embedding provider/model/dim the index was built with — not its
+                  chunking strategy or tokenizer — so it cannot show a persistent chunking-/
+                  tokenization-drift badge without a backend field (IndexStats.chunking_strategy /
+                  tokenizer, owned by the indexing lane). The Apply-time confirmation warns for all
+                  three index-invalidating sections at the point of change. */}
               <EmbeddingMismatchWarning variant="compact" />
             </div>
           </div>
