@@ -2,19 +2,79 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAPI, useConfig, useConfigField } from '@/hooks';
 import { ApiKeyStatus } from '@/components/ui/ApiKeyStatus';
 import { useRepoStore } from '@/stores/useRepoStore';
-import type { ChatModelInfo, ChatModelsResponse } from '@/types/generated';
-import type { LocalModelConfig, OpenRouterConfig } from '@/types/generated';
-import type { ProvidersHealthResponse, ProviderHealth } from '@/types/generated';
+import type {
+  ChatModelInfo,
+  ChatModelsResponse,
+  LiteLLMConfig,
+  ProviderHealth,
+  ProvidersHealthResponse,
+  RuntimeCapabilitiesResponse,
+  VLLMConfig,
+} from '@/types/generated';
 
 export function ProviderSetup() {
   const { api } = useAPI();
   const { config, loading, error } = useConfig();
   const { activeRepo } = useRepoStore();
+  const [litellm, setLitellm] = useConfigField<LiteLLMConfig>('chat.litellm', {});
+  const [vllm, setVllm] = useConfigField<VLLMConfig>('chat.vllm', {});
+  const [health, setHealth] = useState<ProvidersHealthResponse | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
+  const [models, setModels] = useState<ChatModelInfo[]>([]);
+  const [modelError, setModelError] = useState<string | null>(null);
+  const [runtime, setRuntime] = useState<RuntimeCapabilitiesResponse | null>(null);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
 
-  // NOTE: We bind to the nested objects (not leaf fields) to avoid clobbering sibling fields
-  // due to shallow merges in config section patching.
-  const [openrouter, setOpenrouter] = useConfigField<OpenRouterConfig>('chat.openrouter', {});
-  const [localModels, setLocalModels] = useConfigField<LocalModelConfig>('chat.local_models', {});
+  const litellmHealth = useMemo(
+    () => ((health?.providers || []) as ProviderHealth[]).find((item) => item.kind === 'litellm'),
+    [health],
+  );
+
+  useEffect(() => {
+    if (!config) return;
+    const controller = new AbortController();
+    const scope = String(activeRepo || '').trim();
+    const qs = scope ? `?corpus_id=${encodeURIComponent(scope)}` : '';
+    setHealthError(null);
+    setModelError(null);
+    setRuntimeError(null);
+
+    const fetchJson = async <T,>(path: string, label: string): Promise<T> => {
+      const response = await fetch(api(path), { signal: controller.signal });
+      if (!response.ok) throw new Error(`${label}: ${response.status}`);
+      return response.json() as Promise<T>;
+    };
+
+    Promise.allSettled([
+      fetchJson<ProvidersHealthResponse>(`chat/health${qs}`, 'Health'),
+      fetchJson<ChatModelsResponse>(`chat/models${qs}`, 'Models'),
+      fetchJson<RuntimeCapabilitiesResponse>(`runtime-capabilities${qs}`, 'Runtime'),
+    ]).then(([healthResult, modelResult, runtimeResult]) => {
+      if (controller.signal.aborted) return;
+
+      if (healthResult.status === 'fulfilled') {
+        setHealth(healthResult.value);
+      } else {
+        setHealth(null);
+        setHealthError(healthResult.reason instanceof Error ? healthResult.reason.message : String(healthResult.reason));
+      }
+
+      if (modelResult.status === 'fulfilled') {
+        setModels(Array.isArray(modelResult.value.models) ? modelResult.value.models : []);
+      } else {
+        setModels([]);
+        setModelError(modelResult.reason instanceof Error ? modelResult.reason.message : String(modelResult.reason));
+      }
+
+      if (runtimeResult.status === 'fulfilled') {
+        setRuntime(runtimeResult.value);
+      } else {
+        setRuntime(null);
+        setRuntimeError(runtimeResult.reason instanceof Error ? runtimeResult.reason.message : String(runtimeResult.reason));
+      }
+      });
+    return () => controller.abort();
+  }, [activeRepo, api, config, litellm.base_url, litellm.default_model, litellm.enabled, vllm.base_url, vllm.default_model, vllm.enabled]);
 
   if (!config) {
     return (
@@ -25,254 +85,77 @@ export function ProviderSetup() {
     );
   }
 
-  const providers = Array.isArray(localModels.providers) ? localModels.providers : [];
-
-  const [health, setHealth] = useState<ProvidersHealthResponse | null>(null);
-  const [healthLoading, setHealthLoading] = useState(false);
-  const [healthError, setHealthError] = useState<string | null>(null);
-  const [catalogModels, setCatalogModels] = useState<ChatModelInfo[]>([]);
-
-  const healthByProvider = useMemo(() => {
-    const items = (health?.providers || []) as ProviderHealth[];
-    const byName = new Map<string, ProviderHealth>();
-    for (const p of items) {
-      const key = `${p.kind}:${p.provider}`;
-      byName.set(key, p);
-    }
-    return byName;
-  }, [health]);
-
-  const openrouterModelCount = useMemo(() => {
-    return catalogModels.filter((m) => String(m.source || '').trim().toLowerCase() === 'openrouter').length;
-  }, [catalogModels]);
-
-  useEffect(() => {
-    if (!config) return;
-    const scope = String(activeRepo || '').trim();
-    const qs = scope ? `?corpus_id=${encodeURIComponent(scope)}` : '';
-
-    setHealthLoading(true);
-    setHealthError(null);
-
-    fetch(api(`chat/health${qs}`))
-      .then((r) => {
-        if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-        return r.json();
-      })
-      .then((d) => setHealth(d as ProvidersHealthResponse))
-      .catch((e) => setHealthError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setHealthLoading(false));
-  }, [activeRepo, api, config, openrouter?.enabled, providers]);
-
-  useEffect(() => {
-    if (!config) return;
-    const scope = String(activeRepo || '').trim();
-    const qs = scope ? `?corpus_id=${encodeURIComponent(scope)}` : '';
-    fetch(api(`chat/models${qs}`))
-      .then((r) => {
-        if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-        return r.json();
-      })
-      .then((d) => {
-        const models = Array.isArray((d as ChatModelsResponse)?.models)
-          ? ((d as ChatModelsResponse).models as ChatModelInfo[])
-          : [];
-        setCatalogModels(models);
-      })
-      .catch(() => setCatalogModels([]));
-  }, [activeRepo, api, config, openrouter?.enabled, providers]);
+  const route = runtime?.generation?.default_route;
 
   return (
     <div className="subtab-panel" style={{ padding: '24px' }}>
       <div style={{ marginBottom: 18 }}>
-        <h3 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: 'var(--fg)' }}>Providers</h3>
+        <h3 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: 'var(--fg)' }}>Generation Gateway</h3>
         <div style={{ marginTop: 6, fontSize: 13, color: 'var(--fg-muted)' }}>
-          Configure OpenRouter and local OpenAI-compatible provider endpoints.
+          Ragweld sends every generation request through LiteLLM. The local serving backend is the host local-model server (vllm-metal), started by ./start.sh.
         </div>
       </div>
 
-      {error && (
-        <div style={{ marginBottom: 14, color: 'var(--err)', fontSize: 13 }}>
-          {error}
+      {error && <div style={{ marginBottom: 14, color: 'var(--err)', fontSize: 13 }}>{error}</div>}
+      {healthError && <div style={{ marginBottom: 14, color: 'var(--err)', fontSize: 13 }}>{healthError}</div>}
+      {modelError && <div style={{ marginBottom: 14, color: 'var(--err)', fontSize: 13 }}>{modelError}</div>}
+      {runtimeError && <div style={{ marginBottom: 14, color: 'var(--err)', fontSize: 13 }}>{runtimeError}</div>}
+
+      <div style={{ background: 'var(--bg-elev1)', border: '1px solid var(--line)', borderRadius: 10, padding: 14, marginBottom: 18 }}>
+        <div style={{ fontWeight: 600, marginBottom: 8 }}>Current route</div>
+        <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+          {route ? <>{route.provider_name} → <code>{route.model}</code> @ <code>{route.base_url}</code></> : 'No gateway route is ready.'}
         </div>
-      )}
+      </div>
 
-      <div
-        style={{
-          background: 'var(--bg-elev1)',
-          border: '1px solid var(--line)',
-          borderRadius: 10,
-          padding: 14,
-          marginBottom: 18,
-        }}
-      >
-        <div style={{ fontWeight: 600, marginBottom: 10 }}>OpenRouter</div>
-
+      <div style={{ background: 'var(--bg-elev1)', border: '1px solid var(--line)', borderRadius: 10, padding: 14, marginBottom: 18 }}>
+        <div style={{ fontWeight: 600, marginBottom: 10 }}>LiteLLM gateway</div>
         <div className="input-row" style={{ alignItems: 'start' }}>
           <div className="input-group">
             <label className="toggle">
-              <input
-                type="checkbox"
-                checked={openrouter.enabled === true}
-                onChange={(e) => setOpenrouter({ ...(openrouter || {}), enabled: e.target.checked })}
-              />
-              <span className="toggle-track" aria-hidden="true">
-                <span className="toggle-thumb"></span>
-              </span>
-              <span className="toggle-label">Enable OpenRouter</span>
+              <input type="checkbox" checked={litellm.enabled === true} onChange={(event) => setLitellm({ ...litellm, enabled: event.target.checked })} />
+              <span className="toggle-track" aria-hidden="true"><span className="toggle-thumb" /></span>
+              <span className="toggle-label">Enable LiteLLM</span>
             </label>
           </div>
-
+          <div className="input-group"><ApiKeyStatus keyName="LITELLM_API_KEY" label="LiteLLM client key" /></div>
+        </div>
+        <div className="input-row" style={{ marginTop: 10 }}>
           <div className="input-group">
-            <ApiKeyStatus keyName="OPENROUTER_API_KEY" label="OpenRouter API Key" />
+            <label>Base URL</label>
+            <input value={String(litellm.base_url || '')} onChange={(event) => setLitellm({ ...litellm, base_url: event.target.value })} placeholder="http://127.0.0.1:54000/v1" />
+          </div>
+          <div className="input-group">
+            <label>Default alias</label>
+            <input value={String(litellm.default_model || '')} onChange={(event) => setLitellm({ ...litellm, default_model: event.target.value })} placeholder="ragweld-local" />
           </div>
         </div>
-
-        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--fg-muted)' }}>
-          {healthLoading ? (
-            <span>Checking provider status…</span>
-          ) : healthError ? (
-            <span style={{ color: 'var(--err)' }}>Health check failed: {healthError}</span>
-          ) : (
-            (() => {
-              const h = healthByProvider.get('openrouter:OpenRouter');
-              if (!h) return <span>Provider status: unknown</span>;
-              if (h.reachable) {
-                if (openrouterModelCount <= 0) {
-                  return (
-                    <span style={{ color: 'var(--warn)' }}>
-                      Provider status: key valid, but no OpenRouter models are currently available
-                    </span>
-                  );
-                }
-                return (
-                  <span style={{ color: 'var(--ok)' }}>
-                    Provider status: reachable ({openrouterModelCount} model{openrouterModelCount === 1 ? '' : 's'})
-                  </span>
-                );
-              }
-              return (
-                <span style={{ color: 'var(--warn)' }}>
-                  Provider status: unreachable{h.detail ? ` — ${h.detail}` : ''}
-                </span>
-              );
-            })()
-          )}
+        <div style={{ marginTop: 10, fontSize: 12, color: litellmHealth?.reachable ? 'var(--ok)' : 'var(--warn)' }}>
+          {litellmHealth?.reachable ? `Authenticated and reachable (${models.length} catalog-backed gateway alias${models.length === 1 ? '' : 'es'})` : `Unavailable${litellmHealth?.detail ? ` — ${litellmHealth.detail}` : ''}`}
         </div>
       </div>
 
-      <div
-        style={{
-          background: 'var(--bg-elev1)',
-          border: '1px solid var(--line)',
-          borderRadius: 10,
-          padding: 14,
-          marginBottom: 18,
-        }}
-      >
-        <div style={{ fontWeight: 600, marginBottom: 10 }}>Ragweld (in-process)</div>
-
-        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--fg-muted)' }}>
-          {healthLoading ? (
-            <span>Checking provider status…</span>
-          ) : healthError ? (
-            <span style={{ color: 'var(--err)' }}>Health check failed: {healthError}</span>
-          ) : (
-            (() => {
-              const h = healthByProvider.get('ragweld:Ragweld');
-              if (!h) return <span>Provider status: unknown</span>;
-              if (h.reachable) return <span style={{ color: 'var(--ok)' }}>Provider status: reachable</span>;
-              return (
-                <span style={{ color: 'var(--warn)' }}>
-                  Provider status: unreachable{h.detail ? ` — ${h.detail}` : ''}
-                </span>
-              );
-            })()
-          )}
-        </div>
-
-        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--fg-muted)' }}>
-          Uses MLX + a locally-cached base model, plus a LoRA adapter under <code>training.ragweld_agent_model_path</code>.
-        </div>
-      </div>
-
-      <div
-        style={{
-          background: 'var(--bg-elev1)',
-          border: '1px solid var(--line)',
-          borderRadius: 10,
-          padding: 14,
-        }}
-      >
-        <div style={{ fontWeight: 600, marginBottom: 10 }}>Local providers</div>
-
-        {providers.length === 0 ? (
-          <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>No local providers configured.</div>
-        ) : (
-          <div style={{ display: 'grid', gap: 12 }}>
-            {providers.map((p, idx) => (
-              <div
-                key={`${p.name}-${idx}`}
-                style={{
-                  padding: 12,
-                  background: 'var(--bg-elev2)',
-                  border: '1px solid var(--line)',
-                  borderRadius: 10,
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 14, alignItems: 'center' }}>
-                  <div style={{ minWidth: 180 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--fg)' }}>{p.name}</div>
-                    <div style={{ fontSize: 11, color: 'var(--fg-muted)', marginTop: 2 }}>{p.provider_type}</div>
-                  </div>
-
-                  <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
-                    {(() => {
-                      const h = healthByProvider.get(`local:${p.name}`);
-                      if (!h) return 'status: unknown';
-                      if (h.reachable) return <span style={{ color: 'var(--ok)' }}>status: reachable</span>;
-                      return <span style={{ color: 'var(--warn)' }}>status: unreachable</span>;
-                    })()}
-                  </div>
-
-                  <label className="toggle" style={{ marginLeft: 'auto' }}>
-                    <input
-                      type="checkbox"
-                      checked={p.enabled !== false}
-                      onChange={(e) => {
-                        const nextProviders = providers.map((cur, i) =>
-                          i === idx ? { ...cur, enabled: e.target.checked } : cur
-                        );
-                        setLocalModels({ ...(localModels || {}), providers: nextProviders });
-                      }}
-                    />
-                    <span className="toggle-track" aria-hidden="true">
-                      <span className="toggle-thumb"></span>
-                    </span>
-                    <span className="toggle-label">Enabled</span>
-                  </label>
-                </div>
-
-                <div className="input-row" style={{ marginTop: 10 }}>
-                  <div className="input-group">
-                    <label>Base URL</label>
-                    <input
-                      type="text"
-                      value={p.base_url}
-                      onChange={(e) => {
-                        const nextProviders = providers.map((cur, i) =>
-                          i === idx ? { ...cur, base_url: e.target.value } : cur
-                        );
-                        setLocalModels({ ...(localModels || {}), providers: nextProviders });
-                      }}
-                      placeholder="http://127.0.0.1:11434"
-                    />
-                  </div>
-                </div>
-              </div>
-            ))}
+      <div style={{ background: 'var(--bg-elev1)', border: '1px solid var(--line)', borderRadius: 10, padding: 14 }}>
+        <div style={{ fontWeight: 600, marginBottom: 10 }}>vLLM serving</div>
+        <label className="toggle">
+          <input type="checkbox" checked={vllm.enabled === true} onChange={(event) => setVllm({ ...vllm, enabled: event.target.checked })} />
+          <span className="toggle-track" aria-hidden="true"><span className="toggle-thumb" /></span>
+          <span className="toggle-label">Enable managed vLLM</span>
+        </label>
+        <div className="input-row" style={{ marginTop: 10 }}>
+          <div className="input-group">
+            <label>Base URL</label>
+            <input value={String(vllm.base_url || '')} onChange={(event) => setVllm({ ...vllm, base_url: event.target.value })} placeholder="http://127.0.0.1:58080/v1" />
           </div>
-        )}
+          <div className="input-group">
+            <label>Expected served model</label>
+            <input value={String(vllm.default_model || '')} onChange={(event) => setVllm({ ...vllm, default_model: event.target.value })} placeholder="mlx-community/Qwen3.8-27B-4bit" />
+          </div>
+        </div>
+        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--fg-muted)' }}>
+          vLLM is not a direct application route. LiteLLM owns the alias that targets this serving endpoint. Readiness verifies the
+          model vLLM reports (and its context window) against this value and the catalog&apos;s ragweld-local row.
+        </div>
       </div>
     </div>
   );

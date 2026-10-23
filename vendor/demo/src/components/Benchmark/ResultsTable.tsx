@@ -1,12 +1,12 @@
-type BenchmarkResult = {
-  model: string;
-  response: string;
-  latency_ms?: number;
-  error?: string;
-};
+import type { BenchmarkResult } from '@/types/generated';
+import { CostAttribution } from '@/components/Benchmark/CostAttribution';
+
+type BenchmarkResultRow = Pick<BenchmarkResult,
+  'model' | 'response' | 'latency_ms' | 'error' | 'context_chunks_used' | 'cost_summary'
+>;
 
 type ResultsTableProps = {
-  results: BenchmarkResult[];
+  results: BenchmarkResultRow[];
 };
 
 function formatLatencyMs(ms: number | undefined): string {
@@ -66,6 +66,12 @@ export function ResultsTable({ results }: ResultsTableProps) {
               Latency (ms)
             </th>
             <th scope="col" style={thStyle}>
+              Context
+            </th>
+            <th scope="col" style={thStyle}>
+              Cost
+            </th>
+            <th scope="col" style={thStyle}>
               Response
             </th>
             <th scope="col" style={thStyle}>
@@ -76,7 +82,7 @@ export function ResultsTable({ results }: ResultsTableProps) {
         <tbody>
           {results.length === 0 ? (
             <tr>
-              <td style={{ ...tdStyle, color: 'var(--fg-muted)' }} colSpan={4}>
+              <td style={{ ...tdStyle, color: 'var(--fg-muted)' }} colSpan={6}>
                 No results yet.
               </td>
             </tr>
@@ -85,6 +91,15 @@ export function ResultsTable({ results }: ResultsTableProps) {
               <tr key={`${r.model}:${idx}`}>
                 <td style={monoCellStyle}>{r.model || '—'}</td>
                 <td style={tdStyle}>{formatLatencyMs(r.latency_ms)}</td>
+                <td
+                  style={{ ...tdStyle, color: r.error ? 'var(--fg-muted)' : (r.context_chunks_used ?? 0) > 0 ? 'var(--fg)' : 'var(--warn)' }}
+                  data-testid="benchmark-context-chunks"
+                >
+                  {r.error ? '—' : `${r.context_chunks_used ?? 0} chunk${(r.context_chunks_used ?? 0) === 1 ? '' : 's'}`}
+                </td>
+                <td style={{ ...tdStyle, minWidth: 180 }} data-testid="benchmark-model-cost">
+                  <CostAttribution summary={r.cost_summary} />
+                </td>
                 <td style={monoCellStyle}>{r.response || '—'}</td>
                 <td
                   style={{
@@ -102,4 +117,3 @@ export function ResultsTable({ results }: ResultsTableProps) {
     </div>
   );
 }
-
