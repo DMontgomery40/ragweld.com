@@ -166,7 +166,7 @@
 }
 
 .training-studio-root .small-button:disabled {
-  opacity: 0.6;
+  opacity: 0.8;
   cursor: not-allowed;
 }
 
@@ -621,6 +621,10 @@
   color: var(--studio-text);
   font-size: 0.75rem;
   line-height: 1.35;
+}
+
+.studio-event-operator-hint {
+  color: var(--studio-warn);
 }
 
 .studio-mini-grid {
