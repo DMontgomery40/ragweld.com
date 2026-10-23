@@ -9,6 +9,14 @@ interface StorageItem {
   label: string;
   size: string;
   bytes: number;
+  // A count tile (points, keywords) is a tally, not a slice of the byte total. Giving it a
+  // "% of total" against a byte figure is a category error that always reads 0.0%, and the
+  // fill bar it drives is just as meaningless (M-141). `isCount` marks those tiles so both the
+  // percentage line and the bar are shown only for the byte tiles they actually describe.
+  isCount?: boolean;
+  // A store that could not be measured is "n/a" with the reason, not "0 B (0.0% of total)": no
+  // share line, no fill bar, and it is left out of the byte total (S5, the Neo4j store).
+  note?: string;
 }
 
 export function StorageSubtab() {
@@ -41,24 +49,21 @@ export function StorageSubtab() {
           size: formatBytes(storage?.chunks_bytes || 0)
         },
         {
-          label: 'PGVECTOR VECTORS',
-          bytes: storage?.embeddings_bytes || 0,
-          size: formatBytes(storage?.embeddings_bytes || 0)
+          label: 'QDRANT POINTS',
+          bytes: storage?.qdrant_points || 0,
+          size: `${(storage?.qdrant_points || 0).toLocaleString()} points`,
+          isCount: true
         },
         {
-          label: 'PGVECTOR INDEX (optional)',
-          bytes: storage?.pgvector_index_bytes || 0,
-          size: formatBytes(storage?.pgvector_index_bytes || 0)
-        },
-        {
-          label: 'BM25 INDEX',
-          bytes: storage?.bm25_index_bytes || 0,
-          size: formatBytes(storage?.bm25_index_bytes || 0)
+          label: 'QDRANT DENSE VECTORS (est.)',
+          bytes: storage?.qdrant_dense_vector_bytes || 0,
+          size: formatBytes(storage?.qdrant_dense_vector_bytes || 0)
         },
         {
           label: 'NEO4J STORE',
-          bytes: storage?.neo4j_store_bytes || 0,
-          size: formatBytes(storage?.neo4j_store_bytes || 0)
+          bytes: storage.neo4j_store_bytes ?? 0,
+          size: storage.neo4j_store_bytes == null ? 'n/a' : formatBytes(storage.neo4j_store_bytes),
+          note: storage.neo4j_store_bytes == null ? (storage.neo4j_store_note ?? undefined) : undefined
         },
         {
           label: 'CHUNK SUMMARIES',
@@ -68,7 +73,8 @@ export function StorageSubtab() {
         {
           label: 'KEYWORDS',
           bytes: data.keywords_count || 0,
-          size: `${data.keywords_count || 0} keywords`
+          size: `${(data.keywords_count || 0).toLocaleString()} keywords`,
+          isCount: true
         }
       ];
 
@@ -184,6 +190,9 @@ export function StorageSubtab() {
               {items.map((item, idx) => (
                 <div
                   key={idx}
+                  data-testid={`storage-tile-${item.label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
+                  data-count={item.isCount ? 'true' : 'false'}
+                  data-measured={item.note ? 'false' : 'true'}
                   style={{
                     background: 'var(--card-bg)',
                     border: '1px solid var(--line)',
@@ -193,19 +202,22 @@ export function StorageSubtab() {
                     overflow: 'hidden'
                   }}
                 >
-                  {/* Background bar showing percentage */}
-                  <div
-                    style={{
-                      position: 'absolute',
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      height: `${Math.min(getPercentage(item.bytes), 100)}%`,
-                      background: 'linear-gradient(to top, rgba(0, 255, 136, 0.1), transparent)',
-                      opacity: 0.5,
-                      pointerEvents: 'none'
-                    }}
-                  />
+                  {/* Background bar showing percentage -- byte tiles only; a count has no share
+                      of a byte total to fill (M-141). */}
+                  {!item.isCount && !item.note && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        height: `${Math.min(getPercentage(item.bytes), 100)}%`,
+                        background: 'linear-gradient(to top, rgba(0, 255, 136, 0.1), transparent)',
+                        opacity: 0.5,
+                        pointerEvents: 'none'
+                      }}
+                    />
+                  )}
 
                   <div style={{ position: 'relative', zIndex: 1 }}>
                     <div
@@ -230,7 +242,7 @@ export function StorageSubtab() {
                     >
                       {item.size}
                     </div>
-                    {totalBytes > 0 && item.label !== 'KEYWORDS' && (
+                    {totalBytes > 0 && !item.isCount && !item.note && (
                       <div
                         style={{
                           color: 'var(--fg-muted)',
@@ -239,6 +251,18 @@ export function StorageSubtab() {
                         }}
                       >
                         {getPercentage(item.bytes).toFixed(1)}% of total
+                      </div>
+                    )}
+                    {item.note && (
+                      <div
+                        style={{
+                          color: 'var(--fg-muted)',
+                          fontSize: '11.5px',
+                          lineHeight: 1.4,
+                          marginTop: '4px'
+                        }}
+                      >
+                        {item.note}
                       </div>
                     )}
                   </div>
@@ -316,7 +340,7 @@ export function StorageSubtab() {
         >
           <ul style={{ margin: 0, paddingLeft: '20px', lineHeight: '1.8', fontSize: '13px', color: 'var(--fg)' }}>
             <li>
-              <strong>pgvector Index:</strong> HNSW index overhead is typically 10-20% of raw embeddings (lower than standalone vector DBs)
+              <strong>Qdrant dense vectors:</strong> reported as an estimate (points x dimensions x 4 bytes); Qdrant's HNSW index adds roughly 10-50% on top
             </li>
             <li>
               <strong>BM25 Index:</strong> Sparse retrieval index is compact but grows with unique terms
