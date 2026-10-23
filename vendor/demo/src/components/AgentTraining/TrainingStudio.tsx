@@ -5,24 +5,25 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useNavigate } from 'react-router-dom';
 import 'dockview/dist/styles/dockview.css';
 
-import { apiClient, api } from '@/api/client';
+import { LineageMeta } from '@/components/ui/LineageMeta';
 import { TooltipIcon } from '@/components/ui/TooltipIcon';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useActiveRepo } from '@/stores/useRepoStore';
-import { useConfigField, useNotification } from '@/hooks';
+import { useConfigField } from '@/hooks';
+import { showToast } from '@/utils/toast';
 import { agentTrainingService, type AgentTrainRunsScope } from '@/services/AgentTrainingService';
 import type {
+  AgentTrainControlPlaneStatusResponse,
   AgentTrainMetricEvent,
   AgentTrainRun,
   AgentTrainRunMeta,
   AgentTrainStartRequest,
-  ChatRequest,
-  ChatResponse,
 } from '@/types/generated';
 
 import { NeuralVisualizer, type TelemetryPoint } from '@/components/RerankerTraining/NeuralVisualizer';
 import { GradientDescentViz } from '@/components/RerankerTraining/GradientDescentViz';
 import { StudioLogTerminal } from '@/components/RerankerTraining/StudioLogTerminal';
+import { ControlPlaneStatus } from './ControlPlaneStatus';
 import { RunDiff } from './RunDiff';
 import { RunOverview } from './RunOverview';
 
@@ -191,7 +192,12 @@ function downloadText(filename: string, text: string) {
 }
 
 export function TrainingStudio() {
-  const { success, error: notifyError, info } = useNotification();
+  // Global toast: useNotification only stores messages in local state, and this
+  // studio never rendered that list — run start/cancel/promotion feedback was
+  // silently swallowed (2026-08-24 finding).
+  const success = (message: string) => showToast(message, 'success');
+  const notifyError = (message: string) => showToast(message, 'error');
+  const info = (message: string) => showToast(message, 'info');
   const activeCorpus = useActiveRepo();
   const navigate = useNavigate();
   const config = useConfigStore((s) => s.config);
@@ -204,6 +210,9 @@ export function TrainingStudio() {
   const [runs, setRuns] = useState<AgentTrainRunMeta[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState<string | null>(null);
+  const [controlPlaneStatus, setControlPlaneStatus] = useState<AgentTrainControlPlaneStatusResponse | null>(null);
+  const [controlPlaneLoading, setControlPlaneLoading] = useState(false);
+  const [controlPlaneError, setControlPlaneError] = useState<string | null>(null);
 
   const [selectedRunId, setSelectedRunId] = useState('');
   const [selectedRun, setSelectedRun] = useState<AgentTrainRun | null>(null);
@@ -233,13 +242,21 @@ export function TrainingStudio() {
 
   // Ragweld agent config (editable in inspector config tab).
   const [ragweldBackend, setRagweldBackend] = useConfigField<string>('training.ragweld_agent_backend', 'mlx_qwen3');
+  const [workflowBackend, setWorkflowBackend] = useConfigField<'local' | 'flyte'>(
+    'training.ragweld_agent_workflow_backend',
+    'local'
+  );
+  const [trackingBackend, setTrackingBackend] = useConfigField<'local' | 'mlflow'>(
+    'training.ragweld_agent_tracking_backend',
+    'local'
+  );
   const [ragweldBaseModel, setRagweldBaseModel] = useConfigField<string>(
     'training.ragweld_agent_base_model',
-    'mlx-community/Qwen3-1.7B-4bit'
+    'mlx-community/Qwen3-4B-Instruct-2507-4bit'
   );
   const [ragweldModelPath, setRagweldModelPath] = useConfigField<string>(
     'training.ragweld_agent_model_path',
-    'models/learning-agent-epstein-files-1'
+    'models/learning-agent-active'
   );
   const [ragweldDatasetPath, setRagweldDatasetPath] = useConfigField<string>('training.ragweld_agent_train_dataset_path', '');
   const [loraRank, setLoraRank] = useConfigField<number>('training.ragweld_agent_lora_rank', 16);
@@ -254,13 +271,34 @@ export function TrainingStudio() {
     'training.ragweld_agent_telemetry_interval_steps',
     2
   );
-  const [promoteIfImproves, setPromoteIfImproves] = useConfigField<number>('training.ragweld_agent_promote_if_improves', 1);
+  const [promoteIfImproves, setPromoteIfImproves] = useConfigField<boolean>('training.ragweld_agent_promote_if_improves', true);
   const [promoteEpsilon, setPromoteEpsilon] = useConfigField<number>('training.ragweld_agent_promote_epsilon', 0.0);
+  const [flyteAdminBaseUrl, setFlyteAdminBaseUrl] = useConfigField<string>('training.ragweld_agent_flyte_admin_base_url', '');
+  const [flyteConsoleBaseUrl, setFlyteConsoleBaseUrl] = useConfigField<string>(
+    'training.ragweld_agent_flyte_console_base_url',
+    ''
+  );
+  const [flyteProject, setFlyteProject] = useConfigField<string>('training.ragweld_agent_flyte_project', 'ragweld');
+  const [flyteDomain, setFlyteDomain] = useConfigField<string>('training.ragweld_agent_flyte_domain', 'development');
+  const [flyteLaunchplan, setFlyteLaunchplan] = useConfigField<string>('training.ragweld_agent_flyte_launchplan', '');
+  const [flyteCallbackBaseUrl, setFlyteCallbackBaseUrl] = useConfigField<string>(
+    'training.ragweld_agent_flyte_callback_base_url',
+    '',
+  );
+  const [mlflowTrackingUrl, setMlflowTrackingUrl] = useConfigField<string>(
+    'training.ragweld_agent_mlflow_tracking_url',
+    ''
+  );
+  const [mlflowExperimentName, setMlflowExperimentName] = useConfigField<string>(
+    'training.ragweld_agent_mlflow_experiment_name',
+    'ragweld-learning-agent'
+  );
+  const [unslothImage, setUnslothImage] = useConfigField<string>('training.ragweld_agent_unsloth_image', '');
 
   // Studio layout prefs (reuse the existing Learning Reranker Studio UI keys so the layout feels identical).
   const [layoutEngine, setLayoutEngine] = useConfigField<'dockview' | 'panels'>('ui.learning_reranker_layout_engine', 'dockview');
   const [defaultPreset, setDefaultPreset] = useConfigField<LayoutPreset>('ui.learning_reranker_default_preset', 'balanced');
-  const [showSetupRow, setShowSetupRow] = useConfigField<number>('ui.learning_reranker_show_setup_row', 0);
+  const [showSetupRow, setShowSetupRow] = useConfigField<boolean>('ui.learning_reranker_show_setup_row', false);
   const [logsRenderer, setLogsRenderer] = useConfigField<'json' | 'xterm'>('ui.learning_reranker_logs_renderer', 'xterm');
   const [dockviewLayoutJson, setDockviewLayoutJson] = useConfigField<string>('ui.learning_reranker_dockview_layout_json', '');
 
@@ -286,13 +324,13 @@ export function TrainingStudio() {
     'ui.learning_reranker_visualizer_motion_intensity',
     1
   );
-  const [visualizerShowVectorField, setVisualizerShowVectorField] = useConfigField<number>(
+  const [visualizerShowVectorField, setVisualizerShowVectorField] = useConfigField<boolean>(
     'ui.learning_reranker_visualizer_show_vector_field',
-    1
+    true
   );
-  const [visualizerReduceMotion, setVisualizerReduceMotion] = useConfigField<number>(
+  const [visualizerReduceMotion, setVisualizerReduceMotion] = useConfigField<boolean>(
     'ui.learning_reranker_visualizer_reduce_motion',
-    0
+    false
   );
 
   const ringLimit = clamp(Number(visualizerMaxPoints || 10000), 1000, 50000);
@@ -326,6 +364,48 @@ export function TrainingStudio() {
   useEffect(() => {
     if (!config) void loadConfig();
   }, [config, loadConfig]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      setControlPlaneLoading(true);
+      setControlPlaneError(null);
+      void agentTrainingService
+        .getControlPlaneStatus(activeCorpus || undefined)
+        .then((status) => {
+          if (cancelled) return;
+          setControlPlaneStatus(status);
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          setControlPlaneStatus(null);
+          setControlPlaneError(e instanceof Error ? e.message : 'Failed to load control-plane status');
+        })
+        .finally(() => {
+          if (cancelled) return;
+          setControlPlaneLoading(false);
+        });
+    }, 500);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [
+    activeCorpus,
+    flyteAdminBaseUrl,
+    flyteCallbackBaseUrl,
+    flyteConsoleBaseUrl,
+    flyteDomain,
+    flyteLaunchplan,
+    flyteProject,
+    mlflowExperimentName,
+    mlflowTrackingUrl,
+    ragweldBackend,
+    trackingBackend,
+    unslothImage,
+    workflowBackend,
+  ]);
 
   useEffect(() => {
     if (!activeCorpus && scope === 'corpus') {
@@ -613,47 +693,6 @@ export function TrainingStudio() {
       return ev.type === 'log' || ev.type === 'error' || ev.type === 'state' || ev.type === 'complete';
     });
   }, [events, logClearIso]);
-
-  // Debug prompt: run a single /api/chat call using ragweld:<base_model>.
-  const [debugPrompt, setDebugPrompt] = useState('');
-  const [debugRunning, setDebugRunning] = useState(false);
-  const [debugOutput, setDebugOutput] = useState('');
-  const [debugError, setDebugError] = useState<string | null>(null);
-
-  const onRunDebugPrompt = async () => {
-    if (!activeCorpus) {
-      notifyError('No active corpus selected');
-      return;
-    }
-    const prompt = String(debugPrompt || '').trim();
-    if (!prompt) return;
-
-    setDebugRunning(true);
-    setDebugOutput('');
-    setDebugError(null);
-
-    try {
-      const modelOverride = `ragweld:${String(ragweldBaseModel || '').trim()}`;
-      const payload: ChatRequest = {
-        message: prompt,
-        sources: { corpus_ids: [activeCorpus] },
-        stream: false,
-        images: [],
-        model_override: modelOverride,
-        include_vector: true,
-        include_sparse: true,
-        include_graph: true,
-      };
-      const { data } = await apiClient.post<ChatResponse>(api('/chat'), payload, { headers: { 'Cache-Control': 'no-store' } });
-      const text = String(data?.message?.content || '').trim();
-      setDebugOutput(text || '(empty)');
-    } catch (e) {
-      setDebugError(e instanceof Error ? e.message : 'Failed to run debug prompt');
-      setDebugOutput('');
-    } finally {
-      setDebugRunning(false);
-    }
-  };
 
   const onTopLayout = (layout: Record<string, number>) => {
     const nextLeft = clamp(Math.round(Number(layout.left ?? studioLeftPct)), 15, 35);
@@ -1019,8 +1058,8 @@ export function TrainingStudio() {
           targetFps={Number(visualizerTargetFps)}
           tailSeconds={Number(visualizerTailSeconds)}
           motionIntensity={Number(visualizerMotionIntensity)}
-          reduceMotion={Number(visualizerReduceMotion) === 1}
-          showVectorField={Number(visualizerShowVectorField) === 1}
+          reduceMotion={visualizerReduceMotion}
+          showVectorField={visualizerShowVectorField}
         />
       </section>
     );
@@ -1070,54 +1109,65 @@ export function TrainingStudio() {
                 <h3 className="studio-panel-title">Run HUD</h3>
               </header>
               {selectedRun ? (
-                <div className="studio-keyvals">
-                  <div>
-                    <span>status</span>
-                    <span className="studio-run-status-pill studio-mono" data-status={hud?.status || 'unknown'}>
-                      {hud?.status || 'unknown'}
-                    </span>
-                  </div>
-                  <div>
-                    <span>backend</span>
-                    <span className="studio-mono">{hud?.backend || '—'}</span>
-                  </div>
-                  <div>
-                    <span>base_model</span>
-                    <span className="studio-mono studio-truncate" title={hud?.baseModel || ''}>
-                      {hud?.baseModel || '—'}
-                    </span>
-                  </div>
-                  <div>
-                    <span>active_path</span>
-                    <span className="studio-mono studio-truncate" title={hud?.activePath || ''}>
-                      {hud?.activePath || '—'}
-                    </span>
-                  </div>
-                  <div>
-                    <span>duration</span>
-                    <span className="studio-mono">{hud?.durationSec == null ? '—' : `${hud.durationSec.toFixed(1)}s`}</span>
-                  </div>
-                  <div>
-                    <span>step</span>
-                    <span className="studio-mono">{hud?.last?.step ?? '—'}</span>
-                  </div>
-                  <div>
-                    <span>epoch</span>
-                    <span className="studio-mono">{hud?.last?.epoch ?? '—'}</span>
-                  </div>
-                  <div>
-                    <span>progress</span>
-                    <span className="studio-mono">{hud?.progressLabel || '—'}</span>
-                  </div>
-                  {hud?.terminalMessage ? (
+                <>
+                  <div className="studio-keyvals">
                     <div>
-                      <span>{hud.status === 'cancelled' ? 'cancel_reason' : 'failure_reason'}</span>
-                      <span className="studio-mono studio-truncate" title={hud.terminalMessage}>
-                        {hud.terminalMessage}
+                      <span>status</span>
+                      <span className="studio-run-status-pill studio-mono" data-status={hud?.status || 'unknown'}>
+                        {hud?.status || 'unknown'}
                       </span>
                     </div>
-                  ) : null}
-                </div>
+                    <div>
+                      <span>backend</span>
+                      <span className="studio-mono">{hud?.backend || '—'}</span>
+                    </div>
+                    <div>
+                      <span>base_model</span>
+                      <span className="studio-mono studio-truncate" title={hud?.baseModel || ''}>
+                        {hud?.baseModel || '—'}
+                      </span>
+                    </div>
+                    <div>
+                      <span>active_path</span>
+                      <span className="studio-mono studio-truncate" title={hud?.activePath || ''}>
+                        {hud?.activePath || '—'}
+                      </span>
+                    </div>
+                    <div>
+                      <span>duration</span>
+                      <span className="studio-mono">{hud?.durationSec == null ? '—' : `${hud.durationSec.toFixed(1)}s`}</span>
+                    </div>
+                    <div>
+                      <span>step</span>
+                      <span className="studio-mono">{hud?.last?.step ?? '—'}</span>
+                    </div>
+                    <div>
+                      <span>epoch</span>
+                      <span className="studio-mono">{hud?.last?.epoch ?? '—'}</span>
+                    </div>
+                    <div>
+                      <span>progress</span>
+                      <span className="studio-mono">{hud?.progressLabel || '—'}</span>
+                    </div>
+                    {hud?.terminalMessage ? (
+                      <div>
+                        <span>{hud.status === 'cancelled' ? 'cancel_reason' : 'failure_reason'}</span>
+                        <span className="studio-mono studio-truncate" title={hud.terminalMessage}>
+                          {hud.terminalMessage}
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div>
+                    <LineageMeta
+                      bundleId={selectedRun.bundle_id}
+                      inputBundleId={selectedRun.input_bundle_id}
+                      lineageRef={selectedRun.lineage_ref}
+                      modelArtifactRef={selectedRun.model_artifact_ref}
+                      corpusId={activeCorpus}
+                    />
+                  </div>
+                </>
               ) : (
                 <p className="studio-empty">Select a run.</p>
               )}
@@ -1160,6 +1210,21 @@ export function TrainingStudio() {
                   </label>
                   <select value={ragweldBackend} onChange={(e) => setRagweldBackend(e.target.value)}>
                     <option value="mlx_qwen3">mlx_qwen3</option>
+                    <option value="unsloth">unsloth</option>
+                  </select>
+                </div>
+                <div className="input-group">
+                  <label>Workflow backend</label>
+                  <select value={workflowBackend} onChange={(e) => setWorkflowBackend(e.target.value as 'local' | 'flyte')}>
+                    <option value="local">local</option>
+                    <option value="flyte">flyte</option>
+                  </select>
+                </div>
+                <div className="input-group">
+                  <label>Tracking backend</label>
+                  <select value={trackingBackend} onChange={(e) => setTrackingBackend(e.target.value as 'local' | 'mlflow')}>
+                    <option value="local">local</option>
+                    <option value="mlflow">mlflow</option>
                   </select>
                 </div>
                 <div className="input-group">
@@ -1204,6 +1269,59 @@ export function TrainingStudio() {
                 </div>
               </div>
 
+              <details className="studio-details" open={workflowBackend === 'flyte' || trackingBackend === 'mlflow' || ragweldBackend === 'unsloth'}>
+                <summary>Flyte + MLflow + Unsloth target lane</summary>
+                <div className="studio-form-grid two">
+                  <div className="input-group">
+                    <label>Flyte admin base URL</label>
+                    <input type="text" value={flyteAdminBaseUrl} onChange={(e) => setFlyteAdminBaseUrl(e.target.value)} placeholder="http://localhost:30080" />
+                  </div>
+                  <div className="input-group">
+                    <label>Flyte console base URL</label>
+                    <input type="text" value={flyteConsoleBaseUrl} onChange={(e) => setFlyteConsoleBaseUrl(e.target.value)} placeholder="http://localhost:30080/console" />
+                  </div>
+                  <div className="input-group">
+                    <label>Flyte project</label>
+                    <input type="text" value={flyteProject} onChange={(e) => setFlyteProject(e.target.value)} />
+                  </div>
+                  <div className="input-group">
+                    <label>Flyte domain</label>
+                    <input type="text" value={flyteDomain} onChange={(e) => setFlyteDomain(e.target.value)} />
+                  </div>
+                  <div className="input-group">
+                    <label>Flyte launch plan</label>
+                    <input type="text" value={flyteLaunchplan} onChange={(e) => setFlyteLaunchplan(e.target.value)} placeholder="learning-agent-train" />
+                  </div>
+                  <div className="input-group">
+                    <label>Flyte callback base URL (this API as seen from Flyte task pods)</label>
+                    <input
+                      type="text"
+                      value={flyteCallbackBaseUrl}
+                      onChange={(e) => setFlyteCallbackBaseUrl(e.target.value)}
+                      placeholder="http://192.168.5.2:58012"
+                    />
+                  </div>
+                  <div className="input-group">
+                    <label>MLflow tracking URL</label>
+                    <input type="text" value={mlflowTrackingUrl} onChange={(e) => setMlflowTrackingUrl(e.target.value)} placeholder="http://localhost:5000" />
+                  </div>
+                  <div className="input-group">
+                    <label>MLflow experiment</label>
+                    <input type="text" value={mlflowExperimentName} onChange={(e) => setMlflowExperimentName(e.target.value)} />
+                  </div>
+                  <div className="input-group">
+                    <label>Unsloth image</label>
+                    <input type="text" value={unslothImage} onChange={(e) => setUnslothImage(e.target.value)} placeholder="ghcr.io/your-org/unsloth:tag" />
+                  </div>
+                </div>
+                <div className="studio-callout">
+                  workflow=flyte launches every run as a Flyte execution (launch plan above, registered with
+                  scripts/flyte_register_learning_agent.sh); the workflow task hands the run back to this API at the callback
+                  URL and Flyte owns status/cancel. tracking=mlflow records runs in MLflow. execution=unsloth needs a CUDA host;
+                  on this host training executes on the MLX backend.
+                </div>
+              </details>
+
               <details className="studio-details">
                 <summary>MLX LoRA + promotion (advanced)</summary>
                 <div className="studio-form-grid two">
@@ -1238,13 +1356,19 @@ export function TrainingStudio() {
                     <input type="number" min={1} max={20} value={telemetryIntervalSteps} onChange={(e) => setTelemetryIntervalSteps(parseInt(e.target.value || '2', 10))} />
                   </div>
                   <div className="input-group">
-                    <label>
-                      Promote if improves <TooltipIcon name="RAGWELD_AGENT_PROMOTE_IF_IMPROVES" />
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={promoteIfImproves}
+                        onChange={(e) => setPromoteIfImproves(e.target.checked)}
+                      />
+                      <span className="toggle-track" aria-hidden="true">
+                        <span className="toggle-thumb"></span>
+                      </span>
+                      <span className="toggle-label">
+                        Promote if improves <TooltipIcon name="RAGWELD_AGENT_PROMOTE_IF_IMPROVES" />
+                      </span>
                     </label>
-                    <select value={String(promoteIfImproves)} onChange={(e) => setPromoteIfImproves(parseInt(e.target.value, 10))}>
-                      <option value="1">Yes</option>
-                      <option value="0">No</option>
-                    </select>
                   </div>
                   <div className="input-group">
                     <label>
@@ -1331,13 +1455,19 @@ export function TrainingStudio() {
                     </select>
                   </div>
                   <div className="input-group">
-                    <label>
-                      Show setup row <TooltipIcon name="LEARNING_RERANKER_SHOW_SETUP_ROW" />
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={showSetupRow}
+                        onChange={(e) => setShowSetupRow(e.target.checked)}
+                      />
+                      <span className="toggle-track" aria-hidden="true">
+                        <span className="toggle-thumb"></span>
+                      </span>
+                      <span className="toggle-label">
+                        Show setup row <TooltipIcon name="LEARNING_RERANKER_SHOW_SETUP_ROW" />
+                      </span>
                     </label>
-                    <select value={String(showSetupRow)} onChange={(e) => setShowSetupRow(parseInt(e.target.value, 10))}>
-                      <option value="0">No</option>
-                      <option value="1">Yes</option>
-                    </select>
                   </div>
                   <div className="input-group">
                     <label>
@@ -1421,22 +1551,34 @@ export function TrainingStudio() {
                     <input type="number" min={0} max={2} step={0.05} value={visualizerMotionIntensity} onChange={(e) => setVisualizerMotionIntensity(parseFloat(e.target.value || '1'))} />
                   </div>
                   <div className="input-group">
-                    <label>
-                      Show vector field <TooltipIcon name="LEARNING_RERANKER_VISUALIZER_SHOW_VECTOR_FIELD" />
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={visualizerShowVectorField}
+                        onChange={(e) => setVisualizerShowVectorField(e.target.checked)}
+                      />
+                      <span className="toggle-track" aria-hidden="true">
+                        <span className="toggle-thumb"></span>
+                      </span>
+                      <span className="toggle-label">
+                        Show vector field <TooltipIcon name="LEARNING_RERANKER_VISUALIZER_SHOW_VECTOR_FIELD" />
+                      </span>
                     </label>
-                    <select value={String(visualizerShowVectorField)} onChange={(e) => setVisualizerShowVectorField(parseInt(e.target.value, 10))}>
-                      <option value="1">Yes</option>
-                      <option value="0">No</option>
-                    </select>
                   </div>
                   <div className="input-group">
-                    <label>
-                      Reduce motion <TooltipIcon name="LEARNING_RERANKER_VISUALIZER_REDUCE_MOTION" />
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={visualizerReduceMotion}
+                        onChange={(e) => setVisualizerReduceMotion(e.target.checked)}
+                      />
+                      <span className="toggle-track" aria-hidden="true">
+                        <span className="toggle-thumb"></span>
+                      </span>
+                      <span className="toggle-label">
+                        Reduce motion <TooltipIcon name="LEARNING_RERANKER_VISUALIZER_REDUCE_MOTION" />
+                      </span>
                     </label>
-                    <select value={String(visualizerReduceMotion)} onChange={(e) => setVisualizerReduceMotion(parseInt(e.target.value, 10))}>
-                      <option value="0">No</option>
-                      <option value="1">Yes</option>
-                    </select>
                   </div>
                 </div>
               </details>
@@ -1447,23 +1589,12 @@ export function TrainingStudio() {
             <section className="studio-panel studio-compact-panel" data-testid="studio-debug-prompt-panel">
               <header className="studio-panel-header">
                 <h3 className="studio-panel-title">Debug Prompt</h3>
-                <button className="small-button" onClick={onRunDebugPrompt} disabled={debugRunning || !debugPrompt.trim() || !activeCorpus}>
-                  {debugRunning ? 'Running…' : 'Run'}
-                </button>
               </header>
 
               <div className="studio-form-grid one">
-                <div className="input-group">
-                  <label>Prompt</label>
-                  <textarea value={debugPrompt} onChange={(e) => setDebugPrompt(e.target.value)} rows={4} placeholder="Ask the agent something…" />
+                <div className="studio-callout">
+                  Debug prompting is unavailable until a promoted training artifact is served by vLLM and registered as a LiteLLM alias.
                 </div>
-                <div className="studio-status-line studio-mono">
-                  model_override={String(`ragweld:${String(ragweldBaseModel || '').trim()}`)}
-                </div>
-                {debugError ? <div className="studio-callout studio-callout-err">{debugError}</div> : null}
-                <pre className="studio-pre studio-pre-full" data-testid="studio-debug-prompt-output">
-                  {debugOutput || '—'}
-                </pre>
               </div>
             </section>
           ) : null}
@@ -1473,10 +1604,6 @@ export function TrainingStudio() {
   }, [
     activeCorpus,
     cancelling,
-    debugError,
-    debugOutput,
-    debugPrompt,
-    debugRunning,
     defaultPreset,
     epochs,
     gradAccumSteps,
@@ -1499,7 +1626,6 @@ export function TrainingStudio() {
     maxLen,
     onCancel,
     onPromote,
-    onRunDebugPrompt,
     promoteEpsilon,
     promoteIfImproves,
     promoting,
@@ -1510,7 +1636,6 @@ export function TrainingStudio() {
     selectedRun,
     selectedRunId,
     setBottomTab,
-    setDebugPrompt,
     setDefaultPreset,
     setEpochs,
     setGradAccumSteps,
@@ -1711,8 +1836,10 @@ export function TrainingStudio() {
         <div>
           <h2 className="studio-title">Learning Agent Studio</h2>
           <p className="studio-subtitle">
-            Train MLX LoRA adapters for <span className="studio-mono">{String(ragweldBaseModel || '').trim() || 'ragweld'}</span> and promote
-            them to <span className="studio-mono">{String(ragweldModelPath || '').trim() || 'training.ragweld_agent_model_path'}</span>.
+            Train local adapters for <span className="studio-mono">{String(ragweldBaseModel || '').trim() || 'ragweld'}</span>, promote them to{' '}
+            <span className="studio-mono">{String(ragweldModelPath || '').trim() || 'training.ragweld_agent_model_path'}</span> (the
+            training-only baseline for later runs; never served by the chat gateway), and run them through the Flyte / MLflow /
+            Unsloth control plane. Only artifacts trained on the configured base can be promoted.
           </p>
         </div>
 
@@ -1758,8 +1885,8 @@ export function TrainingStudio() {
           <button className="small-button" onClick={() => applyLayoutPreset('balanced')}>
             Reset View
           </button>
-          <button className="small-button" onClick={() => setShowSetupRow(showSetupRow === 1 ? 0 : 1)}>
-            {showSetupRow === 1 ? 'Hide Setup' : 'Show Setup'}
+          <button className="small-button" onClick={() => setShowSetupRow(!showSetupRow)}>
+            {showSetupRow ? 'Hide Setup' : 'Show Setup'}
           </button>
           <button className="small-button" onClick={() => void popoutPane('studio-visualizer')}>
             Pop Out Viz
@@ -1782,7 +1909,7 @@ export function TrainingStudio() {
         <span className="studio-help-anchor">Shortcuts: Ctrl/Cmd+Shift+1/2/3 (viz/logs/inspector)</span>
       </div>
 
-      {showSetupRow === 1 ? (
+      {showSetupRow ? (
         <div className="studio-run-setup">
           <div className="studio-run-setup-item">
             <span className="studio-label">Corpus</span>
@@ -1791,6 +1918,14 @@ export function TrainingStudio() {
           <div className="studio-run-setup-item">
             <span className="studio-label">Backend</span>
             <span className="studio-value studio-mono">{String(ragweldBackend || '').trim() || '—'}</span>
+          </div>
+          <div className="studio-run-setup-item">
+            <span className="studio-label">Workflow</span>
+            <span className="studio-value studio-mono">{String(workflowBackend || '').trim() || '—'}</span>
+          </div>
+          <div className="studio-run-setup-item">
+            <span className="studio-label">Tracking</span>
+            <span className="studio-value studio-mono">{String(trackingBackend || '').trim() || '—'}</span>
           </div>
           <div className="studio-run-setup-item">
             <span className="studio-label">Base model</span>
@@ -1806,6 +1941,8 @@ export function TrainingStudio() {
           </div>
         </div>
       ) : null}
+
+      <ControlPlaneStatus status={controlPlaneStatus} loading={controlPlaneLoading} error={controlPlaneError} />
 
       <div className="studio-workspace" data-layout-engine={layoutEngine}>
         {layoutEngine === 'dockview' ? (
