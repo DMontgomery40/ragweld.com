@@ -1,18 +1,20 @@
 import { useState, useEffect, useCallback, useRef, type CSSProperties } from 'react';
 import { EmbeddingMismatchWarning } from '@/components/ui/EmbeddingMismatchWarning';
+import { showToast } from '@/utils/toast';
 import { LiveTerminal, type LiveTerminalHandle } from '@/components/LiveTerminal/LiveTerminal';
 import { IntentMatrixEditor } from '@/components/RAG/IntentMatrixEditor';
 import { SyntheticCallout } from '@/components/RAG/SyntheticCallout';
 import { ModelAssignments } from '@/components/RAG/ModelAssignments';
-import { ModelPicker } from '@/components/RAG/ModelPicker';
+import { ModelPicker as ChatModelPicker } from '@/components/Chat/ModelPicker';
 import { PromptLink } from '@/components/ui/PromptLink';
 import { ApiKeyStatus } from '@/components/ui/ApiKeyStatus';
 import { TooltipIcon } from '@/components/ui/TooltipIcon';
 import { createAlertError, createInlineError } from '@/utils/errorHelpers';
-import { useConfig, useConfigField } from '@/hooks';
+import { NumberField } from '@/components/ui/NumberField';
+import { useAPI, useConfig, useConfigField } from '@/hooks';
 import { tracesApi } from '@/api';
 import { useRepoStore } from '@/stores/useRepoStore';
-import type { TracesLatestResponse } from '@/types/generated';
+import type { ChatModelInfo, ChatModelsResponse, GraphStats, TracesLatestResponse } from '@/types/generated';
 
 type RetrievalCardId = 'search_paths' | 'fusion_scoring' | 'generation' | 'ops_tracing';
 type OpsTracingViewId = 'runtime_compatibility' | 'observability_integrations';
@@ -101,7 +103,10 @@ const SECTION_DESC_STYLE: CSSProperties = {
   marginBottom: 12,
 };
 
+const PUBLIC_BROWSER_LINK_HINT = 'Browser links use this; ingestion/tracking uses the local URL.';
+
 export function RetrievalSubtab() {
+  const { api } = useAPI();
   const [selectedCard, setSelectedCard] = useState<RetrievalCardId>('search_paths');
   const [opsTracingView, setOpsTracingView] = useState<OpsTracingViewId>('runtime_compatibility');
   const [hydrating, setHydrating] = useState(true);
@@ -113,26 +118,60 @@ export function RetrievalSubtab() {
 
   // --- Generation ---------------------------------------------------------
   const [genModel, setGenModel] = useConfigField<string>('generation.gen_model', '');
-  const [genModelOllama, setGenModelOllama] = useConfigField<string>('generation.gen_model_ollama', '');
   const [genTemperature, setGenTemperature] = useConfigField<number>('generation.gen_temperature', 0.0);
   const [enrichModel, setEnrichModel] = useConfigField<string>('generation.enrich_model', '');
-  const [enrichModelOllama, setEnrichModelOllama] = useConfigField<string>('generation.enrich_model_ollama', '');
-  const [ollamaUrl, setOllamaUrl] = useConfigField<string>('generation.ollama_url', 'http://127.0.0.1:11434/api');
-  const [openaiBaseUrl, setOpenaiBaseUrl] = useConfigField<string>('generation.openai_base_url', '');
   const [genModelHttp, setGenModelHttp] = useConfigField<string>('generation.gen_model_http', '');
   const [genModelMcp, setGenModelMcp] = useConfigField<string>('generation.gen_model_mcp', '');
   const [genModelCli, setGenModelCli] = useConfigField<string>('generation.gen_model_cli', '');
-  const [genBackend] = useConfigField<string>('generation.gen_backend', 'openai');
-  const [enrichBackend, setEnrichBackend] = useConfigField<string>('generation.enrich_backend', 'openai');
-  const [genMaxTokens, setGenMaxTokens] = useConfigField<number>('generation.gen_max_tokens', 2048);
+  const [genMaxTokens, setGenMaxTokens] = useConfigField<number>('generation.gen_max_tokens', 512);
   const [genTopP, setGenTopP] = useConfigField<number>('generation.gen_top_p', 1.0);
-  const [genTimeout, setGenTimeout] = useConfigField<number>('generation.gen_timeout', 60);
-  const [genRetryMax, setGenRetryMax] = useConfigField<number>('generation.gen_retry_max', 2);
-  const [enrichDisabled, setEnrichDisabled] = useConfigField<number>('generation.enrich_disabled', 0);
-  const [ollamaNumCtx, setOllamaNumCtx] = useConfigField<number>('generation.ollama_num_ctx', 8192);
-  const [ollamaRequestTimeout, setOllamaRequestTimeout] = useConfigField<number>('generation.ollama_request_timeout', 300);
-  const [ollamaStreamIdleTimeout, setOllamaStreamIdleTimeout] =
-    useConfigField<number>('generation.ollama_stream_idle_timeout', 60);
+  const [genTimeout, setGenTimeout] = useConfigField<number>('generation.gen_timeout', 600);
+  const [enrichDisabled, setEnrichDisabled] = useConfigField<boolean>('generation.enrich_disabled', false);
+  const [generationModels, setGenerationModels] = useState<ChatModelInfo[]>([]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const scope = String(activeRepo || '').trim();
+    const query = scope ? `?corpus_id=${encodeURIComponent(scope)}` : '';
+    fetch(api(`chat/models${query}`), { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(String(response.status));
+        return response.json();
+      })
+      .then((payload) => {
+        const rows = (payload as ChatModelsResponse).models;
+        setGenerationModels(Array.isArray(rows) ? rows : []);
+      })
+      .catch((cause) => {
+        if (cause instanceof DOMException && cause.name === 'AbortError') return;
+        setGenerationModels([]);
+      });
+    return () => controller.abort();
+  }, [activeRepo, api]);
+
+  useEffect(() => {
+    const corpus = String(activeRepo || '').trim();
+    if (!corpus) {
+      setGraphReadiness(null);
+      return;
+    }
+    // Through `api()` and an AbortController like every other request in this file, not a
+    // hand-rolled absolute fetch that sidesteps base-URL resolution (review F-06).
+    const controller = new AbortController();
+    fetch(api(`graph/${encodeURIComponent(corpus)}/stats`), { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(String(response.status));
+        return response.json();
+      })
+      .then((stats) => setGraphReadiness(stats as GraphStats))
+      .catch((cause) => {
+        if (cause instanceof DOMException && cause.name === 'AbortError') return;
+        // Readiness is advisory: if it cannot be read, the card says nothing rather than
+        // guessing that the graph is empty.
+        setGraphReadiness(null);
+      });
+    return () => controller.abort();
+  }, [activeRepo, api]);
 
   // --- Retrieval ----------------------------------------------------------
   const [rrfKDiv, setRrfKDiv] = useConfigField<number>('retrieval.rrf_k_div', 60);
@@ -146,13 +185,11 @@ export function RetrievalSubtab() {
   const [confTop1, setConfTop1] = useConfigField<number>('retrieval.conf_top1', 0.62);
   const [confAvg5, setConfAvg5] = useConfigField<number>('retrieval.conf_avg5', 0.55);
   const [confAny, setConfAny] = useConfigField<number>('retrieval.conf_any', 0.55);
-  const [evalMulti, setEvalMulti] = useConfigField<number>('retrieval.eval_multi', 1);
-  const [queryExpansionEnabled, setQueryExpansionEnabled] = useConfigField<number>('retrieval.query_expansion_enabled', 1);
+  const [evalMulti, setEvalMulti] = useConfigField<boolean>('retrieval.eval_multi', true);
+  const [queryExpansionEnabled, setQueryExpansionEnabled] = useConfigField<boolean>('retrieval.query_expansion_enabled', true);
   const [retrievalBm25Weight, setRetrievalBm25Weight] = useConfigField<number>('retrieval.bm25_weight', 0.3);
-  const [retrievalBm25K1, setRetrievalBm25K1] = useConfigField<number>('retrieval.bm25_k1', 1.2);
-  const [retrievalBm25B, setRetrievalBm25B] = useConfigField<number>('retrieval.bm25_b', 0.4);
   const [retrievalVectorWeight, setRetrievalVectorWeight] = useConfigField<number>('retrieval.vector_weight', 0.7);
-  const [cardSearchEnabled, setCardSearchEnabled] = useConfigField<number>('retrieval.chunk_summary_search_enabled', 1);
+  const [cardSearchEnabled, setCardSearchEnabled] = useConfigField<boolean>('retrieval.chunk_summary_search_enabled', true);
   const [maxChunksPerFile, setMaxChunksPerFile] = useConfigField<number>('retrieval.max_chunks_per_file', 3);
   const [dedupBy, setDedupBy] = useConfigField<'chunk_id' | 'file_path'>('retrieval.dedup_by', 'chunk_id');
   const [neighborWindow, setNeighborWindow] = useConfigField<number>('retrieval.neighbor_window', 1);
@@ -162,14 +199,12 @@ export function RetrievalSubtab() {
   const [enableMmr, setEnableMmr] = useConfigField<boolean>('retrieval.enable_mmr', false);
   const [mmrLambda, setMmrLambda] = useConfigField<number>('retrieval.mmr_lambda', 0.7);
   const [multiQueryM, setMultiQueryM] = useConfigField<number>('retrieval.multi_query_m', 4);
-  const [useSemanticSynonyms, setUseSemanticSynonyms] = useConfigField<number>('retrieval.use_semantic_synonyms', 1);
+  const [useSemanticSynonyms, setUseSemanticSynonyms] = useConfigField<boolean>('retrieval.use_semantic_synonyms', true);
   const [synonymsPath, setSynonymsPath] = useConfigField<string>('retrieval.tribrid_synonyms_path', '');
   const [topkDense, setTopkDense] = useConfigField<number>('retrieval.topk_dense', 75);
   const [topkSparse, setTopkSparse] = useConfigField<number>('retrieval.topk_sparse', 75);
   const [retrievalHydrationMode, setRetrievalHydrationMode] = useConfigField<string>('retrieval.hydration_mode', 'lazy');
   const [retrievalHydrationMaxChars, setRetrievalHydrationMaxChars] = useConfigField<number>('retrieval.hydration_max_chars', 2000);
-  void retrievalBm25K1;
-  void retrievalBm25B;
 
   // --- Vector search ------------------------------------------------------
   const [vectorSearchEnabled, setVectorSearchEnabled] = useConfigField<boolean>('vector_search.enabled', true);
@@ -177,25 +212,17 @@ export function RetrievalSubtab() {
   const [vectorSimilarityThreshold, setVectorSimilarityThreshold] = useConfigField<number>('vector_search.similarity_threshold', 0.0);
 
   // --- Sparse search ------------------------------------------------------
-  const [sparseSearchEngine, setSparseSearchEngine] = useConfigField<'postgres_fts' | 'pg_search_bm25'>(
-    'sparse_search.engine',
-    'postgres_fts',
-  );
-  const [sparseSearchQueryMode, setSparseSearchQueryMode] = useConfigField<'plain' | 'phrase' | 'boolean'>(
-    'sparse_search.query_mode',
-    'plain',
-  );
-  const [sparseSearchHighlight, setSparseSearchHighlight] = useConfigField<boolean>('sparse_search.highlight', false);
-  const [sparseRelaxOnEmpty, setSparseRelaxOnEmpty] = useConfigField<boolean>('sparse_search.relax_on_empty', true);
-  const [sparseRelaxMaxTerms, setSparseRelaxMaxTerms] = useConfigField<number>('sparse_search.relax_max_terms', 8);
-  const [sparseFilePathFallback, setSparseFilePathFallback] = useConfigField<boolean>('sparse_search.file_path_fallback', true);
-  const [sparseFilePathMaxTerms, setSparseFilePathMaxTerms] = useConfigField<number>('sparse_search.file_path_max_terms', 6);
   const [sparseSearchEnabled, setSparseSearchEnabled] = useConfigField<boolean>('sparse_search.enabled', true);
   const [sparseSearchTopK, setSparseSearchTopK] = useConfigField<number>('sparse_search.top_k', 50);
   const [sparseBm25K1, setSparseBm25K1] = useConfigField<number>('sparse_search.bm25_k1', 1.2);
   const [sparseBm25B, setSparseBm25B] = useConfigField<number>('sparse_search.bm25_b', 0.4);
 
   // --- Graph search -------------------------------------------------------
+  // M-66: the graph leg's settings say nothing about whether this corpus HAS a graph.
+  // Graph reported 0 entities / 0 relationships for nasa-apollo-11 while this card showed
+  // graph search on, top-k 30, weight 0.3 and entity expansion enabled, with nothing to
+  // suggest the entity half could not fire.
+  const [graphReadiness, setGraphReadiness] = useState<GraphStats | null>(null);
   const [graphMode, setGraphMode] = useConfigField<'chunk' | 'entity'>('graph_search.mode', 'chunk');
   const [graphSearchEnabled, setGraphSearchEnabled] = useConfigField<boolean>('graph_search.enabled', true);
   const [chunkNeighborWindow, setChunkNeighborWindow] = useConfigField<number>('graph_search.chunk_neighbor_window', 1);
@@ -238,33 +265,37 @@ export function RetrievalSubtab() {
   void setLayerIntentMatrix;
 
   // --- Tracing ------------------------------------------------------------
-  const [tracingEnabled, setTracingEnabled] = useConfigField<number>('tracing.tracing_enabled', 1);
+  const [tracingEnabled, setTracingEnabled] = useConfigField<boolean>('tracing.tracing_enabled', true);
   const [traceSamplingRate, setTraceSamplingRate] = useConfigField<number>('tracing.trace_sampling_rate', 1.0);
-  const [prometheusPort, setPrometheusPort] = useConfigField<number>('tracing.prometheus_port', 9090);
-  const [metricsEnabled, setMetricsEnabled] = useConfigField<number>('tracing.metrics_enabled', 1);
-  const [alertIncludeResolved, setAlertIncludeResolved] = useConfigField<number>('tracing.alert_include_resolved', 1);
+  const [metricsEnabled, setMetricsEnabled] = useConfigField<boolean>('tracing.metrics_enabled', true);
+  const [alertIncludeResolved, setAlertIncludeResolved] = useConfigField<boolean>('tracing.alert_include_resolved', true);
   const [alertWebhookTimeout, setAlertWebhookTimeout] = useConfigField<number>('tracing.alert_webhook_timeout', 5);
   const [logLevel, setLogLevel] = useConfigField<string>('tracing.log_level', 'INFO');
-  const [tracingMode, setTracingMode] = useConfigField<string>('tracing.tracing_mode', 'langsmith');
-  const [traceAutoLs, setTraceAutoLs] = useConfigField<number>('tracing.trace_auto_ls', 1);
+  const [tracingMode, setTracingMode] = useConfigField<string>('tracing.tracing_mode', 'local');
   const [traceRetention, setTraceRetention] = useConfigField<number>('tracing.trace_retention', 50);
   const [tribridLogPath, setTribridLogPath] = useConfigField<string>('tracing.tribrid_log_path', 'data/logs/queries.jsonl');
   const [alertNotifySeverities, setAlertNotifySeverities] = useConfigField<string>('tracing.alert_notify_severities', 'critical,warning');
-  const [langchainEndpoint, setLangchainEndpoint] = useConfigField<string>(
-    'tracing.langchain_endpoint',
-    'https://api.smith.langchain.com',
+  const [otelExportEnabled, setOtelExportEnabled] = useConfigField<boolean>('tracing.otel_export_enabled', true);
+  const [otlpEndpoint, setOtlpEndpoint] = useConfigField<string>('tracing.otlp_endpoint', '');
+  const [otlpHeaders, setOtlpHeaders] = useConfigField<string>('tracing.otlp_headers', '');
+  const [otelServiceName, setOtelServiceName] = useConfigField<string>('tracing.otel_service_name', 'ragweld-api');
+  const [langfuseEnabled, setLangfuseEnabled] = useConfigField<boolean>('tracing.langfuse_enabled', false);
+  const [langfuseBaseUrl, setLangfuseBaseUrl] = useConfigField<string>('tracing.langfuse_base_url', '');
+  const [langfusePublicBaseUrl, setLangfusePublicBaseUrl] = useConfigField<string>(
+    'tracing.langfuse_public_base_url',
+    'http://127.0.0.1:53000',
   );
-  const [langchainProject, setLangchainProject] = useConfigField<string>('tracing.langchain_project', 'tribrid');
-  const [langchainTracingV2, setLangchainTracingV2] = useConfigField<number>('tracing.langchain_tracing_v2', 0);
-  const [langtraceApiHost, setLangtraceApiHost] = useConfigField<string>('tracing.langtrace_api_host', '');
-  const [langtraceProjectId, setLangtraceProjectId] = useConfigField<string>('tracing.langtrace_project_id', '');
+  const [langfuseProject, setLangfuseProject] = useConfigField<string>('tracing.langfuse_project', 'ragweld');
+  const [tempoBaseUrl, setTempoBaseUrl] = useConfigField<string>('tracing.tempo_base_url', '');
+  const [alloyBaseUrl, setAlloyBaseUrl] = useConfigField<string>('tracing.alloy_base_url', '');
+  const [costTrackingEnabled, setCostTrackingEnabled] = useConfigField<boolean>('tracing.cost_tracking_enabled', true);
 
   // --- Hydration ----------------------------------------------------------
   const [hydrationMode, setHydrationMode] = useConfigField<string>('hydration.hydration_mode', 'lazy');
   const [hydrationMaxChars, setHydrationMaxChars] = useConfigField<number>('hydration.hydration_max_chars', 2000);
 
   // --- Semantic cache -----------------------------------------------------
-  const [semanticCacheEnabled, setSemanticCacheEnabled] = useConfigField<number>('semantic_cache.enabled', 0);
+  const [semanticCacheEnabled, setSemanticCacheEnabled] = useConfigField<boolean>('semantic_cache.enabled', false);
   const [semanticCacheMode, setSemanticCacheMode] =
     useConfigField<'read_write' | 'read_only' | 'write_only'>('semantic_cache.mode', 'read_write');
   const [semanticCacheMaxEntries, setSemanticCacheMaxEntries] = useConfigField<number>('semantic_cache.max_entries', 5000);
@@ -282,7 +313,7 @@ export function RetrievalSubtab() {
   const [semanticCacheChatHistoryWindow, setSemanticCacheChatHistoryWindow] =
     useConfigField<number>('semantic_cache.chat_history_window', 6);
   const [semanticCacheBypassIfImages, setSemanticCacheBypassIfImages] =
-    useConfigField<number>('semantic_cache.bypass_if_images', 1);
+    useConfigField<boolean>('semantic_cache.bypass_if_images', true);
   const [semanticCacheMaxTemperatureForWrite, setSemanticCacheMaxTemperatureForWrite] =
     useConfigField<number>('semantic_cache.max_temperature_for_write', 0.5);
 
@@ -293,6 +324,7 @@ export function RetrievalSubtab() {
     reload,
     clearError,
   } = useConfig();
+  const productionModelRoutingLocked = String(config?.ui?.runtime_mode || '').trim().toLowerCase() === 'production';
 
 
   useEffect(() => {
@@ -326,7 +358,7 @@ export function RetrievalSubtab() {
       await reload();
     } catch (error) {
       console.error('Failed to reload configuration:', error);
-      alert(error instanceof Error ? error.message : 'Failed to reload configuration');
+      showToast(error instanceof Error ? error.message : 'Failed to reload configuration', 'error');
       setHydrating(false);
     }
   }, [reload, clearError]);
@@ -336,7 +368,7 @@ export function RetrievalSubtab() {
     setTraceStatus(null);
     try {
       const data: TracesLatestResponse = await tracesApi.getLatest();
-      const formatted = formatTracePayload(data, 'pgvector').split('\n');
+      const formatted = formatTracePayload(data, 'qdrant').split('\n');
       traceTerminalRef.current?.setTitle(`Routing Trace • ${new Date().toLocaleTimeString()}`);
       traceTerminalRef.current?.setContent(formatted);
       setTraceStatus({
@@ -356,22 +388,6 @@ export function RetrievalSubtab() {
       setTraceLoading(false);
     }
   }, []);
-
-  const setUnifiedBm25K1 = useCallback(
-    (value: number) => {
-      setSparseBm25K1(value);
-      setRetrievalBm25K1(value);
-    },
-    [setSparseBm25K1, setRetrievalBm25K1],
-  );
-
-  const setUnifiedBm25B = useCallback(
-    (value: number) => {
-      setSparseBm25B(value);
-      setRetrievalBm25B(value);
-    },
-    [setSparseBm25B, setRetrievalBm25B],
-  );
 
   const setUnifiedHydrationMode = useCallback(
     (value: string) => {
@@ -459,16 +475,24 @@ export function RetrievalSubtab() {
             </select>
           </div>
 
-          <div className="input-group">
-            <ModelPicker
-              componentType="GEN"
-              provider={genBackend}
+          <div className="input-group" data-testid="retrieval-generation-alias">
+            <label>{productionModelRoutingLocked ? 'Non-chat generation alias' : 'Generation Alias'}</label>
+            <ChatModelPicker
               value={genModel}
               onChange={setGenModel}
-              label="Generation Model"
-              tooltipKey="GEN_MODEL"
-              allowCustom
+              models={generationModels}
+              valueMode="id"
+              disabled={productionModelRoutingLocked}
+              ariaDescribedBy={productionModelRoutingLocked ? 'retrieval-generation-alias-lock-note' : undefined}
             />
+            {productionModelRoutingLocked ? (
+              <div
+                id="retrieval-generation-alias-lock-note"
+                style={{ color: 'var(--fg-muted)', fontSize: 11, marginTop: 5, lineHeight: 1.4 }}
+              >
+                Chat uses its own model picker. This non-chat answer pipeline is locked by the production deployment.
+              </div>
+            ) : null}
           </div>
 
           <div className="input-group">
@@ -476,12 +500,11 @@ export function RetrievalSubtab() {
               Final K
               <TooltipIcon name="FINAL_K" />
             </label>
-            <input
-              type="number"
+            <NumberField
               min={1}
-              max={200}
+              max={100}
               value={finalK}
-              onChange={(e) => setFinalK(snapNumber(e.target.value, 10))}
+              onCommit={setFinalK}
             />
           </div>
 
@@ -490,12 +513,11 @@ export function RetrievalSubtab() {
               Query Rewrites
               <TooltipIcon name="MAX_QUERY_REWRITES" />
             </label>
-            <input
-              type="number"
+            <NumberField
               min={1}
               max={10}
               value={multiQueryRewrites}
-              onChange={(e) => setMultiQueryRewrites(snapNumber(e.target.value, 2))}
+              onCommit={setMultiQueryRewrites}
             />
           </div>
         </div>
@@ -565,7 +587,7 @@ export function RetrievalSubtab() {
               style={{
                 fontSize: 13,
                 fontWeight: 700,
-                color: selectedCard === card.id ? 'var(--accent)' : 'var(--fg)',
+                color: selectedCard === card.id ? 'var(--accent-text)' : 'var(--fg)',
                 marginBottom: 6,
               }}
             >
@@ -594,13 +616,19 @@ export function RetrievalSubtab() {
               </div>
               <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16 }}>
                 <div className="input-group">
-                  <label>
-                    Semantic Synonyms <TooltipIcon name="USE_SEMANTIC_SYNONYMS" />
+                  <label className="toggle">
+                    <input
+                      type="checkbox"
+                      checked={useSemanticSynonyms}
+                      onChange={(e) => setUseSemanticSynonyms(e.target.checked)}
+                    />
+                    <span className="toggle-track" aria-hidden="true">
+                      <span className="toggle-thumb"></span>
+                    </span>
+                    <span className="toggle-label">
+                      Semantic Synonyms <TooltipIcon name="USE_SEMANTIC_SYNONYMS" />
+                    </span>
                   </label>
-                  <select value={useSemanticSynonyms} onChange={(e) => setUseSemanticSynonyms(parseInt(e.target.value, 10))}>
-                    <option value={1}>On</option>
-                    <option value={0}>Off</option>
-                  </select>
                 </div>
                 <div className="input-group">
                   <label>
@@ -635,12 +663,11 @@ export function RetrievalSubtab() {
                     <label>
                       Vector Top-K <TooltipIcon name="VECTOR_SEARCH_TOP_K" />
                     </label>
-                    <input
-                      type="number"
-                      min={1}
+                    <NumberField
+                      min={10}
                       max={200}
                       value={vectorSearchTopK}
-                      onChange={(e) => setVectorSearchTopK(snapNumber(e.target.value, 50))}
+                      onCommit={setVectorSearchTopK}
                       disabled={!vectorSearchEnabled}
                     />
                   </div>
@@ -648,13 +675,12 @@ export function RetrievalSubtab() {
                     <label>
                       Vector Similarity Threshold <TooltipIcon name="VECTOR_SIMILARITY_THRESHOLD" />
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       min={0}
                       max={1}
                       step={0.01}
                       value={vectorSimilarityThreshold}
-                      onChange={(e) => setVectorSimilarityThreshold(snapNumber(e.target.value, 0.0))}
+                      onCommit={setVectorSimilarityThreshold}
                       disabled={!vectorSearchEnabled}
                     />
                   </div>
@@ -666,54 +692,24 @@ export function RetrievalSubtab() {
                     <label>
                       Sparse Top-K <TooltipIcon name="SPARSE_SEARCH_TOP_K" />
                     </label>
-                    <input
-                      type="number"
-                      min={1}
+                    <NumberField
+                      min={10}
                       max={200}
                       value={sparseSearchTopK}
-                      onChange={(e) => setSparseSearchTopK(snapNumber(e.target.value, 50))}
+                      onCommit={setSparseSearchTopK}
                       disabled={!sparseSearchEnabled}
                     />
                   </div>
                   <div className="input-group">
                     <label>
-                      Sparse Engine <TooltipIcon name="SPARSE_SEARCH_ENGINE" />
-                    </label>
-                    <select
-                      data-testid="sparse-engine"
-                      value={sparseSearchEngine}
-                      onChange={(e) => setSparseSearchEngine(e.target.value as any)}
-                      disabled={!sparseSearchEnabled}
-                    >
-                      <option value="postgres_fts">postgres_fts</option>
-                      <option value="pg_search_bm25">pg_search_bm25</option>
-                    </select>
-                  </div>
-                  <div className="input-group">
-                    <label>
-                      Sparse Query Mode <TooltipIcon name="SPARSE_SEARCH_QUERY_MODE" />
-                    </label>
-                    <select
-                      value={sparseSearchQueryMode}
-                      onChange={(e) => setSparseSearchQueryMode(e.target.value as any)}
-                      disabled={!sparseSearchEnabled}
-                    >
-                      <option value="plain">plain</option>
-                      <option value="phrase">phrase</option>
-                      <option value="boolean">boolean</option>
-                    </select>
-                  </div>
-                  <div className="input-group">
-                    <label>
                       BM25 k1 <TooltipIcon name="BM25_K1" />
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       min={0.5}
                       max={3}
                       step={0.1}
                       value={sparseBm25K1}
-                      onChange={(e) => setUnifiedBm25K1(snapNumber(e.target.value, 1.2))}
+                      onCommit={setSparseBm25K1}
                       disabled={!sparseSearchEnabled}
                     />
                   </div>
@@ -721,93 +717,64 @@ export function RetrievalSubtab() {
                     <label>
                       BM25 b <TooltipIcon name="BM25_B" />
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       min={0}
                       max={1}
                       step={0.05}
                       value={sparseBm25B}
-                      onChange={(e) => setUnifiedBm25B(snapNumber(e.target.value, 0.4))}
+                      onCommit={setSparseBm25B}
                       disabled={!sparseSearchEnabled}
-                    />
-                  </div>
-                  <div className="input-group">
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={sparseSearchHighlight}
-                        onChange={(e) => setSparseSearchHighlight(e.target.checked)}
-                        disabled={!sparseSearchEnabled}
-                      />{' '}
-                      Highlight <TooltipIcon name="SPARSE_SEARCH_HIGHLIGHT" />
-                    </label>
-                  </div>
-                  <div className="input-group">
-                    <label>
-                      Relax on Empty <TooltipIcon name="SPARSE_SEARCH_RELAX_ON_EMPTY" />
-                    </label>
-                    <select
-                      value={sparseRelaxOnEmpty ? '1' : '0'}
-                      onChange={(e) => setSparseRelaxOnEmpty(e.target.value === '1')}
-                      disabled={!sparseSearchEnabled}
-                    >
-                      <option value="1">Enabled</option>
-                      <option value="0">Disabled</option>
-                    </select>
-                  </div>
-                  <div className="input-group">
-                    <label>
-                      Relax Max Terms <TooltipIcon name="SPARSE_SEARCH_RELAX_MAX_TERMS" />
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={32}
-                      value={sparseRelaxMaxTerms}
-                      onChange={(e) => setSparseRelaxMaxTerms(snapNumber(e.target.value, 8))}
-                      disabled={!sparseSearchEnabled || !sparseRelaxOnEmpty}
-                    />
-                  </div>
-                  <div className="input-group">
-                    <label>
-                      File Path Fallback <TooltipIcon name="SPARSE_SEARCH_FILE_PATH_FALLBACK" />
-                    </label>
-                    <select
-                      value={sparseFilePathFallback ? '1' : '0'}
-                      onChange={(e) => setSparseFilePathFallback(e.target.value === '1')}
-                      disabled={!sparseSearchEnabled}
-                    >
-                      <option value="1">Enabled</option>
-                      <option value="0">Disabled</option>
-                    </select>
-                  </div>
-                  <div className="input-group">
-                    <label>
-                      File Path Max Terms <TooltipIcon name="SPARSE_SEARCH_FILE_PATH_MAX_TERMS" />
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={32}
-                      value={sparseFilePathMaxTerms}
-                      onChange={(e) => setSparseFilePathMaxTerms(snapNumber(e.target.value, 6))}
-                      disabled={!sparseSearchEnabled || !sparseFilePathFallback}
                     />
                   </div>
                 </div>
 
                 <div style={INNER_PANEL_STYLE}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--fg)', marginBottom: 10 }}>Graph Leg</div>
+                  {graphReadiness ? (
+                    <div
+                      style={{
+                        marginBottom: 10,
+                        padding: '9px 11px',
+                        borderRadius: 8,
+                        border: '1px solid var(--line)',
+                        background:
+                          (graphReadiness.total_entities ?? 0) === 0
+                            ? 'rgba(var(--warn-rgb), 0.12)'
+                            : 'rgba(var(--accent-rgb), 0.07)',
+                        fontSize: 11.5,
+                        lineHeight: 1.5,
+                        color: 'var(--fg)',
+                      }}
+                      data-testid="retrieval-graph-readiness"
+                    >
+                      {(graphReadiness.total_entities ?? 0) === 0 ? (
+                        <>
+                          <strong>This corpus has no entity graph.</strong> Entity mode and entity expansion cannot
+                          contribute for it; only chunk mode can, over{' '}
+                          {(graphReadiness.total_chunks ?? 0).toLocaleString()} chunk nodes. Enable Semantic KG or
+                          code-entity indexing in RAG &gt; Indexing and re-index to populate it.
+                        </>
+                      ) : (
+                        <>
+                          Graph ready: {(graphReadiness.total_entities ?? 0).toLocaleString()} entities,{' '}
+                          {(graphReadiness.total_relationships ?? 0).toLocaleString()} relationships,{' '}
+                          {(graphReadiness.total_communities ?? 0).toLocaleString()} communities.
+                          {(graphReadiness.total_relationships ?? 0) === 0
+                            ? ' With no relationships, entity expansion has nothing to walk.'
+                            : ''}
+                        </>
+                      )}
+                    </div>
+                  ) : null}
                   <div className="input-group">
                     <label>
                       Graph Top-K <TooltipIcon name="GRAPH_SEARCH_TOP_K" />
                     </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={200}
+                    <NumberField
+                      min={5}
+                      max={100}
                       value={graphSearchTopK}
-                      onChange={(e) => setGraphSearchTopK(snapNumber(e.target.value, 30))}
+                      onCommit={setGraphSearchTopK}
                       disabled={!graphSearchEnabled}
                     />
                   </div>
@@ -829,12 +796,11 @@ export function RetrievalSubtab() {
                     <label>
                       Graph Max Hops <TooltipIcon name="GRAPH_MAX_HOPS" />
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       min={1}
                       max={5}
                       value={graphMaxHops}
-                      onChange={(e) => setGraphMaxHops(snapNumber(e.target.value, 2))}
+                      onCommit={setGraphMaxHops}
                       disabled={!graphSearchEnabled}
                     />
                   </div>
@@ -858,12 +824,11 @@ export function RetrievalSubtab() {
                         <label>
                           Chunk Neighbor Window <TooltipIcon name="GRAPH_CHUNK_NEIGHBOR_WINDOW" />
                         </label>
-                        <input
-                          type="number"
+                        <NumberField
                           min={0}
                           max={10}
                           value={chunkNeighborWindow}
-                          onChange={(e) => setChunkNeighborWindow(snapNumber(e.target.value, 1))}
+                          onCommit={setChunkNeighborWindow}
                           disabled={!graphSearchEnabled}
                         />
                       </div>
@@ -871,12 +836,11 @@ export function RetrievalSubtab() {
                         <label>
                           Seed Overfetch Multiplier <TooltipIcon name="GRAPH_CHUNK_SEED_OVERFETCH" />
                         </label>
-                        <input
-                          type="number"
+                        <NumberField
                           min={1}
                           max={50}
                           value={chunkSeedOverfetchMultiplier}
-                          onChange={(e) => setChunkSeedOverfetchMultiplier(snapNumber(e.target.value, 10))}
+                          onCommit={setChunkSeedOverfetchMultiplier}
                           disabled={!graphSearchEnabled}
                         />
                       </div>
@@ -895,13 +859,12 @@ export function RetrievalSubtab() {
                         <label>
                           Entity Expansion Weight <TooltipIcon name="GRAPH_CHUNK_ENTITY_EXPANSION_WEIGHT" />
                         </label>
-                        <input
-                          type="number"
+                        <NumberField
                           min={0}
                           max={1}
                           step={0.05}
                           value={chunkEntityExpansionWeight}
-                          onChange={(e) => setChunkEntityExpansionWeight(snapNumber(e.target.value, 0.8))}
+                          onCommit={setChunkEntityExpansionWeight}
                           disabled={!graphSearchEnabled || !chunkEntityExpansionEnabled}
                         />
                       </div>
@@ -922,13 +885,12 @@ export function RetrievalSubtab() {
                   <label>
                     Max Chunks per File <TooltipIcon name="MAX_CHUNKS_PER_FILE" />
                   </label>
-                  <input
+                  <NumberField
                     data-testid="max-chunks-per-file"
-                    type="number"
                     min={1}
                     max={50}
                     value={maxChunksPerFile}
-                    onChange={(e) => setMaxChunksPerFile(snapNumber(e.target.value, 3))}
+                    onCommit={setMaxChunksPerFile}
                   />
                 </div>
                 <div className="input-group">
@@ -944,12 +906,11 @@ export function RetrievalSubtab() {
                   <label>
                     Neighbor Window <TooltipIcon name="NEIGHBOR_WINDOW" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={0}
                     max={10}
                     value={neighborWindow}
-                    onChange={(e) => setNeighborWindow(snapNumber(e.target.value, 1))}
+                    onCommit={setNeighborWindow}
                     disabled={dedupBy === 'file_path'}
                   />
                 </div>
@@ -966,13 +927,12 @@ export function RetrievalSubtab() {
                   <label>
                     MMR Lambda <TooltipIcon name="MMR_LAMBDA" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={0}
                     max={1}
                     step={0.05}
                     value={mmrLambda}
-                    onChange={(e) => setMmrLambda(snapNumber(e.target.value, 0.7))}
+                    onCommit={setMmrLambda}
                     disabled={!enableMmr}
                   />
                 </div>
@@ -984,39 +944,36 @@ export function RetrievalSubtab() {
                   <label>
                     Min Score (vector) <TooltipIcon name="MIN_SCORE_VECTOR" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={0}
                     max={1}
                     step={0.01}
                     value={minScoreVector}
-                    onChange={(e) => setMinScoreVector(snapNumber(e.target.value, 0.0))}
+                    onCommit={setMinScoreVector}
                   />
                 </div>
                 <div className="input-group">
                   <label>
                     Min Score (sparse) <TooltipIcon name="MIN_SCORE_SPARSE" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={0}
                     max={10}
                     step={0.01}
                     value={minScoreSparse}
-                    onChange={(e) => setMinScoreSparse(snapNumber(e.target.value, 0.0))}
+                    onCommit={setMinScoreSparse}
                   />
                 </div>
                 <div className="input-group">
                   <label>
                     Min Score (graph) <TooltipIcon name="MIN_SCORE_GRAPH" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={0}
                     max={10}
                     step={0.01}
                     value={minScoreGraph}
-                    onChange={(e) => setMinScoreGraph(snapNumber(e.target.value, 0.0))}
+                    onCommit={setMinScoreGraph}
                   />
                 </div>
               </div>
@@ -1068,12 +1025,11 @@ export function RetrievalSubtab() {
                   <label>
                     RRF K <TooltipIcon name="FUSION_RRF_K" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={1}
                     max={200}
                     value={fusionRrfK}
-                    onChange={(e) => setFusionRrfK(snapNumber(e.target.value, 60))}
+                    onCommit={setFusionRrfK}
                     disabled={fusionMethod !== 'rrf'}
                   />
                 </div>
@@ -1081,13 +1037,12 @@ export function RetrievalSubtab() {
                   <label>
                     Vector Weight <TooltipIcon name="FUSION_VECTOR_WEIGHT" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={0}
                     max={1}
                     step={0.05}
                     value={fusionVectorWeight}
-                    onChange={(e) => setFusionVectorWeight(snapNumber(e.target.value, 0.4))}
+                    onCommit={setFusionVectorWeight}
                     disabled={fusionMethod !== 'weighted'}
                   />
                 </div>
@@ -1095,13 +1050,12 @@ export function RetrievalSubtab() {
                   <label>
                     Sparse Weight <TooltipIcon name="FUSION_SPARSE_WEIGHT" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={0}
                     max={1}
                     step={0.05}
                     value={fusionSparseWeight}
-                    onChange={(e) => setFusionSparseWeight(snapNumber(e.target.value, 0.3))}
+                    onCommit={setFusionSparseWeight}
                     disabled={fusionMethod !== 'weighted'}
                   />
                 </div>
@@ -1109,13 +1063,12 @@ export function RetrievalSubtab() {
                   <label>
                     Graph Weight <TooltipIcon name="FUSION_GRAPH_WEIGHT" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={0}
                     max={1}
                     step={0.05}
                     value={fusionGraphWeight}
-                    onChange={(e) => setFusionGraphWeight(snapNumber(e.target.value, 0.3))}
+                    onCommit={setFusionGraphWeight}
                     disabled={fusionMethod !== 'weighted'}
                   />
                 </div>
@@ -1133,39 +1086,36 @@ export function RetrievalSubtab() {
                   <label>
                     Chunk Summary Bonus <TooltipIcon name="CHUNK_SUMMARY_BONUS" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={0}
                     max={1}
                     step={0.01}
                     value={cardBonus}
-                    onChange={(e) => setCardBonus(snapNumber(e.target.value, 0.08))}
+                    onCommit={setCardBonus}
                   />
                 </div>
                 <div className="input-group">
                   <label>
                     Filename Boost (Exact) <TooltipIcon name="FILENAME_BOOST_EXACT" />
                   </label>
-                  <input
-                    type="number"
-                    min={0}
+                  <NumberField
+                    min={1}
                     max={5}
                     step={0.1}
                     value={filenameBoostExact}
-                    onChange={(e) => setFilenameBoostExact(snapNumber(e.target.value, 1.5))}
+                    onCommit={setFilenameBoostExact}
                   />
                 </div>
                 <div className="input-group">
                   <label>
                     Filename Boost (Partial) <TooltipIcon name="FILENAME_BOOST_PARTIAL" />
                   </label>
-                  <input
-                    type="number"
-                    min={0}
-                    max={5}
+                  <NumberField
+                    min={1}
+                    max={3}
                     step={0.1}
                     value={filenameBoostPartial}
-                    onChange={(e) => setFilenameBoostPartial(snapNumber(e.target.value, 1.2))}
+                    onCommit={setFilenameBoostPartial}
                   />
                 </div>
               </div>
@@ -1213,65 +1163,60 @@ export function RetrievalSubtab() {
                   <label>
                     GUI <TooltipIcon name="LAYER_BONUS_GUI" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={0}
                     max={0.5}
                     step={0.01}
                     value={layerBonusGui}
-                    onChange={(e) => setLayerBonusGui(snapNumber(e.target.value, 0.15))}
+                    onCommit={setLayerBonusGui}
                   />
                 </div>
                 <div className="input-group">
                   <label>
                     Retrieval <TooltipIcon name="LAYER_BONUS_RETRIEVAL" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={0}
                     max={0.5}
                     step={0.01}
                     value={layerBonusRetrieval}
-                    onChange={(e) => setLayerBonusRetrieval(snapNumber(e.target.value, 0.15))}
+                    onCommit={setLayerBonusRetrieval}
                   />
                 </div>
                 <div className="input-group">
                   <label>
                     Indexer <TooltipIcon name="LAYER_BONUS_INDEXER" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={0}
                     max={0.5}
                     step={0.01}
                     value={layerBonusIndexer}
-                    onChange={(e) => setLayerBonusIndexer(snapNumber(e.target.value, 0.15))}
+                    onCommit={setLayerBonusIndexer}
                   />
                 </div>
                 <div className="input-group">
                   <label>
                     Vendor Penalty <TooltipIcon name="VENDOR_PENALTY" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={-0.5}
                     max={0}
                     step={0.01}
                     value={vendorPenalty}
-                    onChange={(e) => setVendorPenalty(snapNumber(e.target.value, -0.1))}
+                    onCommit={setVendorPenalty}
                   />
                 </div>
                 <div className="input-group">
                   <label>
                     Freshness Bonus <TooltipIcon name="FRESHNESS_BONUS" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={0}
                     max={0.3}
                     step={0.01}
                     value={freshnessBonus}
-                    onChange={(e) => setFreshnessBonus(snapNumber(e.target.value, 0.05))}
+                    onCommit={setFreshnessBonus}
                   />
                 </div>
               </div>
@@ -1311,63 +1256,58 @@ export function RetrievalSubtab() {
               </div>
 
               <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16 }}>
-                <div className="input-group">
-                  <ModelPicker
-                    componentType="GEN"
-                    provider={genBackend}
+                <div className="input-group" data-testid="retrieval-generation-answer-alias">
+                  <label>{productionModelRoutingLocked ? 'Non-chat generation alias' : 'Generation Alias'}</label>
+                  <ChatModelPicker
                     value={genModel}
                     onChange={setGenModel}
-                    label="Generation Model"
-                    tooltipKey="GEN_MODEL"
-                    allowCustom
+                    models={generationModels}
+                    valueMode="id"
+                    allowEmpty
+                    disabled={productionModelRoutingLocked}
+                    ariaDescribedBy={productionModelRoutingLocked ? 'retrieval-generation-answer-alias-lock-note' : undefined}
                   />
+                  {productionModelRoutingLocked ? (
+                    <div
+                      id="retrieval-generation-answer-alias-lock-note"
+                      style={{ color: 'var(--fg-muted)', fontSize: 11, marginTop: 5, lineHeight: 1.4 }}
+                    >
+                      Chat uses its own model picker. This non-chat answer pipeline is locked by the production deployment.
+                    </div>
+                  ) : null}
                   <PromptLink promptKey="main_rag_chat">Edit Chat Prompt</PromptLink>
-                </div>
-                <div className="input-group">
-                  <label>
-                    Ollama Model <TooltipIcon name="GEN_MODEL_OLLAMA" />
-                  </label>
-                  <input
-                    type="text"
-                    value={genModelOllama}
-                    onChange={(e) => setGenModelOllama(e.target.value)}
-                    placeholder="qwen3-coder:30b"
-                  />
                 </div>
               </div>
 
               <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }}>
                 <div className="input-group">
-                  <ModelPicker
-                    componentType="GEN"
-                    provider={genBackend}
+                  <label>HTTP Alias Override</label>
+                  <ChatModelPicker
                     value={genModelHttp}
                     onChange={setGenModelHttp}
-                    label="HTTP Override"
-                    tooltipKey="GEN_MODEL_HTTP"
-                    allowCustom
+                    models={generationModels}
+                    valueMode="id"
+                    allowEmpty
                   />
                 </div>
                 <div className="input-group">
-                  <ModelPicker
-                    componentType="GEN"
-                    provider={genBackend}
+                  <label>MCP Alias Override</label>
+                  <ChatModelPicker
                     value={genModelMcp}
                     onChange={setGenModelMcp}
-                    label="MCP Override"
-                    tooltipKey="GEN_MODEL_MCP"
-                    allowCustom
+                    models={generationModels}
+                    valueMode="id"
+                    allowEmpty
                   />
                 </div>
                 <div className="input-group">
-                  <ModelPicker
-                    componentType="GEN"
-                    provider={genBackend}
+                  <label>CLI Alias Override</label>
+                  <ChatModelPicker
                     value={genModelCli}
                     onChange={setGenModelCli}
-                    label="CLI Override"
-                    tooltipKey="GEN_MODEL_CLI"
-                    allowCustom
+                    models={generationModels}
+                    valueMode="id"
+                    allowEmpty
                   />
                 </div>
               </div>
@@ -1376,53 +1316,33 @@ export function RetrievalSubtab() {
             <div style={{ ...SECTION_STYLE, marginBottom: 14 }} data-testid="retrieval-section-generation-enrichment-routing">
               <div style={SECTION_TITLE_STYLE}>2) Enrichment Routing</div>
               <div style={SECTION_DESC_STYLE}>
-                Select enrichment models/backend and explicitly disable enrichment when pure retrieval answers are preferred.
+                Select a gateway alias and explicitly disable enrichment when pure retrieval answers are preferred.
               </div>
 
               <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16 }}>
                 <div className="input-group">
-                  <ModelPicker
-                    componentType="GEN"
-                    provider={enrichBackend}
+                  <label>Enrichment Alias</label>
+                  <ChatModelPicker
                     value={enrichModel}
                     onChange={setEnrichModel}
-                    label="Enrich Model"
-                    tooltipKey="ENRICH_MODEL"
-                    allowCustom
+                    models={generationModels}
+                    valueMode="id"
                   />
                 </div>
                 <div className="input-group">
-                  <label>
-                    Enrich Model (Ollama) <TooltipIcon name="ENRICH_MODEL_OLLAMA" />
+                  <label className="toggle">
+                    <input
+                      type="checkbox"
+                      checked={enrichDisabled}
+                      onChange={(e) => setEnrichDisabled(e.target.checked)}
+                    />
+                    <span className="toggle-track" aria-hidden="true">
+                      <span className="toggle-thumb"></span>
+                    </span>
+                    <span className="toggle-label">
+                      Disable Enrichment <TooltipIcon name="ENRICH_DISABLED" />
+                    </span>
                   </label>
-                  <input
-                    type="text"
-                    value={enrichModelOllama}
-                    onChange={(e) => setEnrichModelOllama(e.target.value)}
-                    placeholder="qwen3-coder:14b"
-                  />
-                </div>
-              </div>
-
-              <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16 }}>
-                <div className="input-group">
-                  <label>
-                    Enrichment Backend <TooltipIcon name="ENRICH_BACKEND" />
-                  </label>
-                  <select value={enrichBackend} onChange={(e) => setEnrichBackend(e.target.value)}>
-                    <option value="openai">openai</option>
-                    <option value="ollama">ollama</option>
-                    <option value="mlx">mlx</option>
-                  </select>
-                </div>
-                <div className="input-group">
-                  <label>
-                    Disable Enrichment <TooltipIcon name="ENRICH_DISABLED" />
-                  </label>
-                  <select value={enrichDisabled} onChange={(e) => setEnrichDisabled(parseInt(e.target.value, 10))}>
-                    <option value={0}>Enabled</option>
-                    <option value={1}>Disabled</option>
-                  </select>
                 </div>
               </div>
             </div>
@@ -1430,65 +1350,21 @@ export function RetrievalSubtab() {
             <div style={{ ...SECTION_STYLE, marginBottom: 14 }} data-testid="retrieval-section-generation-provider-readiness">
               <div style={SECTION_TITLE_STYLE}>3) Provider Readiness</div>
               <div style={SECTION_DESC_STYLE}>
-                Confirm provider credentials before choosing models that depend on those services.
+                Confirm the application-to-gateway credential before using generation aliases.
               </div>
 
-              <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }}>
+              <div className="input-row">
                 <div className="input-group">
                   <label>
-                    OpenAI API Key <TooltipIcon name="OPENAI_API_KEY" />
+                    LiteLLM Client Key
                   </label>
-                  <ApiKeyStatus keyName="OPENAI_API_KEY" label="OpenAI API Key" />
-                </div>
-                <div className="input-group">
-                  <label>
-                    Anthropic API Key <TooltipIcon name="ANTHROPIC_API_KEY" />
-                  </label>
-                  <ApiKeyStatus keyName="ANTHROPIC_API_KEY" label="Anthropic API Key" />
-                </div>
-                <div className="input-group">
-                  <label>
-                    Google API Key <TooltipIcon name="GOOGLE_API_KEY" />
-                  </label>
-                  <ApiKeyStatus keyName="GOOGLE_API_KEY" label="Google API Key" />
-                </div>
-              </div>
-            </div>
-
-            <div style={{ ...SECTION_STYLE, marginBottom: 14 }} data-testid="retrieval-section-generation-endpoint-overrides">
-              <div style={SECTION_TITLE_STYLE}>4) Endpoint Overrides</div>
-              <div style={SECTION_DESC_STYLE}>
-                Override transport endpoints for local gateways, proxies, or self-hosted OpenAI-compatible deployments.
-              </div>
-
-              <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16 }}>
-                <div className="input-group">
-                  <label>
-                    Ollama URL <TooltipIcon name="OLLAMA_URL" />
-                  </label>
-                  <input
-                    type="text"
-                    value={ollamaUrl}
-                    onChange={(e) => setOllamaUrl(e.target.value)}
-                    placeholder="http://127.0.0.1:11434/api"
-                  />
-                </div>
-                <div className="input-group">
-                  <label>
-                    OpenAI Base URL <TooltipIcon name="OPENAI_BASE_URL" />
-                  </label>
-                  <input
-                    type="text"
-                    value={openaiBaseUrl}
-                    onChange={(e) => setOpenaiBaseUrl(e.target.value)}
-                    placeholder="Proxy override"
-                  />
+                  <ApiKeyStatus keyName="LITELLM_API_KEY" label="LiteLLM Client Key" />
                 </div>
               </div>
             </div>
 
             <div style={{ ...SECTION_STYLE, marginBottom: 14 }} data-testid="retrieval-section-generation-sampling-budget">
-              <div style={SECTION_TITLE_STYLE}>5) Sampling Budget</div>
+              <div style={SECTION_TITLE_STYLE}>4) Sampling Budget</div>
               <div style={SECTION_DESC_STYLE}>
                 Set creativity and output budget controls that directly affect answer style, length, and variability.
               </div>
@@ -1498,109 +1374,57 @@ export function RetrievalSubtab() {
                   <label>
                     Temperature <TooltipIcon name="GEN_TEMPERATURE" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={0}
                     max={2}
                     step={0.01}
                     value={genTemperature}
-                    onChange={(e) => setGenTemperature(snapNumber(e.target.value, 0.0))}
+                    onCommit={setGenTemperature}
                   />
                 </div>
                 <div className="input-group">
                   <label>
                     Max Tokens <TooltipIcon name="GEN_MAX_TOKENS" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={100}
-                    max={8192}
+                    max={16000}
                     step={1}
                     value={genMaxTokens}
-                    onChange={(e) => setGenMaxTokens(snapNumber(e.target.value, 2048))}
+                    onCommit={setGenMaxTokens}
                   />
                 </div>
                 <div className="input-group">
                   <label>
                     Top P <TooltipIcon name="GEN_TOP_P" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={0}
                     max={1}
                     step={0.01}
                     value={genTopP}
-                    onChange={(e) => setGenTopP(snapNumber(e.target.value, 1.0))}
+                    onCommit={setGenTopP}
                   />
                 </div>
               </div>
             </div>
 
             <div style={SECTION_STYLE} data-testid="retrieval-section-generation-reliability">
-              <div style={SECTION_TITLE_STYLE}>6) Reliability / Timeouts</div>
+              <div style={SECTION_TITLE_STYLE}>5) Reliability / Timeouts</div>
               <div style={SECTION_DESC_STYLE}>
-                Bound request duration and retry strategy for stable execution across local and cloud generation backends.
+                Bound application request duration. Gateway retry and fallback policy is fixed in LiteLLM deployment config.
               </div>
 
-              <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 16 }}>
+              <div className="input-row">
                 <div className="input-group">
                   <label>
                     GEN Timeout <TooltipIcon name="GEN_TIMEOUT" />
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min={10}
-                    max={300}
+                    max={900}
                     value={genTimeout}
-                    onChange={(e) => setGenTimeout(snapNumber(e.target.value, 60))}
-                  />
-                </div>
-                <div className="input-group">
-                  <label>
-                    Retry Attempts <TooltipIcon name="GEN_RETRY_MAX" />
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={genRetryMax}
-                    onChange={(e) => setGenRetryMax(snapNumber(e.target.value, 2))}
-                  />
-                </div>
-                <div className="input-group">
-                  <label>
-                    Ollama Num Ctx <TooltipIcon name="OLLAMA_NUM_CTX" />
-                  </label>
-                  <input
-                    type="number"
-                    min={2048}
-                    max={32768}
-                    value={ollamaNumCtx}
-                    onChange={(e) => setOllamaNumCtx(snapNumber(e.target.value, 8192))}
-                  />
-                </div>
-                <div className="input-group">
-                  <label>
-                    Ollama Request Timeout <TooltipIcon name="OLLAMA_REQUEST_TIMEOUT" />
-                  </label>
-                  <input
-                    type="number"
-                    min={30}
-                    max={1200}
-                    value={ollamaRequestTimeout}
-                    onChange={(e) => setOllamaRequestTimeout(snapNumber(e.target.value, 300))}
-                  />
-                </div>
-                <div className="input-group">
-                  <label>
-                    Ollama Stream Idle Timeout <TooltipIcon name="OLLAMA_STREAM_IDLE_TIMEOUT" />
-                  </label>
-                  <input
-                    type="number"
-                    min={5}
-                    max={300}
-                    value={ollamaStreamIdleTimeout}
-                    onChange={(e) => setOllamaStreamIdleTimeout(snapNumber(e.target.value, 60))}
+                    onCommit={setGenTimeout}
                   />
                 </div>
               </div>
@@ -1640,7 +1464,7 @@ export function RetrievalSubtab() {
                     opsTracingView === 'runtime_compatibility'
                       ? 'rgba(var(--accent-rgb), 0.14)'
                       : 'var(--bg-elev1)',
-                  color: opsTracingView === 'runtime_compatibility' ? 'var(--accent)' : 'var(--fg)',
+                  color: opsTracingView === 'runtime_compatibility' ? 'var(--accent-text)' : 'var(--fg)',
                 }}
               >
                 Runtime Compatibility
@@ -1657,7 +1481,7 @@ export function RetrievalSubtab() {
                     opsTracingView === 'observability_integrations'
                       ? 'rgba(var(--accent-rgb), 0.14)'
                       : 'var(--bg-elev1)',
-                  color: opsTracingView === 'observability_integrations' ? 'var(--accent)' : 'var(--fg)',
+                  color: opsTracingView === 'observability_integrations' ? 'var(--accent-text)' : 'var(--fg)',
                 }}
               >
                 Observability & Integrations
@@ -1690,12 +1514,11 @@ export function RetrievalSubtab() {
                       <label>
                         Hydration Max Chars <TooltipIcon name="HYDRATION_MAX_CHARS" />
                       </label>
-                      <input
-                        type="number"
-                        min={200}
-                        max={20000}
+                      <NumberField
+                        min={500}
+                        max={10000}
                         value={hydrationMaxChars || retrievalHydrationMaxChars}
-                        onChange={(e) => setUnifiedHydrationMaxChars(snapNumber(e.target.value, 2000))}
+                        onCommit={setUnifiedHydrationMaxChars}
                       />
                     </div>
                   </div>
@@ -1712,46 +1535,57 @@ export function RetrievalSubtab() {
                       <label>
                         Eval Final K <TooltipIcon name="EVAL_FINAL_K" />
                       </label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={1}
-                        max={100}
+                        max={50}
                         value={evalFinalK}
-                        onChange={(e) => setEvalFinalK(snapNumber(e.target.value, 5))}
+                        onCommit={setEvalFinalK}
                       />
                     </div>
                     <div className="input-group">
-                      <label>
-                        Eval Multi <TooltipIcon name="EVAL_MULTI" />
+                      <label className="toggle">
+                        <input
+                          type="checkbox"
+                          checked={evalMulti}
+                          onChange={(e) => setEvalMulti(e.target.checked)}
+                        />
+                        <span className="toggle-track" aria-hidden="true">
+                          <span className="toggle-thumb"></span>
+                        </span>
+                        <span className="toggle-label">
+                          Eval Multi <TooltipIcon name="EVAL_MULTI" />
+                        </span>
                       </label>
-                      <select value={evalMulti} onChange={(e) => setEvalMulti(parseInt(e.target.value, 10))}>
-                        <option value={1}>Enabled</option>
-                        <option value={0}>Disabled</option>
-                      </select>
                     </div>
                     <div className="input-group">
-                      <label>
-                        Query Expansion <TooltipIcon name="QUERY_EXPANSION_ENABLED" />
+                      <label className="toggle">
+                        <input
+                          type="checkbox"
+                          checked={queryExpansionEnabled}
+                          onChange={(e) => setQueryExpansionEnabled(e.target.checked)}
+                        />
+                        <span className="toggle-track" aria-hidden="true">
+                          <span className="toggle-thumb"></span>
+                        </span>
+                        <span className="toggle-label">
+                          Query Expansion <TooltipIcon name="QUERY_EXPANSION_ENABLED" />
+                        </span>
                       </label>
-                      <select
-                        value={queryExpansionEnabled}
-                        onChange={(e) => setQueryExpansionEnabled(parseInt(e.target.value, 10))}
-                      >
-                        <option value={1}>Enabled</option>
-                        <option value={0}>Disabled</option>
-                      </select>
                     </div>
                     <div className="input-group">
-                      <label>
-                        Chunk Summary Search <TooltipIcon name="CHUNK_SUMMARY_SEARCH_ENABLED" />
+                      <label className="toggle">
+                        <input
+                          type="checkbox"
+                          checked={cardSearchEnabled}
+                          onChange={(e) => setCardSearchEnabled(e.target.checked)}
+                        />
+                        <span className="toggle-track" aria-hidden="true">
+                          <span className="toggle-thumb"></span>
+                        </span>
+                        <span className="toggle-label">
+                          Chunk Summary Search <TooltipIcon name="CHUNK_SUMMARY_SEARCH_ENABLED" />
+                        </span>
                       </label>
-                      <select
-                        value={cardSearchEnabled}
-                        onChange={(e) => setCardSearchEnabled(parseInt(e.target.value, 10))}
-                      >
-                        <option value={1}>Enabled</option>
-                        <option value={0}>Disabled</option>
-                      </select>
                     </div>
                   </div>
 
@@ -1760,51 +1594,47 @@ export function RetrievalSubtab() {
                       <label>
                         Confidence Top1 <TooltipIcon name="CONF_TOP1" />
                       </label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={0}
                         max={1}
                         step={0.01}
                         value={confTop1}
-                        onChange={(e) => setConfTop1(snapNumber(e.target.value, 0.62))}
+                        onCommit={setConfTop1}
                       />
                     </div>
                     <div className="input-group">
                       <label>
                         Confidence Avg5 <TooltipIcon name="CONF_AVG5" />
                       </label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={0}
                         max={1}
                         step={0.01}
                         value={confAvg5}
-                        onChange={(e) => setConfAvg5(snapNumber(e.target.value, 0.55))}
+                        onCommit={setConfAvg5}
                       />
                     </div>
                     <div className="input-group">
                       <label>
                         Confidence Any <TooltipIcon name="CONF_ANY" />
                       </label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={0}
                         max={1}
                         step={0.01}
                         value={confAny}
-                        onChange={(e) => setConfAny(snapNumber(e.target.value, 0.55))}
+                        onCommit={setConfAny}
                       />
                     </div>
                     <div className="input-group">
                       <label>
                         Multi Query M <TooltipIcon name="MULTI_QUERY_M" />
                       </label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={1}
-                        max={20}
+                        max={10}
                         value={multiQueryM}
-                        onChange={(e) => setMultiQueryM(snapNumber(e.target.value, 4))}
+                        onCommit={setMultiQueryM}
                       />
                     </div>
                   </div>
@@ -1814,37 +1644,34 @@ export function RetrievalSubtab() {
                       <label>
                         LangGraph Final K <TooltipIcon name="LANGGRAPH_FINAL_K" />
                       </label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={1}
                         max={100}
                         value={langgraphFinalK}
-                        onChange={(e) => setLanggraphFinalK(snapNumber(e.target.value, 20))}
+                        onCommit={setLanggraphFinalK}
                       />
                     </div>
                     <div className="input-group">
                       <label>
                         LangGraph Max Rewrites <TooltipIcon name="LANGGRAPH_MAX_QUERY_REWRITES" />
                       </label>
-                      <input
-                        type="number"
-                        min={0}
+                      <NumberField
+                        min={1}
                         max={10}
                         value={langgraphMaxQueryRewrites}
-                        onChange={(e) => setLanggraphMaxQueryRewrites(snapNumber(e.target.value, 2))}
+                        onCommit={setLanggraphMaxQueryRewrites}
                       />
                     </div>
                     <div className="input-group">
                       <label>
                         Fallback Confidence <TooltipIcon name="FALLBACK_CONFIDENCE" />
                       </label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={0}
                         max={1}
                         step={0.01}
                         value={fallbackConfidence}
-                        onChange={(e) => setFallbackConfidence(snapNumber(e.target.value, 0.55))}
+                        onCommit={setFallbackConfidence}
                       />
                     </div>
                   </div>
@@ -1861,62 +1688,57 @@ export function RetrievalSubtab() {
                       <label>
                         RRF K Div <TooltipIcon name="RRF_K_DIV" />
                       </label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={1}
                         max={200}
                         value={rrfKDiv}
-                        onChange={(e) => setRrfKDiv(snapNumber(e.target.value, 60))}
+                        onCommit={setRrfKDiv}
                       />
                     </div>
                     <div className="input-group">
                       <label>
                         Retrieval BM25 Weight <TooltipIcon name="BM25_WEIGHT" />
                       </label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={0}
                         max={1}
                         step={0.01}
                         value={retrievalBm25Weight}
-                        onChange={(e) => setRetrievalBm25Weight(snapNumber(e.target.value, 0.3))}
+                        onCommit={setRetrievalBm25Weight}
                       />
                     </div>
                     <div className="input-group">
                       <label>
                         Retrieval Vector Weight <TooltipIcon name="VECTOR_WEIGHT" />
                       </label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={0}
                         max={1}
                         step={0.01}
                         value={retrievalVectorWeight}
-                        onChange={(e) => setRetrievalVectorWeight(snapNumber(e.target.value, 0.7))}
+                        onCommit={setRetrievalVectorWeight}
                       />
                     </div>
                     <div className="input-group">
                       <label>
                         TopK Dense <TooltipIcon name="TOPK_DENSE" />
                       </label>
-                      <input
-                        type="number"
-                        min={1}
+                      <NumberField
+                        min={10}
                         max={200}
                         value={topkDense}
-                        onChange={(e) => setTopkDense(snapNumber(e.target.value, 75))}
+                        onCommit={setTopkDense}
                       />
                     </div>
                     <div className="input-group">
                       <label>
                         TopK Sparse <TooltipIcon name="TOPK_SPARSE" />
                       </label>
-                      <input
-                        type="number"
-                        min={1}
+                      <NumberField
+                        min={10}
                         max={200}
                         value={topkSparse}
-                        onChange={(e) => setTopkSparse(snapNumber(e.target.value, 75))}
+                        onCommit={setTopkSparse}
                       />
                     </div>
                   </div>
@@ -1930,18 +1752,26 @@ export function RetrievalSubtab() {
 
                   <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16 }}>
                     <div className="input-group">
-                      <label>Cache Enabled</label>
-                      <select value={semanticCacheEnabled} onChange={(e) => setSemanticCacheEnabled(parseInt(e.target.value, 10))}>
-                        <option value={1}>Enabled</option>
-                        <option value={0}>Disabled</option>
-                      </select>
+                      <label className="toggle">
+                        <input
+                          type="checkbox"
+                          checked={semanticCacheEnabled}
+                          onChange={(e) => setSemanticCacheEnabled(e.target.checked)}
+                        />
+                        <span className="toggle-track" aria-hidden="true">
+                          <span className="toggle-thumb"></span>
+                        </span>
+                        <span className="toggle-label">
+                          Cache Enabled
+                        </span>
+                      </label>
                     </div>
                     <div className="input-group">
                       <label>Cache Mode</label>
                       <select
                         value={semanticCacheMode}
                         onChange={(e) => setSemanticCacheMode(e.target.value as 'read_write' | 'read_only' | 'write_only')}
-                        disabled={semanticCacheEnabled === 0}
+                        disabled={!semanticCacheEnabled}
                       >
                         <option value="read_write">read_write</option>
                         <option value="read_only">read_only</option>
@@ -1950,24 +1780,22 @@ export function RetrievalSubtab() {
                     </div>
                     <div className="input-group">
                       <label>Max Entries</label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={100}
                         max={500000}
                         value={semanticCacheMaxEntries}
-                        onChange={(e) => setSemanticCacheMaxEntries(snapNumber(e.target.value, 5000))}
-                        disabled={semanticCacheEnabled === 0}
+                        onCommit={setSemanticCacheMaxEntries}
+                        disabled={!semanticCacheEnabled}
                       />
                     </div>
                     <div className="input-group">
                       <label>Min Query Chars</label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={1}
                         max={200}
                         value={semanticCacheMinQueryChars}
-                        onChange={(e) => setSemanticCacheMinQueryChars(snapNumber(e.target.value, 3))}
-                        disabled={semanticCacheEnabled === 0}
+                        onCommit={setSemanticCacheMinQueryChars}
+                        disabled={!semanticCacheEnabled}
                       />
                     </div>
                   </div>
@@ -1975,38 +1803,35 @@ export function RetrievalSubtab() {
                   <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }}>
                     <div className="input-group">
                       <label>Similarity Threshold (Search)</label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={0}
                         max={1}
                         step={0.01}
                         value={semanticCacheThresholdSearch}
-                        onChange={(e) => setSemanticCacheThresholdSearch(snapNumber(e.target.value, 0.9))}
-                        disabled={semanticCacheEnabled === 0}
+                        onCommit={setSemanticCacheThresholdSearch}
+                        disabled={!semanticCacheEnabled}
                       />
                     </div>
                     <div className="input-group">
                       <label>Similarity Threshold (Answer)</label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={0}
                         max={1}
                         step={0.01}
                         value={semanticCacheThresholdAnswer}
-                        onChange={(e) => setSemanticCacheThresholdAnswer(snapNumber(e.target.value, 0.93))}
-                        disabled={semanticCacheEnabled === 0}
+                        onCommit={setSemanticCacheThresholdAnswer}
+                        disabled={!semanticCacheEnabled}
                       />
                     </div>
                     <div className="input-group">
                       <label>Similarity Threshold (Chat)</label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={0}
                         max={1}
                         step={0.01}
                         value={semanticCacheThresholdChat}
-                        onChange={(e) => setSemanticCacheThresholdChat(snapNumber(e.target.value, 0.95))}
-                        disabled={semanticCacheEnabled === 0}
+                        onCommit={setSemanticCacheThresholdChat}
+                        disabled={!semanticCacheEnabled}
                       />
                     </div>
                   </div>
@@ -2014,35 +1839,32 @@ export function RetrievalSubtab() {
                   <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }}>
                     <div className="input-group">
                       <label>TTL Seconds (Search)</label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={10}
                         max={86400}
                         value={semanticCacheTtlSearch}
-                        onChange={(e) => setSemanticCacheTtlSearch(snapNumber(e.target.value, 900))}
-                        disabled={semanticCacheEnabled === 0}
+                        onCommit={setSemanticCacheTtlSearch}
+                        disabled={!semanticCacheEnabled}
                       />
                     </div>
                     <div className="input-group">
                       <label>TTL Seconds (Answer)</label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={10}
                         max={86400}
                         value={semanticCacheTtlAnswer}
-                        onChange={(e) => setSemanticCacheTtlAnswer(snapNumber(e.target.value, 1800))}
-                        disabled={semanticCacheEnabled === 0}
+                        onCommit={setSemanticCacheTtlAnswer}
+                        disabled={!semanticCacheEnabled}
                       />
                     </div>
                     <div className="input-group">
                       <label>TTL Seconds (Chat)</label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={10}
                         max={86400}
                         value={semanticCacheTtlChat}
-                        onChange={(e) => setSemanticCacheTtlChat(snapNumber(e.target.value, 600))}
-                        disabled={semanticCacheEnabled === 0}
+                        onCommit={setSemanticCacheTtlChat}
+                        disabled={!semanticCacheEnabled}
                       />
                     </div>
                   </div>
@@ -2050,36 +1872,39 @@ export function RetrievalSubtab() {
                   <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }}>
                     <div className="input-group">
                       <label>Chat History Window</label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={0}
                         max={50}
                         value={semanticCacheChatHistoryWindow}
-                        onChange={(e) => setSemanticCacheChatHistoryWindow(snapNumber(e.target.value, 6))}
-                        disabled={semanticCacheEnabled === 0}
+                        onCommit={setSemanticCacheChatHistoryWindow}
+                        disabled={!semanticCacheEnabled}
                       />
                     </div>
                     <div className="input-group">
-                      <label>Bypass if Images</label>
-                      <select
-                        value={semanticCacheBypassIfImages}
-                        onChange={(e) => setSemanticCacheBypassIfImages(parseInt(e.target.value, 10))}
-                        disabled={semanticCacheEnabled === 0}
-                      >
-                        <option value={1}>Enabled</option>
-                        <option value={0}>Disabled</option>
-                      </select>
+                      <label className="toggle">
+                        <input
+                          type="checkbox"
+                          checked={semanticCacheBypassIfImages}
+                          onChange={(e) => setSemanticCacheBypassIfImages(e.target.checked)}
+                          disabled={!semanticCacheEnabled}
+                        />
+                        <span className="toggle-track" aria-hidden="true">
+                          <span className="toggle-thumb"></span>
+                        </span>
+                        <span className="toggle-label">
+                          Bypass if Images
+                        </span>
+                      </label>
                     </div>
                     <div className="input-group">
                       <label>Max Temperature for Write</label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={0}
                         max={2}
                         step={0.05}
                         value={semanticCacheMaxTemperatureForWrite}
-                        onChange={(e) => setSemanticCacheMaxTemperatureForWrite(snapNumber(e.target.value, 0.5))}
-                        disabled={semanticCacheEnabled === 0}
+                        onCommit={setSemanticCacheMaxTemperatureForWrite}
+                        disabled={!semanticCacheEnabled}
                       />
                     </div>
                   </div>
@@ -2133,7 +1958,7 @@ export function RetrievalSubtab() {
                 <div style={{ ...SECTION_STYLE, marginBottom: 14 }} data-testid="retrieval-section-ops-tracing-core">
                   <div style={SECTION_TITLE_STYLE}>2) Tracing Core</div>
                   <div style={SECTION_DESC_STYLE}>
-                    Configure trace mode, enablement, retention, and sampling before downstream metrics/alerts.
+                    Configure local buffering, canonical OTel mode, and request-level retention before downstream export and cost attribution.
                   </div>
 
                   <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16 }}>
@@ -2144,75 +1969,80 @@ export function RetrievalSubtab() {
                       <select value={tracingMode} onChange={(e) => setTracingMode(e.target.value)}>
                         <option value="off">off</option>
                         <option value="local">local</option>
-                        <option value="langsmith">langsmith</option>
+                        <option value="otel">otel</option>
+                        <option value="otel_langfuse">otel_langfuse</option>
                       </select>
                     </div>
                     <div className="input-group">
-                      <label>
-                        Tracing Enabled <TooltipIcon name="TRACING_ENABLED" />
+                      <label className="toggle">
+                        <input
+                          type="checkbox"
+                          checked={tracingEnabled}
+                          onChange={(e) => setTracingEnabled(e.target.checked)}
+                        />
+                        <span className="toggle-track" aria-hidden="true">
+                          <span className="toggle-thumb"></span>
+                        </span>
+                        <span className="toggle-label">
+                          Tracing Enabled <TooltipIcon name="TRACING_ENABLED" />
+                        </span>
                       </label>
-                      <select value={tracingEnabled} onChange={(e) => setTracingEnabled(parseInt(e.target.value, 10))}>
-                        <option value={1}>Enabled</option>
-                        <option value={0}>Disabled</option>
-                      </select>
                     </div>
                     <div className="input-group">
                       <label>
                         Trace Sampling Rate <TooltipIcon name="TRACE_SAMPLING_RATE" />
                       </label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={0}
                         max={1}
                         step={0.01}
                         value={traceSamplingRate}
-                        onChange={(e) => setTraceSamplingRate(snapNumber(e.target.value, 1.0))}
+                        onCommit={setTraceSamplingRate}
                       />
                     </div>
                     <div className="input-group">
                       <label>
                         Trace Retention <TooltipIcon name="TRACE_RETENTION" />
                       </label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={1000}
+                      <NumberField
+                        min={10}
+                        max={500}
                         value={traceRetention}
-                        onChange={(e) => setTraceRetention(snapNumber(e.target.value, 50))}
+                        onCommit={setTraceRetention}
                       />
                     </div>
                   </div>
 
                   <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16 }}>
                     <div className="input-group">
-                      <label>
-                        Auto-open LangSmith <TooltipIcon name="TRACE_AUTO_LS" />
+                      <label className="toggle">
+                        <input
+                          type="checkbox"
+                          checked={otelExportEnabled}
+                          onChange={(e) => setOtelExportEnabled(e.target.checked)}
+                        />
+                        <span className="toggle-track" aria-hidden="true">
+                          <span className="toggle-thumb"></span>
+                        </span>
+                        <span className="toggle-label">
+                          OTel Export
+                        </span>
                       </label>
-                      <select value={traceAutoLs} onChange={(e) => setTraceAutoLs(parseInt(e.target.value, 10))}>
-                        <option value={1}>Enabled</option>
-                        <option value={0}>Disabled</option>
-                      </select>
                     </div>
                     <div className="input-group">
-                      <label>
-                        Metrics Enabled <TooltipIcon name="METRICS_ENABLED" />
+                      <label className="toggle">
+                        <input
+                          type="checkbox"
+                          checked={metricsEnabled}
+                          onChange={(e) => setMetricsEnabled(e.target.checked)}
+                        />
+                        <span className="toggle-track" aria-hidden="true">
+                          <span className="toggle-thumb"></span>
+                        </span>
+                        <span className="toggle-label">
+                          Metrics Enabled <TooltipIcon name="METRICS_ENABLED" />
+                        </span>
                       </label>
-                      <select value={metricsEnabled} onChange={(e) => setMetricsEnabled(parseInt(e.target.value, 10))}>
-                        <option value={1}>Enabled</option>
-                        <option value={0}>Disabled</option>
-                      </select>
-                    </div>
-                    <div className="input-group">
-                      <label>
-                        Prometheus Port <TooltipIcon name="PROMETHEUS_PORT" />
-                      </label>
-                      <input
-                        type="number"
-                        min={1024}
-                        max={65535}
-                        value={prometheusPort}
-                        onChange={(e) => setPrometheusPort(snapNumber(e.target.value, 9090))}
-                      />
                     </div>
                     <div className="input-group">
                       <label>
@@ -2231,32 +2061,34 @@ export function RetrievalSubtab() {
                 <div style={{ ...SECTION_STYLE, marginBottom: 14 }} data-testid="retrieval-section-ops-alerting">
                   <div style={SECTION_TITLE_STYLE}>3) Alerting & Export</div>
                   <div style={SECTION_DESC_STYLE}>
-                    Define alert notification semantics and local trace persistence path for audit/replay workflows.
+                    Define alert semantics plus OTLP export, service identity, and collector endpoints for the online request path.
                   </div>
 
                   <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }}>
                     <div className="input-group">
-                      <label>
-                        Include Resolved Alerts <TooltipIcon name="ALERT_INCLUDE_RESOLVED" />
+                      <label className="toggle">
+                        <input
+                          type="checkbox"
+                          checked={alertIncludeResolved}
+                          onChange={(e) => setAlertIncludeResolved(e.target.checked)}
+                        />
+                        <span className="toggle-track" aria-hidden="true">
+                          <span className="toggle-thumb"></span>
+                        </span>
+                        <span className="toggle-label">
+                          Include Resolved Alerts <TooltipIcon name="ALERT_INCLUDE_RESOLVED" />
+                        </span>
                       </label>
-                      <select
-                        value={alertIncludeResolved}
-                        onChange={(e) => setAlertIncludeResolved(parseInt(e.target.value, 10))}
-                      >
-                        <option value={1}>Enabled</option>
-                        <option value={0}>Disabled</option>
-                      </select>
                     </div>
                     <div className="input-group">
                       <label>
                         Alert Webhook Timeout <TooltipIcon name="ALERT_WEBHOOK_TIMEOUT" />
                       </label>
-                      <input
-                        type="number"
+                      <NumberField
                         min={1}
-                        max={60}
+                        max={30}
                         value={alertWebhookTimeout}
-                        onChange={(e) => setAlertWebhookTimeout(snapNumber(e.target.value, 5))}
+                        onCommit={setAlertWebhookTimeout}
                       />
                     </div>
                     <div className="input-group">
@@ -2272,7 +2104,7 @@ export function RetrievalSubtab() {
                     </div>
                   </div>
 
-                  <div className="input-row" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+                  <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }}>
                     <div className="input-group">
                       <label>
                         Tribrid Log Path <TooltipIcon name="TRIBRID_LOG_PATH" />
@@ -2284,104 +2116,138 @@ export function RetrievalSubtab() {
                         placeholder="data/logs/queries.jsonl"
                       />
                     </div>
-                    <div className="input-group" />
+                    <div className="input-group">
+                      <label>OTLP Endpoint</label>
+                      <input
+                        type="text"
+                        value={otlpEndpoint}
+                        onChange={(e) => setOtlpEndpoint(e.target.value)}
+                        placeholder="http://127.0.0.1:4318/v1/traces"
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label>OTel Service Name</label>
+                      <input
+                        type="text"
+                        value={otelServiceName}
+                        onChange={(e) => setOtelServiceName(e.target.value)}
+                        placeholder="ragweld-api"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="input-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                    <div className="input-group">
+                      <label>OTLP Headers</label>
+                      <input
+                        type="text"
+                        value={otlpHeaders}
+                        onChange={(e) => setOtlpHeaders(e.target.value)}
+                        placeholder="Authorization=Bearer ...,X-Scope-OrgID=1"
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label className="toggle">
+                        <input
+                          type="checkbox"
+                          checked={costTrackingEnabled}
+                          onChange={(e) => setCostTrackingEnabled(e.target.checked)}
+                        />
+                        <span className="toggle-track" aria-hidden="true">
+                          <span className="toggle-thumb"></span>
+                        </span>
+                        <span className="toggle-label">
+                          Cost Tracking
+                        </span>
+                      </label>
+                    </div>
                   </div>
                 </div>
 
                 <div style={SECTION_STYLE} data-testid="retrieval-section-ops-integrations">
                   <div style={SECTION_TITLE_STYLE}>4) Integrations</div>
                   <div style={SECTION_DESC_STYLE}>
-                    Configure LangSmith/LangTrace endpoints and credentials used for external trace ingestion and analysis.
+                    Configure Langfuse, Tempo, and Alloy endpoints used for live request tracing and operator drilldown.
                   </div>
 
-                  <div className="input-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                  <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
                     <div className="input-group">
-                      <label>
-                        LangSmith Endpoint <TooltipIcon name="LANGCHAIN_ENDPOINT" />
+                      <label className="toggle">
+                        <input
+                          type="checkbox"
+                          checked={langfuseEnabled}
+                          onChange={(e) => setLangfuseEnabled(e.target.checked)}
+                        />
+                        <span className="toggle-track" aria-hidden="true">
+                          <span className="toggle-thumb"></span>
+                        </span>
+                        <span className="toggle-label">
+                          Langfuse Enabled
+                        </span>
                       </label>
+                    </div>
+                    <div className="input-group">
+                      <label>Langfuse Base URL</label>
                       <input
                         type="text"
-                        value={langchainEndpoint}
-                        onChange={(e) => setLangchainEndpoint(e.target.value)}
-                        placeholder="https://api.smith.langchain.com"
+                        value={langfuseBaseUrl}
+                        onChange={(e) => setLangfuseBaseUrl(e.target.value)}
+                        placeholder="https://cloud.langfuse.com"
                       />
                     </div>
                     <div className="input-group">
-                      <label>
-                        LangSmith Project <TooltipIcon name="LANGCHAIN_PROJECT" />
-                      </label>
+                      <label>Langfuse Browser URL</label>
                       <input
+                        data-testid="retrieval-langfuse-public-base-url"
                         type="text"
-                        value={langchainProject}
-                        onChange={(e) => setLangchainProject(e.target.value)}
-                        placeholder="tribrid"
+                        value={langfusePublicBaseUrl}
+                        onChange={(e) => setLangfusePublicBaseUrl(e.target.value)}
+                        placeholder="http://127.0.0.1:53000"
                       />
-                    </div>
-                  </div>
-
-                  <div className="input-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                    <div className="input-group">
-                      <label>
-                        LangChain Tracing V2 <TooltipIcon name="LANGCHAIN_TRACING_V2" />
-                      </label>
-                      <select
-                        value={langchainTracingV2}
-                        onChange={(e) => setLangchainTracingV2(parseInt(e.target.value, 10))}
+                      <div
+                        data-testid="retrieval-langfuse-public-base-url-hint"
+                        style={{ fontSize: 12, color: 'var(--fg-muted)', lineHeight: 1.4, marginTop: 6 }}
                       >
-                        <option value={1}>Enabled</option>
-                        <option value={0}>Disabled</option>
-                      </select>
+                        {PUBLIC_BROWSER_LINK_HINT}
+                      </div>
                     </div>
                     <div className="input-group">
-                      <label>
-                        LangChain API Key <TooltipIcon name="LANGCHAIN_API_KEY" />
-                      </label>
-                      <ApiKeyStatus keyName="LANGCHAIN_API_KEY" label="LangChain API Key" />
-                    </div>
-                  </div>
-
-                  <div className="input-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                    <div className="input-group">
-                      <label>
-                        LangSmith User Key <TooltipIcon name="LANGSMITH_API_KEY" />
-                      </label>
-                      <ApiKeyStatus keyName="LANGSMITH_API_KEY" label="LangSmith API Key" />
-                    </div>
-                    <div className="input-group" />
-                  </div>
-
-                  <div className="input-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                    <div className="input-group">
-                      <label>
-                        LangTrace API Host <TooltipIcon name="LANGTRACE_API_HOST" />
-                      </label>
+                      <label>Langfuse Project</label>
                       <input
                         type="text"
-                        value={langtraceApiHost}
-                        onChange={(e) => setLangtraceApiHost(e.target.value)}
-                        placeholder="https://api.langtrace.dev"
-                      />
-                    </div>
-                    <div className="input-group">
-                      <label>
-                        LangTrace Project ID <TooltipIcon name="LANGTRACE_PROJECT_ID" />
-                      </label>
-                      <input
-                        type="text"
-                        value={langtraceProjectId}
-                        onChange={(e) => setLangtraceProjectId(e.target.value)}
+                        value={langfuseProject}
+                        onChange={(e) => setLangfuseProject(e.target.value)}
+                        placeholder="ragweld"
                       />
                     </div>
                   </div>
 
-                  <div className="input-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                  <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
                     <div className="input-group">
-                      <label>
-                        LangTrace API Key <TooltipIcon name="LANGTRACE_API_KEY" />
-                      </label>
-                      <ApiKeyStatus keyName="LANGTRACE_API_KEY" label="LangTrace API Key" />
+                      <label>Tempo Base URL</label>
+                      <input
+                        type="text"
+                        value={tempoBaseUrl}
+                        onChange={(e) => setTempoBaseUrl(e.target.value)}
+                        placeholder="http://127.0.0.1:53200"
+                      />
                     </div>
-                    <div className="input-group" />
+                    <div className="input-group">
+                      <label>Alloy Base URL</label>
+                      <input
+                        type="text"
+                        value={alloyBaseUrl}
+                        onChange={(e) => setAlloyBaseUrl(e.target.value)}
+                        placeholder="http://127.0.0.1:52345"
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label>Langfuse Keys</label>
+                      <div style={{ display: 'grid', gap: 8 }}>
+                        <ApiKeyStatus keyName="LANGFUSE_PUBLIC_KEY" label="Langfuse Public Key" />
+                        <ApiKeyStatus keyName="LANGFUSE_SECRET_KEY" label="Langfuse Secret Key" />
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2393,15 +2259,9 @@ export function RetrievalSubtab() {
   );
 }
 
-function snapNumber(value: string, fallback: number) {
-  if (value === '') return fallback;
-  const next = Number(value);
-  return Number.isFinite(next) ? next : fallback;
-}
-
 function formatTracePayload(payload: TracesLatestResponse, vectorBackend: string): string {
   if (!payload?.trace) {
-    return 'No traces yet. Set Tracing Mode to Local/LangSmith (not Off) and run a query.';
+    return 'No traces yet. Set tracing mode to local, OTel, or OTel + Langfuse and run a query.';
   }
   const events = Array.isArray(payload.trace.events) ? payload.trace.events : [];
   const parts: string[] = [];
