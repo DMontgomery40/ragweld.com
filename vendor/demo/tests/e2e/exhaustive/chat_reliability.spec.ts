@@ -1,76 +1,40 @@
 import { expect, test, type APIRequestContext, type Locator, type Page } from '@playwright/test';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { API_BASE, EXHAUSTIVE_CHAT_MODEL, provisionExhaustiveCorpus, type ExhaustiveCorpus } from './corpus_fixture';
+import { ACCEPTANCE_CORPUS_PROBES } from './suite_config';
 
-const API_BASE = process.env.EXHAUSTIVE_API_BASE_URL ?? 'http://127.0.0.1:8012/api';
-const CORPUS_ID = String(process.env.EXHAUSTIVE_CORPUS_ID || '').trim() || 'epstein-files-1';
-const CORPUS_NAME = String(process.env.EXHAUSTIVE_CORPUS_NAME || '').trim() || CORPUS_ID;
-const CORPUS_PATH_OVERRIDE = String(process.env.EXHAUSTIVE_CORPUS_PATH || '').trim();
+// The corpus is provisioned per run over the acceptance fixture — with its own
+// query log and triplets file — and deleted afterwards (it used to be a fixed
+// `ragweld-exhaustive` id that leaked into the live registry and mined feedback
+// into the operator's shared triplets file). There is deliberately no
+// "use an existing corpus" override: this spec mutates config, feedback and
+// triplets, and must never do that to an operator corpus.
+let CORPUS_ID = '';
+let provisioned: ExhaustiveCorpus | null = null;
 
-let generatedCorpusPath: string | null = null;
+test.beforeAll(async ({ request }) => {
+  provisioned = await provisionExhaustiveCorpus(request, { index: true });
+  CORPUS_ID = provisioned.corpusId;
+});
 
-type CorpusRow = { corpus_id?: string; name?: string };
+test.afterAll(async ({ request }) => {
+  if (provisioned) await provisioned.dispose(request);
+});
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function ensureCorpusExists(request: APIRequestContext): Promise<string[]> {
-  const fetchCorpora = async (): Promise<{ corpora: CorpusRow[] | null; lastStatus: number }> => {
-    let corpora: CorpusRow[] | null = null;
-    let lastStatus = 0;
-
-    for (let attempt = 1; attempt <= 5; attempt += 1) {
-      const resp = await request.get(`${API_BASE}/corpora`);
-      lastStatus = resp.status();
-      if (resp.ok()) {
-        corpora = (await resp.json()) as CorpusRow[];
-        break;
-      }
-      await sleep(1000);
-    }
-    return { corpora, lastStatus };
-  };
-
-  const ensureCorpusPath = async (): Promise<string> => {
-    if (CORPUS_PATH_OVERRIDE) return resolve(CORPUS_PATH_OVERRIDE);
-    if (generatedCorpusPath) return generatedCorpusPath;
-    const dir = await mkdtemp(join(tmpdir(), 'ragweld-exhaustive-corpus-'));
-    await writeFile(
-      join(dir, 'README.md'),
-      'Exhaustive UI reliability corpus fixture.\n',
-      { encoding: 'utf-8' }
-    );
-    generatedCorpusPath = dir;
-    return generatedCorpusPath;
-  };
-
-  let { corpora, lastStatus } = await fetchCorpora();
-  expect(Boolean(corpora), `expected /corpora to succeed, last status=${lastStatus}`).toBeTruthy();
-  let rows = corpora || [];
-  let row = rows.find((c) => String(c?.corpus_id || '').trim() === CORPUS_ID);
-  if (!row) {
-    const corpusPath = await ensureCorpusPath();
-    const createResp = await request.post(`${API_BASE}/corpora`, {
-      data: {
-        corpus_id: CORPUS_ID,
-        name: CORPUS_NAME,
-        path: corpusPath,
-      },
-    });
-    if (!createResp.ok()) {
-      const detail = await createResp.text();
-      throw new Error(`failed to create corpus ${CORPUS_ID}: ${createResp.status()} ${detail}`);
-    }
-    ({ corpora, lastStatus } = await fetchCorpora());
-    expect(Boolean(corpora), `expected /corpora to succeed, last status=${lastStatus}`).toBeTruthy();
-    rows = corpora || [];
-    row = rows.find((c) => String(c?.corpus_id || '').trim() === CORPUS_ID);
-  }
+  const resp = await request.get(`${API_BASE}/corpora`);
+  expect(resp.ok(), `expected /corpora to succeed, status=${resp.status()}`).toBeTruthy();
+  const rows = (await resp.json()) as Array<{ corpus_id?: string; name?: string }>;
+  const row = rows.find((c) => String(c?.corpus_id || '').trim() === CORPUS_ID);
   expect(Boolean(row), `expected corpus ${CORPUS_ID} to exist`).toBeTruthy();
-  const labels = [String(row?.name || '').trim(), CORPUS_ID].filter(Boolean);
-  return Array.from(new Set(labels));
+  return Array.from(new Set([String(row?.name || '').trim(), CORPUS_ID].filter(Boolean)));
+}
+
+function corpusQuestion(index: number): string {
+  return ACCEPTANCE_CORPUS_PROBES[index % ACCEPTANCE_CORPUS_PROBES.length].question;
 }
 
 async function getRerankerLogs(request: APIRequestContext, limit: number = 1000): Promise<Array<Record<string, unknown>>> {
@@ -85,19 +49,6 @@ async function getRerankerLogs(request: APIRequestContext, limit: number = 1000)
   return [];
 }
 
-function eventIncludesCorpus(row: Record<string, unknown>): boolean {
-  const corpusIds = Array.isArray(row?.corpus_ids) ? (row.corpus_ids as unknown[]) : [];
-  if (corpusIds.some((id) => String(id || '').trim() === CORPUS_ID)) return true;
-  const corpusId = String(row?.corpus_id || '').trim();
-  return corpusId === CORPUS_ID;
-}
-
-function isChatEvent(row: Record<string, unknown>): boolean {
-  const kind = String(row?.kind || row?.type || '').trim().toLowerCase();
-  const eventId = String(row?.event_id || '').trim();
-  return kind === 'chat' && Boolean(eventId);
-}
-
 function isThumbsupFeedbackForEvent(row: Record<string, unknown>, eventId: string): boolean {
   const kind = String(row?.kind || row?.type || '').trim().toLowerCase();
   const signal = String(row?.signal || '').trim().toLowerCase();
@@ -109,19 +60,6 @@ function hasLinkedChatEvent(row: Record<string, unknown>, eventId: string): bool
   const kind = String(row?.kind || row?.type || '').trim().toLowerCase();
   const id = String(row?.event_id || '').trim();
   return kind === 'chat' && id === eventId;
-}
-
-async function findRecentChatEventId(request: APIRequestContext): Promise<string | null> {
-  const logs = await getRerankerLogs(request, 1000);
-  for (let i = logs.length - 1; i >= 0; i -= 1) {
-    const row = logs[i];
-    if (!row || typeof row !== 'object') continue;
-    if (!isChatEvent(row)) continue;
-    if (!eventIncludesCorpus(row)) continue;
-    const eventId = String(row.event_id || '').trim();
-    if (eventId) return eventId;
-  }
-  return null;
 }
 
 async function countThumbsupForEvent(request: APIRequestContext, eventId: string): Promise<number> {
@@ -154,15 +92,15 @@ async function waitForNewFeedbackLink(
 }
 
 async function getOrCreateLinkedRunId(request: APIRequestContext): Promise<string> {
-  const existing = await findRecentChatEventId(request);
-  if (existing) return existing;
-
-  const query = `reliability-feedback-seed-${Date.now()}`;
+  // Always create the event this test will own. Reusing the most recent event
+  // couples this assertion to earlier feedback clicks and can make a legitimate
+  // one-feedback-per-event policy look like persistence loss.
   const conversationId = `playwright-feedback-seed-${Date.now()}`;
   const chatResp = await request.post(`${API_BASE}/chat`, {
-    timeout: 90_000,
+    timeout: 180_000,
     data: {
-      message: query,
+      message: corpusQuestion(2),
+      model_override: `litellm:${EXHAUSTIVE_CHAT_MODEL}`,
       sources: { corpus_ids: [CORPUS_ID, 'recall_default'] },
       conversation_id: conversationId,
       stream: false,
@@ -226,9 +164,9 @@ async function setSources(page: Page, corpusLabels: string[], recallEnabled: boo
 }
 
 async function waitForStreamingTerminal(page: Page): Promise<void> {
-  const spinner = page.getByText('Generating response...');
-  await expect(spinner).toBeVisible({ timeout: 20_000 });
-  await expect(spinner).toBeHidden({ timeout: 120_000 });
+  const streamingBadge = page.getByText('Streaming').last();
+  await expect(streamingBadge).toBeVisible({ timeout: 20_000 });
+  await expect(streamingBadge).toBeHidden({ timeout: 120_000 });
 }
 
 async function seedFeedbackSession(page: Page, eventId: string): Promise<void> {
@@ -247,16 +185,25 @@ async function seedFeedbackSession(page: Page, eventId: string): Promise<void> {
           {
             id: `assistant-${now}`,
             role: 'assistant',
-            content: 'Seeded assistant response for feedback linkage.',
-            timestamp: now,
-            runId: linkedRunId,
-            eventId: linkedRunId,
+            createdAt: new Date(now).toISOString(),
+            content: [{ type: 'text', text: 'Seeded assistant response for feedback linkage.' }],
+            status: { type: 'complete', reason: 'stop' },
+            metadata: {
+              unstable_state: null,
+              unstable_annotations: [],
+              unstable_data: [],
+              steps: [],
+              custom: {
+                runId: linkedRunId,
+                eventId: linkedRunId,
+              },
+            },
           },
         ],
       };
       localStorage.setItem(
-        'tribrid-chat-sessions:v1:global',
-        JSON.stringify({ version: 1, active_conversation_id: convId, sessions: [session] })
+        'ragweld-chat-threads:v2',
+        JSON.stringify({ version: 2, active_conversation_id: convId, sessions: [session] })
       );
       localStorage.setItem('tribrid_active_corpus', corpusId);
       localStorage.setItem('tribrid_active_repo', corpusId);
@@ -266,7 +213,7 @@ async function seedFeedbackSession(page: Page, eventId: string): Promise<void> {
 }
 
 async function clickHelpfulFeedback(page: Page): Promise<void> {
-  const helpful = page.locator('button[title="This was helpful - trains the reranker"]').first();
+  const helpful = page.getByRole('button', { name: 'Helpful' }).first();
   await expect(helpful).toBeVisible({ timeout: 30_000 });
   await helpful.click();
 }
@@ -280,49 +227,72 @@ async function mineAndAssertReranker(request: APIRequestContext): Promise<void> 
     mined_from_feedback_events?: number;
   };
   expect(Boolean(minePayload.ok)).toBeTruthy();
-  expect(Number(minePayload.mined_from_feedback_events || 0)).toBeGreaterThanOrEqual(0);
+  // The thumbs-up above was on a real, retrieval-backed answer for this corpus:
+  // mining must turn it into at least one triplet, or "mineable" means nothing.
+  expect(Number(minePayload.triplets_mined || 0), JSON.stringify(minePayload)).toBeGreaterThanOrEqual(1);
 
   const countResp = await request.get(`${API_BASE}/reranker/triplets/count?corpus_id=${encodeURIComponent(CORPUS_ID)}`);
   expect(countResp.ok()).toBeTruthy();
   const countPayload = (await countResp.json()) as { count?: number };
-  expect(Number(countPayload.count || 0)).toBeGreaterThanOrEqual(0);
+  expect(Number(countPayload.count || 0)).toBeGreaterThanOrEqual(1);
 }
 
 test.describe.serial('chat reliability', () => {
   test('streaming reaches terminal state and clears spinner', async ({ page, request }) => {
     const corpusLabels = await ensureCorpusExists(request);
     const uiCfgResp = await request.patch(`${API_BASE}/config/ui?corpus_id=${encodeURIComponent(CORPUS_ID)}`, {
-      data: { chat_streaming_enabled: 1 },
+      data: { chat_streaming_enabled: true },
     });
     expect(uiCfgResp.ok()).toBeTruthy();
 
     await gotoChat(page);
     await setSources(page, corpusLabels, true);
 
-    const question = `reliability-stream-${Date.now()}`;
-    await sendMessage(page, question);
+    await sendMessage(page, corpusQuestion(0));
     await waitForStreamingTerminal(page);
 
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 20_000 });
-    await expect(page.getByText('Generating response...')).toBeHidden();
+    await expect(page.getByText('Streaming')).toBeHidden();
+
+    // These controls sit at the bottom of a real assistant response. A short
+    // window used to collapse the message viewport until the status bar occupied
+    // their click coordinates. Exercise the actual buttons without force-clicks.
+    await clickHelpfulFeedback(page);
+    const citation = page.getByTestId('chat-citation-open').first();
+    await expect(citation).toBeVisible({ timeout: 30_000 });
+    await citation.click();
   });
 
   test('new chat resets in-flight state and clears active stream UI', async ({ page, request }) => {
     const corpusLabels = await ensureCorpusExists(request);
     const uiCfgResp = await request.patch(`${API_BASE}/config/ui?corpus_id=${encodeURIComponent(CORPUS_ID)}`, {
-      data: { chat_streaming_enabled: 1 },
+      data: { chat_streaming_enabled: true },
     });
     expect(uiCfgResp.ok()).toBeTruthy();
 
     await gotoChat(page);
     await setSources(page, corpusLabels, false);
 
-    await sendMessage(page, `reliability-new-chat-${Date.now()}`);
+    await sendMessage(page, corpusQuestion(1));
     await page.getByTestId('chat-new-chat').click();
 
-    await expect(page.getByText('Generating response...')).toBeHidden({ timeout: 20_000 });
+    await expect(page.getByText('Streaming')).toBeHidden({ timeout: 20_000 });
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 20_000 });
-    await expect(page.getByText('Start a conversation with your codebase')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText('Chat stays grounded in recall, sources, and session continuity.')).toBeVisible({ timeout: 20_000 });
+  });
+
+  test('welcome prompt sends through a pinned runnable model', async ({ page, request }) => {
+    const corpusLabels = await ensureCorpusExists(request);
+    await gotoChat(page);
+    await setSources(page, corpusLabels, false);
+    await page.getByTestId('model-picker').selectOption(`litellm:${EXHAUSTIVE_CHAT_MODEL}`);
+
+    await page.getByTestId('chat-welcome-prompt-0').click();
+    await waitForStreamingTerminal(page);
+
+    const latest = page.locator('[data-role="assistant"]').last();
+    await expect(latest).toBeVisible();
+    await expect(latest.getByTestId('chat-structured-error-card')).toHaveCount(0);
   });
 
   test('feedback is persisted and mineable via matching event_id', async ({ page, request }) => {
