@@ -1,12 +1,28 @@
 import { apiClient, api, withCorpusScope } from './client';
-import type { TriBridConfig, ModelValidationResult } from '@/types/generated';
+import type {
+  ConfigReadinessResponse,
+  ConfigRegistryResponse,
+  ModelValidationResult,
+  TriBridConfig,
+} from '@/types/generated';
+
+// The field registry is derived from the registered Pydantic models and carries no
+// corpus scope, yet two independent consumers (the Ctrl+K index and the Admin config
+// control plane) each fetched it on mount, and every remount refetched (M-129).
+// Shared while in flight, never cached: the entry is cleared as soon as the request
+// settles, so a remount after the answer arrived still asks the server.
+let inFlightRegistry: Promise<ConfigRegistryResponse> | null = null;
 
 export const configApi = {
   /**
-   * Load full TriBrid configuration (tribrid_config.json)
+   * Load full TriBrid configuration. Null pins global scope; an omitted argument
+   * retains active URL/storage scope for existing callers.
    */
-  async load(): Promise<TriBridConfig> {
-    const { data } = await apiClient.get<TriBridConfig>(withCorpusScope(api('/config')));
+  async load(corpusId?: string | null): Promise<TriBridConfig> {
+    const path = corpusId === undefined ? withCorpusScope(api('/config'))
+      : corpusId === null ? api('/config')
+        : `${api('/config')}?corpus_id=${encodeURIComponent(corpusId)}`;
+    const { data } = await apiClient.get<TriBridConfig>(path);
     return data;
   },
 
@@ -54,6 +70,29 @@ export const configApi = {
    */
   async validate(): Promise<ModelValidationResult> {
     const { data } = await apiClient.get<ModelValidationResult>(withCorpusScope(api('/config/validate')));
+    return data;
+  },
+
+  /**
+   * Load the registry-driven config field/integration metadata.
+   */
+  async registry(): Promise<ConfigRegistryResponse> {
+    if (inFlightRegistry) return inFlightRegistry;
+    const run = apiClient
+      .get<ConfigRegistryResponse>(api('/config/registry'))
+      .then(({ data }) => data)
+      .finally(() => {
+        if (inFlightRegistry === run) inFlightRegistry = null;
+      });
+    inFlightRegistry = run;
+    return run;
+  },
+
+  /**
+   * Load current integration and secret readiness for the selected scope.
+   */
+  async readiness(): Promise<ConfigReadinessResponse> {
+    const { data } = await apiClient.get<ConfigReadinessResponse>(withCorpusScope(api('/config/readiness')));
     return data;
   },
 
