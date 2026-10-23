@@ -1,7 +1,13 @@
 import { useCallback, useState } from 'react';
 import { useAPI } from './useAPI';
-import type { IndexRequest, IndexStats, IndexStatus } from '@/types/generated';
+import type {
+  IndexRequest,
+  IndexStats,
+  IndexStatus,
+} from '@/types/generated';
 import { TerminalService } from '@/services/TerminalService';
+import { describeIndexRunConflict } from '@/utils/indexRunConflict';
+import { useRepoStore } from '@/stores/useRepoStore';
 
 type UseIndexingState = {
   status: IndexStatus | null;
@@ -31,6 +37,19 @@ type StopOptions = {
 /**
  * Shared indexing orchestration used by Dashboard + RAG tabs.
  */
+function describeIndexStartFailure(status: number, body: string): string {
+  if (status === 409) {
+    // Every fence conflict is the typed envelope (IndexRunConflictResponse), rendered by
+    // the shared helper that the corpus-delete refusal uses too; an unparseable 409 is a
+    // contract failure and is reported as such, never rendered from raw text.
+    return (
+      describeIndexRunConflict(body) ??
+      'Index request conflicted (409) but the response was not a typed envelope; check the API contract.'
+    );
+  }
+  return body || `Index request failed (${status})`;
+}
+
 export function useIndexing() {
   const { api } = useAPI();
 
@@ -101,7 +120,10 @@ export function useIndexing() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(req),
         });
-        if (!r.ok) throw new Error((await r.text().catch(() => '')) || `Index request failed (${r.status})`);
+        if (!r.ok) {
+          const text = await r.text().catch(() => '');
+          throw new Error(describeIndexStartFailure(r.status, text));
+        }
         const data: IndexStatus = await r.json();
         setState((s) => ({ ...s, status: data, loading: false }));
         return data;
@@ -129,6 +151,9 @@ export function useIndexing() {
             const [nextStatus, nextStats] = await Promise.all([
               fetchStatus(corpusId, { quiet: true }).catch(() => null),
               fetchStats(corpusId, { quiet: true }).catch(() => null),
+              // The terminal event follows the committed index. Supersede any
+              // registry read that began before it before notifying consumers.
+              useRepoStore.getState().loadRepos({ force: true }),
             ]);
             callbacks.onComplete?.(nextStatus, nextStats);
           })();
@@ -164,9 +189,9 @@ export function useIndexing() {
 
   const stopIndex = useCallback(
     async (corpusId: string, options: StopOptions = {}) => {
-      if (options.terminalId) {
-        TerminalService.disconnect(options.terminalId);
-      }
+      // The stream stays connected until the backend answers: the run's terminal
+      // event (`cancelled`, or `complete` when the stop landed after the commit)
+      // reaches the terminal, and the response status is the terminal authority.
       setState((s) => ({ ...s, loading: true, error: null }));
       try {
         const r = await fetch(api(`index/${encodeURIComponent(corpusId)}/stop`), {
@@ -175,6 +200,12 @@ export function useIndexing() {
         });
         if (!r.ok) throw new Error((await r.text().catch(() => '')) || `Stop request failed (${r.status})`);
         const data: IndexStatus = await r.json();
+        if (options.terminalId) {
+          TerminalService.disconnect(options.terminalId);
+        }
+        if (data.status === 'complete') {
+          await useRepoStore.getState().loadRepos({ force: true });
+        }
         setState((s) => ({ ...s, status: data, loading: false }));
         return data;
       } catch (e) {

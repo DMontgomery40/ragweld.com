@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useConfigField, useModels } from '@/hooks';
+import { useAPI, useConfigField, useModels } from '@/hooks';
 import { useReranker } from '@/hooks/useReranker';
+import { ModelPicker as GatewayModelPicker } from '@/components/Chat/ModelPicker';
 import { SyntheticCallout } from '@/components/RAG/SyntheticCallout';
 import { TooltipIcon } from '@/components/ui/TooltipIcon';
 import { ApiKeyStatus } from '@/components/ui/ApiKeyStatus';
+import { NumberField } from '@/components/ui/NumberField';
 import { ModelPicker } from '@/components/RAG/ModelPicker';
-import type { TrainingConfig } from '@/types/generated';
+import type { ChatModelInfo, ChatModelsResponse, RerankerInfoResponse, TrainingConfig } from '@/types/generated';
 
 const RERANKER_MODES = ['none', 'learning', 'cloud'] as const;
 type RerankerMode = (typeof RERANKER_MODES)[number];
@@ -27,15 +29,34 @@ function toApiKeyName(provider: string): string {
 
 export function RerankerConfigSubtab() {
   // Config (LAW)
-  const [mode, setMode] = useConfigField<RerankerMode>('reranking.reranker_mode', 'learning');
-  const [cloudProvider, setCloudProvider] = useConfigField<string>('reranking.reranker_cloud_provider', 'cohere');
-  const [cloudModel, setCloudModel] = useConfigField<string>('reranking.reranker_cloud_model', 'rerank-v3.5');
+  const [mode, setMode] = useConfigField<RerankerMode>('reranking.reranker_mode', 'none');
+  const [cloudProvider, setCloudProvider] = useConfigField<string>('reranking.reranker_cloud_provider', 'litellm');
+  const [cloudModel, setCloudModel] = useConfigField<string>('reranking.reranker_cloud_model', '');
   const [cloudTopN, setCloudTopN] = useConfigField<number>('reranking.reranker_cloud_top_n', 50);
+
+  // Gateway chat aliases for the LiteLLM (listwise) reranker: the same catalog the chat picker uses.
+  const { api } = useAPI();
+  const [gatewayModels, setGatewayModels] = useState<ChatModelInfo[]>([]);
+  useEffect(() => {
+    if (cloudProvider !== 'litellm') return;
+    let alive = true;
+    fetch(api('chat/models'))
+      .then((response) => (response.ok ? (response.json() as Promise<ChatModelsResponse>) : null))
+      .then((data) => {
+        if (alive) setGatewayModels(Array.isArray(data?.models) ? (data.models as ChatModelInfo[]) : []);
+      })
+      .catch(() => {
+        if (alive) setGatewayModels([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [api, cloudProvider]);
 
   // Learning reranker is configured under training + reranking
   const [learningModelPath, setLearningModelPath] = useConfigField<string>(
     'training.tribrid_reranker_model_path',
-    'models/learning-reranker-epstein-files-1'
+    'models/learning-reranker-active'
   );
   const [learningBackend, setLearningBackend] = useConfigField<LearningBackend>(
     'training.learning_reranker_backend',
@@ -59,13 +80,12 @@ export function RerankerConfigSubtab() {
   // Model catalog (via useModels hook)
   const {
     providers: allRerankProviders,
-    getModelsForProvider: getRerankModelsForProvider,
     loading: modelsLoading,
     error: modelsError,
-  } = useModels('RERANK');
+  } = useModels('RERANK', { selectionRole: 'reranker_cloud' });
 
   const cloudProviders = useMemo(() => {
-    return allRerankProviders.filter((p) => !['huggingface', 'local'].includes(p.toLowerCase()));
+    return allRerankProviders;
   }, [allRerankProviders]);
 
   // Keep config values sane when switching modes / providers
@@ -74,21 +94,13 @@ export function RerankerConfigSubtab() {
     if (!cloudProviders.length) return;
     if (!cloudProviders.includes(cloudProvider)) {
       setCloudProvider(cloudProviders[0]);
+      setCloudModel('');
     }
-  }, [mode, cloudProviders, cloudProvider, setCloudProvider]);
-
-  useEffect(() => {
-    if (mode !== 'cloud') return;
-    const models = getRerankModelsForProvider(cloudProvider);
-    if (!models.length) return;
-    if (!models.some((m) => m.model === cloudModel)) {
-      setCloudModel(models[0].model);
-    }
-  }, [mode, cloudProvider, cloudModel, getRerankModelsForProvider, setCloudModel]);
+  }, [mode, cloudProviders, cloudProvider, setCloudProvider, setCloudModel]);
 
   // Runtime info (server)
   const { getInfo } = useReranker();
-  const [runtimeInfo, setRuntimeInfo] = useState<any>(null);
+  const [runtimeInfo, setRuntimeInfo] = useState<RerankerInfoResponse | null>(null);
   const [runtimeLoading, setRuntimeLoading] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
 
@@ -136,7 +148,7 @@ export function RerankerConfigSubtab() {
         </div>
       </div>
 
-      <SyntheticCallout context="reranker-config" />
+      <SyntheticCallout context="reranker" />
 
       <div
         style={{
@@ -150,6 +162,7 @@ export function RerankerConfigSubtab() {
           <button
             key={m}
             className="small-button"
+            data-testid={`reranker-mode-${m}`}
             onClick={() => setMode(m)}
             style={{
               padding: '10px 12px',
@@ -199,8 +212,12 @@ export function RerankerConfigSubtab() {
                 Provider <TooltipIcon name="RERANKER_CLOUD_PROVIDER" />
               </label>
               <select
+                data-testid="reranker-cloud-provider"
                 value={cloudProvider}
-                onChange={(e) => setCloudProvider(e.target.value)}
+                onChange={(e) => {
+                  setCloudProvider(e.target.value);
+                  setCloudModel('');
+                }}
                 disabled={modelsLoading || cloudProviders.length === 0}
               >
                 {cloudProviders.length === 0 && <option value="">No providers found</option>}
@@ -212,17 +229,35 @@ export function RerankerConfigSubtab() {
               </select>
             </div>
 
-            <div className="input-group">
-              <ModelPicker
-                componentType="RERANK"
-                provider={cloudProvider}
-                value={cloudModel}
-                onChange={setCloudModel}
-                label="Model"
-                tooltipKey="RERANKER_CLOUD_MODEL"
-                disabled={modelsLoading}
-              />
-            </div>
+            {cloudProvider === 'litellm' ? (
+              // The LiteLLM reranker scores candidates listwise with a gateway chat alias, so the
+              // choices are the gateway's chat aliases (the chat picker's list), not rerank-API models.
+              <div className="input-group">
+                <label>
+                  Model <TooltipIcon name="RERANKER_CLOUD_MODEL" />
+                </label>
+                <GatewayModelPicker
+                  value={cloudModel}
+                  onChange={setCloudModel}
+                  models={gatewayModels}
+                  valueMode="id"
+                  testId="reranker-cloud-model"
+                />
+              </div>
+            ) : (
+              <div className="input-group">
+                <ModelPicker
+                  componentType="RERANK"
+                  selectionRole="reranker_cloud"
+                  provider={cloudProvider}
+                  value={cloudModel}
+                  onChange={setCloudModel}
+                  label="Model"
+                  tooltipKey="RERANKER_CLOUD_MODEL"
+                  disabled={modelsLoading}
+                />
+              </div>
+            )}
           </div>
 
           <div className="input-row">
@@ -230,12 +265,12 @@ export function RerankerConfigSubtab() {
               <label>
                 Cloud Top-N <TooltipIcon name="RERANKER_CLOUD_TOP_N" />
               </label>
-              <input
-                type="number"
+              <NumberField
+                configPath="reranking.reranker_cloud_top_n"
                 min={1}
-                max={100}
+                max={200}
                 value={cloudTopN}
-                onChange={(e) => setCloudTopN(parseInt(e.target.value || '50', 10))}
+                onCommit={setCloudTopN}
               />
             </div>
             <div className="input-group">
@@ -266,7 +301,7 @@ export function RerankerConfigSubtab() {
                 type="text"
                 value={learningModelPath}
                 onChange={(e) => setLearningModelPath(e.target.value)}
-                placeholder="models/learning-reranker-epstein-files-1"
+                placeholder="models/learning-reranker-active"
               />
             </div>
             <div className="input-group" />
@@ -283,13 +318,14 @@ export function RerankerConfigSubtab() {
               </select>
             </div>
             <div className="input-group">
-              <ModelPicker
-                componentType="RERANK"
+              <label>
+                Base model <TooltipIcon name="LEARNING_RERANKER_BASE_MODEL" />
+              </label>
+              <input
+                type="text"
                 value={learningBaseModel}
-                onChange={setLearningBaseModel}
-                label="Base model"
-                tooltipKey="LEARNING_RERANKER_BASE_MODEL"
-                allowCustom
+                onChange={(e) => setLearningBaseModel(e.target.value)}
+                placeholder="Qwen/Qwen3-Reranker-0.6B"
               />
             </div>
           </div>
@@ -299,37 +335,37 @@ export function RerankerConfigSubtab() {
               <label>
                 Alpha <TooltipIcon name="TRIBRID_RERANKER_ALPHA" />
               </label>
-              <input
-                type="number"
+              <NumberField
+                configPath="reranking.tribrid_reranker_alpha"
                 min={0}
                 max={1}
                 step={0.05}
                 value={alpha}
-                onChange={(e) => setAlpha(parseFloat(e.target.value || '0.7'))}
+                onCommit={setAlpha}
               />
             </div>
             <div className="input-group">
               <label>
                 Top-N <TooltipIcon name="TRIBRID_RERANKER_TOPN" />
               </label>
-              <input
-                type="number"
+              <NumberField
+                configPath="reranking.tribrid_reranker_topn"
                 min={10}
                 max={200}
                 value={topN}
-                onChange={(e) => setTopN(parseInt(e.target.value || '10', 10))}
+                onCommit={setTopN}
               />
             </div>
             <div className="input-group">
               <label>
                 Batch <TooltipIcon name="TRIBRID_RERANKER_BATCH" />
               </label>
-              <input
-                type="number"
+              <NumberField
+                configPath="reranking.tribrid_reranker_batch"
                 min={1}
                 max={128}
                 value={batch}
-                onChange={(e) => setBatch(parseInt(e.target.value || '16', 10))}
+                onCommit={setBatch}
               />
             </div>
           </div>
@@ -339,24 +375,24 @@ export function RerankerConfigSubtab() {
               <label>
                 Max length <TooltipIcon name="TRIBRID_RERANKER_MAXLEN" />
               </label>
-              <input
-                type="number"
-                min={64}
+              <NumberField
+                configPath="reranking.tribrid_reranker_maxlen"
+                min={128}
                 max={2048}
                 value={maxLen}
-                onChange={(e) => setMaxLen(parseInt(e.target.value || '512', 10))}
+                onCommit={setMaxLen}
               />
             </div>
             <div className="input-group">
               <label>
                 Unload after sec <TooltipIcon name="LEARNING_RERANKER_UNLOAD_AFTER_SEC" />
               </label>
-              <input
-                type="number"
+              <NumberField
+                configPath="training.learning_reranker_unload_after_sec"
                 min={0}
                 max={86400}
                 value={learningUnloadAfterSec}
-                onChange={(e) => setLearningUnloadAfterSec(parseInt(e.target.value || '0', 10))}
+                onCommit={setLearningUnloadAfterSec}
               />
             </div>
             <div className="input-group" />
@@ -379,13 +415,14 @@ export function RerankerConfigSubtab() {
             <label>
               Input snippet chars <TooltipIcon name="RERANK_INPUT_SNIPPET_CHARS" />
             </label>
-            <input
-              type="number"
-              min={100}
-              max={5000}
+            <NumberField
+              data-testid="reranker-config-snippet-chars"
+              configPath="reranking.rerank_input_snippet_chars"
+              min={200}
+              max={2000}
               step={50}
               value={snippetChars}
-              onChange={(e) => setSnippetChars(parseInt(e.target.value || '700', 10))}
+              onCommit={setSnippetChars}
             />
           </div>
           <div className="input-group" />
@@ -408,19 +445,37 @@ export function RerankerConfigSubtab() {
         </div>
 
         {runtimeError && <div style={{ color: 'var(--err)', marginBottom: 8 }}>{runtimeError}</div>}
-        {!runtimeError && runtimeInfo && (
-          <div style={{ fontSize: 12, color: 'var(--fg-muted)', lineHeight: 1.6 }}>
-            <div>
-              <strong style={{ color: 'var(--fg)' }}>Enabled:</strong> {String(runtimeInfo.enabled ?? '—')}
+        {!runtimeError && runtimeInfo && (() => {
+          const rmode = String(runtimeInfo.reranker_mode || 'none');
+          const configuredLabel =
+            rmode === 'cloud'
+              ? `Cloud (${runtimeInfo.reranker_cloud_provider || '—'} / ${runtimeInfo.reranker_cloud_model || '—'})`
+              : rmode === 'learning'
+                ? `Learning (${runtimeInfo.resolved_path || runtimeInfo.path || 'no adapter promoted'})`
+                : 'Disabled';
+          const isActive = Boolean(runtimeInfo.active);
+          return (
+            <div style={{ fontSize: 13, color: 'var(--fg-muted)', lineHeight: 1.6 }}>
+              <div
+                data-testid="reranker-authoritative-status"
+                style={{ color: 'var(--fg)', fontWeight: 600, fontSize: 13 }}
+              >
+                Configured: {configuredLabel} · Active: {isActive ? 'yes' : 'no'}
+              </div>
+              {runtimeInfo.active_reason ? (
+                <div data-testid="reranker-active-reason" style={{ marginTop: 4, fontSize: 12.5 }}>
+                  {runtimeInfo.active_reason}
+                </div>
+              ) : null}
+              <div style={{ marginTop: 8, fontSize: 12.5 }}>
+                <span style={{ color: 'var(--fg)' }}>Device:</span> {runtimeInfo.device ?? '—'}
+                {'    '}
+                <span style={{ color: 'var(--fg)' }}>Model:</span>{' '}
+                {runtimeInfo.resolved_path || runtimeInfo.path || '—'}
+              </div>
             </div>
-            <div>
-              <strong style={{ color: 'var(--fg)' }}>Device:</strong> {runtimeInfo.device ?? '—'}
-            </div>
-            <div>
-              <strong style={{ color: 'var(--fg)' }}>Model:</strong> {runtimeInfo.resolved_path || runtimeInfo.path || '—'}
-            </div>
-          </div>
-        )}
+          );
+        })()}
 
         {!runtimeError && !runtimeInfo && (
           <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
