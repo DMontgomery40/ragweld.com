@@ -1,103 +1,94 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useConfigStore } from '@/stores';
+import { confirmDialog } from '@/components/ui/confirmDialog';
+import { changedConfigPaths, indexInvalidatingChanges } from '@/utils/configDiff';
+import type { IndexContractConflict } from '@/utils/saveErrorMessage';
 
 /**
- * Hook for managing the sidepanel Apply button
- * ADA CRITICAL: This button saves all settings changes
- * Must be fully functional for accessibility compliance
- */
-/**
- * ---agentspec
- * what: |
- *   Custom React hook that manages the "Apply" button state for configuration changes.
- *   Tracks dirty state (whether config differs from baseline), saving state, and save errors using local useState and Zustand store snapshots.
- *   Returns state variables: isDirty (boolean), isSaving (boolean), saveError (string | null), and baselineRef (MutableRefObject).
- *   Initializes baselineRef to null and captures initial Zustand store state (config and saving flag) into local state snapshots.
- *   Edge case: Does not subscribe to Zustand store updates; snapshots are captured only at mount time, so subsequent store changes are not reflected.
+ * Manages the global "Apply N changes" button.
  *
- * why: |
- *   Separates UI state management (isDirty, isSaving, saveError) from Zustand global state to avoid adding extra hooks to the App component.
- *   Uses baselineRef to store the original config value for dirty-state comparison without triggering re-renders.
- *   Captures store state at initialization to provide a consistent baseline, avoiding the need for useShallow or manual subscription logic.
- *
- * guardrails:
- *   - DO NOT rely on this hook to reflect real-time Zustand store updates; snapshots are frozen at mount time and will not update if the store changes
- *   - ALWAYS initialize baselineRef.current with the actual config value before comparing isDirty, or dirty detection will fail
- *   - NOTE: This hook does not include useEffect subscriptions to Zustand; if store state must be reactive, consider adding useShallow or a custom subscription
- *   - ASK USER: Confirm whether configSnapshot and storeSaving should auto-update when the Zustand store changes, or if frozen snapshots at mount are intentional
- * ---/agentspec
+ * Dirty truth comes from the config store: `config` is the working copy (staged edits),
+ * `persisted` is the last server-acknowledged snapshot. Loads and corpus switches replace
+ * both, so navigation never reads as an operator edit. Nothing is written to the server until
+ * Apply, which PUTs the whole config through the one path that enforces the index-contract
+ * lock and restores redacted secrets (server/api/config.py `update_config`).
  */
 export function useApplyButton() {
-  const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const baselineRef = useRef<string | null>(null);
+  const [justSaved, setJustSaved] = useState(false);
 
-  // Local snapshots of Zustand store state (avoids adding an extra hook to App)
-  const [configSnapshot, setConfigSnapshot] = useState(useConfigStore.getState().config);
-  const [storeSaving, setStoreSaving] = useState(useConfigStore.getState().saving);
-  const [storeError, setStoreError] = useState<string | null>(
-    useConfigStore.getState().error ? String(useConfigStore.getState().error) : null
-  );
-
-  // Allow explicit dirty signals from modules that update config outside the store helpers.
-  useEffect(() => {
-    const handleFormChange = () => {
-      setIsDirty(true);
-      setSaveError(null);
+  const [storeState, setStoreState] = useState(() => {
+    const s = useConfigStore.getState();
+    return {
+      config: s.config,
+      persisted: s.persisted,
+      saving: s.saving,
+      error: s.error,
+      saveConflict: s.saveConflict,
     };
+  });
 
-    // Listen for custom dirty events from modules
-    window.addEventListener('tribrid-form-dirty', handleFormChange);
-
-    return () => {
-      window.removeEventListener('tribrid-form-dirty', handleFormChange);
-    };
-  }, []);
-
-  // Subscribe to Zustand store for config/saving/error without adding extra hooks
   useEffect(() => {
-    const unsubscribe = useConfigStore.subscribe(state => {
-      const cfg = state.config;
-      setConfigSnapshot(cfg);
-      // set baseline if first time
-      if (cfg && !baselineRef.current) {
-        baselineRef.current = JSON.stringify(cfg);
-      }
-      setStoreSaving(state.saving);
-      setStoreError(state.error ? String(state.error) : null);
+    const unsubscribe = useConfigStore.subscribe((state) => {
+      setStoreState({
+        config: state.config,
+        persisted: state.persisted,
+        saving: state.saving,
+        error: state.error,
+        saveConflict: state.saveConflict,
+      });
     });
     return () => {
       unsubscribe();
     };
   }, []);
 
-  // Keep baseline snapshot for dirty comparison
-  useEffect(() => {
-    if (configSnapshot && !baselineRef.current) {
-      baselineRef.current = JSON.stringify(configSnapshot);
-    }
-  }, [configSnapshot]);
+  const changedPaths = useMemo(
+    () => changedConfigPaths(storeState.persisted, storeState.config),
+    [storeState.persisted, storeState.config]
+  );
+  const dirtyCount = changedPaths.length;
+  const isDirty = dirtyCount > 0;
 
-  // Mark dirty when config diverges from baseline
-  useEffect(() => {
-    if (!configSnapshot || !baselineRef.current) return;
-    const snapshot = JSON.stringify(configSnapshot);
-    const dirty = snapshot !== baselineRef.current;
-    setIsDirty(dirty);
-    // Once the config changes, any previous save error is stale even if the form
-    // ends up back at the clean baseline state.
-    setSaveError(null);
-  }, [configSnapshot]);
+  const invalidatingSections = useMemo(
+    () => indexInvalidatingChanges(storeState.persisted, storeState.config),
+    [storeState.persisted, storeState.config]
+  );
 
-  // Ensure config is loaded on mount
+  // A staged edit clears the "Saved" acknowledgement: it is only true immediately after a
+  // successful Apply, so the footer confirms the write happened (C-12) and then goes quiet.
   useEffect(() => {
-    if (!configSnapshot && !storeSaving) {
-      useConfigStore.getState().loadConfig().catch(() => {});
-    }
-  }, [configSnapshot, storeSaving]);
+    if (isDirty && justSaved) setJustSaved(false);
+  }, [isDirty, justSaved]);
 
   const handleApply = useCallback(async () => {
+    // When staged edits touch chunking/embedding/tokenization, applying them makes the stored
+    // index no longer match the config. Warn with the exact sections and count before the write
+    // (M-08); the server still enforces its own 409 contract lock over a populated index.
+    const sectionsNow = indexInvalidatingChanges(
+      useConfigStore.getState().persisted,
+      useConfigStore.getState().config
+    );
+    const countNow = changedConfigPaths(
+      useConfigStore.getState().persisted,
+      useConfigStore.getState().config
+    ).length;
+    if (sectionsNow.length > 0) {
+      const list = sectionsNow.join(', ');
+      const proceed = await confirmDialog({
+        title: 'Apply changes that affect the index',
+        message:
+          `${countNow} change${countNow === 1 ? '' : 's'} staged. ` +
+          `${sectionsNow.length === 1 ? 'One section' : 'Some sections'} you changed (${list}) ` +
+          `determine how the current index was built, so applying will make the stored index no ` +
+          `longer match the config — you may need to re-index this corpus. Apply anyway?`,
+        confirmLabel: `Apply ${countNow} change${countNow === 1 ? '' : 's'}`,
+        cancelLabel: 'Keep editing',
+      });
+      if (!proceed) return undefined;
+    }
+
     setIsSaving(true);
     setSaveError(null);
 
@@ -113,35 +104,32 @@ export function useApplyButton() {
         throw new Error('Configuration not loaded');
       }
 
-      // Save via Pydantic/Zustand pipeline (TriBridConfig is the law)
+      // Save via Pydantic/Zustand pipeline
       await useConfigStore.getState().saveConfig(currentConfig);
       const postSaveError = useConfigStore.getState().error;
       if (postSaveError) {
         throw new Error(String(postSaveError));
       }
 
-      // Refresh snapshot after save
       const savedConfig = useConfigStore.getState().config || currentConfig;
-      baselineRef.current = JSON.stringify(savedConfig);
+      // A transient acknowledgement: show "Saved", then go quiet. The timeout also stops the
+      // ack from surviving a corpus switch (which replaces config/persisted, leaving isDirty
+      // false) and reading "Saved" on a corpus that was never saved here.
+      setJustSaved(true);
+      window.setTimeout(() => setJustSaved(false), 2500);
 
-      setIsDirty(false);
-      console.log('[useApplyButton] Configuration saved successfully');
-
-      // Show success status if available
       if (w.showStatus) {
         w.showStatus('Settings saved successfully', 'success');
       }
 
-      // Emit success event for any listeners
-      window.dispatchEvent(new CustomEvent('tribrid-config-saved', { detail: savedConfig }));
-
       return savedConfig;
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      console.error('[useApplyButton] Failed to save configuration:', err);
+      // The store already shaped a server-authored message (never the raw axios string); prefer
+      // it over the thrown Error so the footer and the toast read identically (M-20).
+      const storeError = useConfigStore.getState().error;
+      const message = storeError || (err instanceof Error ? err.message : 'Unknown error');
       setSaveError(message);
 
-      // Show error status if available
       const w = window as any;
       if (w.showStatus) {
         w.showStatus(`Failed to save: ${message}`, 'error');
@@ -153,23 +141,25 @@ export function useApplyButton() {
     }
   }, []);
 
-  // Provide a way to manually mark as dirty (for programmatic changes)
-  const markDirty = useCallback(() => {
-    setIsDirty(true);
+  // 409 index-contract conflict: discard the local edits and pull the server's current config so
+  // the operator can re-decide against the truth, rather than staring at a write the server keeps
+  // refusing (M-20).
+  const reloadLatest = useCallback(async () => {
+    setSaveError(null);
+    await useConfigStore.getState().loadConfig();
   }, []);
 
-  // Provide a way to manually mark as clean (after save)
-  const markClean = useCallback(() => {
-    setIsDirty(false);
-    setSaveError(null);
-  }, []);
+  const saveConflict: IndexContractConflict | null = storeState.saveConflict;
 
   return {
     handleApply,
+    reloadLatest,
     isDirty,
-    isSaving: isSaving || storeSaving,
-    saveError: saveError || (storeError ? String(storeError) : null),
-    markDirty,
-    markClean
+    dirtyCount,
+    invalidatingSections,
+    justSaved,
+    saveConflict,
+    isSaving: isSaving || storeState.saving,
+    saveError: saveError || (storeState.error ? String(storeState.error) : null),
   };
 }
