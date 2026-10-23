@@ -3,31 +3,42 @@
  *
  * Goal:
  * - Keep the *layout* and UX patterns from the legacy IndexingSubtab (cards, panels, advanced details, slide-down terminal)
- * - Wire everything to TriBridConfig (Pydantic is the law) and corpus-first state (useRepoStore)
+ * - Wire public config to TriBridConfig and corpus-first state to useRepoStore
  * - No hardcoded model lists (load from /api/models)
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useAPI, useConfig, useConfigField, useEmbeddingModel, useEmbeddingStatus, useIndexing, useModels } from '@/hooks';
+import {
+  useAPI,
+  useConfig,
+  useConfigField,
+  useEmbeddingModel,
+  useEmbeddingStatus,
+  useIndexing,
+  useModels,
+  useRuntimeCapabilities,
+} from '@/hooks';
 import { useRepoStore } from '@/stores/useRepoStore';
 import { LiveTerminal, type LiveTerminalHandle } from '@/components/LiveTerminal/LiveTerminal';
 import { RepositoryConfig } from '@/components/RAG/RepositoryConfig';
 import { SyntheticCallout } from '@/components/RAG/SyntheticCallout';
 import { ModelPicker } from '@/components/RAG/ModelPicker';
+import { ModelPicker as ChatModelPicker } from '@/components/Chat/ModelPicker';
 import { PromptLink } from '@/components/ui/PromptLink';
 import { EmbeddingMismatchWarning } from '@/components/ui/EmbeddingMismatchWarning';
 import { TooltipIcon } from '@/components/ui/TooltipIcon';
+import { confirmDialog } from '@/components/ui/confirmDialog';
 import { indexingApi } from '@/api';
 import { formatBytes, formatCurrency, formatDuration, formatNumber } from '@/utils/formatters';
 import type {
+  ChatModelInfo,
+  ChatModelsResponse,
   IndexEstimate,
   IndexRequest,
   IndexRunEvent,
   IndexRunSummary,
   IndexStats,
   IndexStatus,
-  VocabPreviewResponse,
-  VocabPreviewTerm,
 } from '@/types/generated';
 import { describeEmbeddingProviderStrategy } from '@/utils/embeddingStrategy';
 
@@ -45,22 +56,22 @@ const COMPONENT_CARDS: Array<{
   { id: 'enrichment', icon: '🧠', label: 'Graph & Options', description: 'Graph build + dense skip mode' },
 ];
 
-const CHUNKING_STRATEGIES = [
+const FALLBACK_CHUNKING_STRATEGIES = [
   { id: 'fixed_tokens', label: 'Fixed tokens', description: 'Token-window chunking (best default for text corpora)' },
   { id: 'recursive', label: 'Recursive', description: 'Separator-based chunking packed by token target (docs/transcripts)' },
   { id: 'markdown', label: 'Markdown', description: 'Split by headings then pack by tokens (docs/notes)' },
   { id: 'sentence', label: 'Sentence', description: 'Sentence boundaries packed by tokens (prose)' },
   { id: 'qa_blocks', label: 'Q/A blocks', description: 'Detect Q:/A: blocks then pack by tokens (interviews/dumps)' },
+  { id: 'greedy', label: 'Greedy', description: 'Legacy fixed-char fallback using the greedy target size' },
   { id: 'fixed_chars', label: 'Fixed chars', description: 'Character windowing with overlap (fallback, legacy)' },
   { id: 'ast', label: 'AST-aware', description: 'Preserve functions/blocks (best for code)' },
   { id: 'hybrid', label: 'Hybrid', description: 'AST with fallback behavior' },
 ];
 
-const RUNTIME_SUPPORTED_PROVIDER_EMBEDDERS = ['openai', 'mlx', 'local', 'huggingface'];
-
 export function IndexingSubtab() {
   const { api } = useAPI();
   const { config, flushPendingPatches } = useConfig();
+  const { capabilities: runtimeCapabilities } = useRuntimeCapabilities();
   const { activeRepo, repos, loadRepos, setActiveRepo } = useRepoStore();
   const {
     fetchStatus: fetchIndexStatus,
@@ -91,7 +102,7 @@ export function IndexingSubtab() {
   const [embeddingDim, setEmbeddingDim] = useConfigField<number>('embedding.embedding_dim', 0);
   const [embeddingBatchSize, setEmbeddingBatchSize] = useConfigField<number>('embedding.embedding_batch_size', 0);
   const [embeddingMaxTokens, setEmbeddingMaxTokens] = useConfigField<number>('embedding.embedding_max_tokens', 0);
-  const [embeddingCacheEnabled, setEmbeddingCacheEnabled] = useConfigField<number>('embedding.embedding_cache_enabled', 1);
+  const [embeddingCacheEnabled, setEmbeddingCacheEnabled] = useConfigField<boolean>('embedding.embedding_cache_enabled', true);
   const [embeddingTimeout, setEmbeddingTimeout] = useConfigField<number>('embedding.embedding_timeout', 0);
   const [embeddingRetryMax, setEmbeddingRetryMax] = useConfigField<number>('embedding.embedding_retry_max', 0);
   const [embeddingBackend, setEmbeddingBackend] =
@@ -131,7 +142,7 @@ export function IndexingSubtab() {
   const [maxIndexableFileSize, setMaxIndexableFileSize] = useConfigField<number>('chunking.max_indexable_file_size', 0);
   const [minChunkChars, setMinChunkChars] = useConfigField<number>('chunking.min_chunk_chars', 0);
   const [greedyFallbackTarget, setGreedyFallbackTarget] = useConfigField<number>('chunking.greedy_fallback_target', 0);
-  const [preserveImports, setPreserveImports] = useConfigField<number>('chunking.preserve_imports', 1);
+  const [preserveImports, setPreserveImports] = useConfigField<boolean>('chunking.preserve_imports', true);
   const [targetTokens, setTargetTokens] = useConfigField<number>('chunking.target_tokens', 512);
   const [overlapTokens, setOverlapTokens] = useConfigField<number>('chunking.overlap_tokens', 64);
   const [separators, setSeparators] = useConfigField<string[]>('chunking.separators', ['\n\n', '\n', '. ', ' ', '']);
@@ -174,32 +185,56 @@ export function IndexingSubtab() {
     'indexing.parquet_extract_max_cell_chars',
     20_000
   );
-  const [parquetExtractTextColumnsOnly, setParquetExtractTextColumnsOnly] = useConfigField<number>(
+  const [parquetExtractTextColumnsOnly, setParquetExtractTextColumnsOnly] = useConfigField<boolean>(
     'indexing.parquet_extract_text_columns_only',
-    1
+    true
   );
-  const [parquetExtractIncludeColumnNames, setParquetExtractIncludeColumnNames] = useConfigField<number>(
+  const [parquetExtractIncludeColumnNames, setParquetExtractIncludeColumnNames] = useConfigField<boolean>(
     'indexing.parquet_extract_include_column_names',
-    1
+    true
   );
 
-  const [skipDense, setSkipDense] = useConfigField<number>('indexing.skip_dense', 0);
+  const [skipDense, setSkipDense] = useConfigField<boolean>('indexing.skip_dense', false);
   const [graphIndexingEnabled, setGraphIndexingEnabled] = useConfigField<boolean>('graph_indexing.enabled', true);
   const [lexicalGraphEnabled, setLexicalGraphEnabled] = useConfigField<boolean>('graph_indexing.build_lexical_graph', true);
   const [storeChunkEmbeddings, setStoreChunkEmbeddings] = useConfigField<boolean>('graph_indexing.store_chunk_embeddings', true);
   const [semanticKgEnabled, setSemanticKgEnabled] = useConfigField<boolean>('graph_indexing.semantic_kg_enabled', false);
-  const [semanticKgMode, setSemanticKgMode] = useConfigField<'heuristic' | 'llm'>('graph_indexing.semantic_kg_mode', 'heuristic');
-  const [semanticKgMaxChunks, setSemanticKgMaxChunks] = useConfigField<number>('graph_indexing.semantic_kg_max_chunks', 200);
+  const [semanticKgMode, setSemanticKgMode] = useConfigField<'heuristic' | 'llm'>('graph_indexing.semantic_kg_mode', 'llm');
+  const [semanticKgMaxChunks, setSemanticKgMaxChunks] = useConfigField<number>('graph_indexing.semantic_kg_max_chunks', 40000);
   const [semanticKgLlmModel, setSemanticKgLlmModel] = useConfigField<string>('graph_indexing.semantic_kg_llm_model', '');
-  const [semanticKgMaxConcepts, setSemanticKgMaxConcepts] = useConfigField<number>(
-    'graph_indexing.semantic_kg_max_concepts_per_chunk',
-    8
-  );
+  const [generationModels, setGenerationModels] = useState<ChatModelInfo[]>([]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const scope = String(activeRepo || '').trim();
+    const query = scope ? `?corpus_id=${encodeURIComponent(scope)}` : '';
+    fetch(api(`chat/models${query}`), { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(String(response.status));
+        return response.json();
+      })
+      .then((payload) => {
+        const rows = (payload as ChatModelsResponse).models;
+        setGenerationModels(Array.isArray(rows) ? rows : []);
+      })
+      .catch((cause) => {
+        if (cause instanceof DOMException && cause.name === 'AbortError') return;
+        setGenerationModels([]);
+      });
+    return () => controller.abort();
+  }, [activeRepo, api]);
 
   // (Models loaded via useModels hook below — no manual state needed)
 
   // Index stats + status
   const [_indexStatus, setIndexStatus] = useState<IndexStatus | null>(null);
+  // A run adopted from the server because it was started outside this tab (API, another
+  // operator, a schedule). Progress, current file and events are mirrored by polling.
+  const [foreignRun, setForeignRun] = useState(false);
+  const foreignRunIdRef = useRef<string>('');
+  const foreignEventsSeenRef = useRef(0);
+  const localRunRef = useRef(false);
+  const isIndexingRef = useRef(false);
   const [latestRun, setLatestRun] = useState<IndexRunSummary | null>(null);
   const [latestRunEvents, setLatestRunEvents] = useState<IndexRunEvent[]>([]);
   const [indexStats, setIndexStats] = useState<IndexStats | null>(null);
@@ -211,12 +246,6 @@ export function IndexingSubtab() {
   const statusAbortRef = useRef<AbortController | null>(null);
   const statsAbortRef = useRef<AbortController | null>(null);
 
-  // Vocab preview state
-  const [vocabPreview, setVocabPreview] = useState<VocabPreviewTerm[]>([]);
-  const [vocabLoading, setVocabLoading] = useState(false);
-  const [vocabTopN, setVocabTopN] = useState(50);
-  const [vocabTotal, setVocabTotal] = useState(0);
-  const [vocabExpanded, setVocabExpanded] = useState(false);
 
   // Ensure corpora loaded
   useEffect(() => {
@@ -240,6 +269,12 @@ export function IndexingSubtab() {
   }, [activeRepo, effectivePath]);
 
   useEffect(() => {
+    if (semanticKgEnabled && semanticKgMode !== 'llm') {
+      setSemanticKgMode('llm');
+    }
+  }, [semanticKgEnabled, semanticKgMode, setSemanticKgMode]);
+
+  useEffect(() => {
     activeRepoRef.current = String(activeRepo || '').trim();
   }, [activeRepo]);
 
@@ -260,27 +295,47 @@ export function IndexingSubtab() {
     loading: modelsLoading,
     error: modelsError,
     findModel: findEmbedModel,
-  } = useModels('EMB');
+  } = useModels('EMB', { selectionRole: 'embedding_provider' });
   const { status: embeddingStatus } = useEmbeddingStatus();
+  const runtimeEmbeddingProviders = useMemo(
+    () =>
+      (runtimeCapabilities?.embedding?.providers || [])
+        .map((provider) => String(provider.provider || '').trim().toLowerCase())
+        .filter(Boolean),
+    [runtimeCapabilities]
+  );
+  const chunkingStrategies = useMemo(
+    () =>
+      runtimeCapabilities?.chunking?.strategies?.length
+        ? runtimeCapabilities.chunking.strategies
+        : FALLBACK_CHUNKING_STRATEGIES,
+    [runtimeCapabilities]
+  );
 
   const normalizedEmbeddingType = useMemo(
     () => String(embeddingType || '').trim().toLowerCase(),
     [embeddingType]
   );
   const supportedRuntimeProvider = useMemo(
-    () => RUNTIME_SUPPORTED_PROVIDER_EMBEDDERS.includes(normalizedEmbeddingType),
-    [normalizedEmbeddingType]
+    () => {
+      const knownProviders = runtimeEmbeddingProviders.length
+        ? runtimeEmbeddingProviders
+        : (embedProviders || []).map((provider) => String(provider || '').trim().toLowerCase()).filter(Boolean);
+      return knownProviders.includes(normalizedEmbeddingType);
+    },
+    [embedProviders, normalizedEmbeddingType, runtimeEmbeddingProviders]
   );
   const visibleEmbedProviders = useMemo(() => {
+    if (!runtimeEmbeddingProviders.length) return embedProviders;
     const filtered = (embedProviders || []).filter((p) =>
-      RUNTIME_SUPPORTED_PROVIDER_EMBEDDERS.includes(String(p || '').trim().toLowerCase())
+      runtimeEmbeddingProviders.includes(String(p || '').trim().toLowerCase())
     );
     if (!filtered.length) return embedProviders;
     if (normalizedEmbeddingType && !filtered.some((p) => String(p).toLowerCase() === normalizedEmbeddingType)) {
       return [normalizedEmbeddingType, ...filtered];
     }
     return filtered;
-  }, [embedProviders, normalizedEmbeddingType]);
+  }, [embedProviders, normalizedEmbeddingType, runtimeEmbeddingProviders]);
   const hasIndexedCorpus = useMemo(() => {
     if (!embeddingStatus) return false;
     return Boolean(embeddingStatus.hasIndex && Number(embeddingStatus.totalChunks || 0) > 0);
@@ -350,27 +405,32 @@ export function IndexingSubtab() {
   );
 
   const tokenizationCompatibility = useMemo(() => {
-    if (skipDense === 1) return { ok: true as const, message: '' };
+    if (skipDense) return { ok: true as const, message: '' };
     if (String(embeddingBackend || '').toLowerCase() !== 'provider') return { ok: true as const, message: '' };
     const provider = normalizedEmbeddingType;
     const strategy = String(tokenizationStrategy || '').trim().toLowerCase();
-    const requiredByProvider: Record<string, string[]> = {
-      openai: ['tiktoken'],
-      mlx: ['huggingface'],
-      local: ['huggingface'],
-      huggingface: ['huggingface'],
-    };
-    const required = requiredByProvider[provider];
-    if (!required) return { ok: true as const, message: '' };
+    const required =
+      (runtimeCapabilities?.embedding?.providers || [])
+        .find((item) => String(item.provider || '').trim().toLowerCase() === provider)
+        ?.tokenizer_strategies || [];
+    if (!required.length) return { ok: true as const, message: '' };
     if (required.includes(strategy)) return { ok: true as const, message: '' };
     return {
       ok: false as const,
       message: `embedding_type=${provider} requires tokenization.strategy=${required.join(' or ')}`,
     };
-  }, [embeddingBackend, normalizedEmbeddingType, skipDense, tokenizationStrategy]);
+  }, [embeddingBackend, normalizedEmbeddingType, runtimeCapabilities, skipDense, tokenizationStrategy]);
 
   const indexBlockingReason = useMemo(() => {
-    if (skipDense !== 1 && String(embeddingBackend || '').toLowerCase() === 'provider' && !supportedRuntimeProvider) {
+    const semanticAlias = String(semanticKgLlmModel || '').trim();
+    if (
+      semanticKgEnabled
+      && semanticAlias
+      && !generationModels.some((model) => String(model.id || '').trim() === semanticAlias)
+    ) {
+      return `Semantic KG alias '${semanticAlias}' is not available from LiteLLM.`;
+    }
+    if (!skipDense && String(embeddingBackend || '').toLowerCase() === 'provider' && !supportedRuntimeProvider) {
       return `Embedding provider '${normalizedEmbeddingType}' is not supported by the current backend runtime.`;
     }
     if (!tokenizationCompatibility.ok) {
@@ -385,6 +445,9 @@ export function IndexingSubtab() {
     embeddingStatus?.isMismatched,
     forceReindex,
     normalizedEmbeddingType,
+    generationModels,
+    semanticKgEnabled,
+    semanticKgLlmModel,
     skipDense,
     supportedRuntimeProvider,
     tokenizationCompatibility,
@@ -451,7 +514,7 @@ export function IndexingSubtab() {
 
   const loadLatestRunReplay = useCallback(async () => {
     const rid = String(activeRepo || '').trim();
-    if (!rid || isIndexing) {
+    if (!rid || isIndexingRef.current) {
       return;
     }
     try {
@@ -500,7 +563,11 @@ export function IndexingSubtab() {
     } catch {
       // best effort only
     }
-  }, [activeRepo, api, isIndexing, resetTerminal]);
+  }, [activeRepo, api, resetTerminal]);
+
+  useEffect(() => {
+    isIndexingRef.current = isIndexing;
+  }, [isIndexing]);
 
   useEffect(() => {
     void refreshStatus();
@@ -508,14 +575,117 @@ export function IndexingSubtab() {
     void loadLatestRunReplay();
   }, [refreshStatus, loadStats, loadLatestRunReplay]);
 
+  // Poll the corpus status so a run started anywhere (API, another operator, a schedule)
+  // shows up here exactly like one started from this tab: progress bar, current file,
+  // replayed + live events, Stop button, Start disabled. Without this the tab only knew
+  // about runs it had started itself.
+  useEffect(() => {
+    const rid = String(activeRepo || '').trim();
+    if (!rid) return;
+    let cancelled = false;
+    const appendEvents = (events: IndexRunEvent[]) => {
+      const fresh = events.slice(foreignEventsSeenRef.current);
+      for (const ev of fresh) {
+        const msg = String(ev.message || '').trim();
+        if (!msg) continue;
+        if (ev.type === 'error') terminalRef.current?.appendLine(`\x1b[31m${msg}\x1b[0m`);
+        else if (ev.type === 'warning') terminalRef.current?.appendLine(`\x1b[33m${msg}\x1b[0m`);
+        else if (ev.type === 'complete') terminalRef.current?.appendLine(`\x1b[32m${msg}\x1b[0m`);
+        else terminalRef.current?.appendLine(msg);
+      }
+      foreignEventsSeenRef.current = events.length;
+    };
+    const tick = async () => {
+      if (localRunRef.current) return; // this tab's own stream owns the UI
+      let data: IndexStatus | null = null;
+      try {
+        data = await fetchIndexStatus(rid, { quiet: true });
+      } catch {
+        return;
+      }
+      if (cancelled || activeRepoRef.current !== rid || !data) return;
+      setIndexStatus(data);
+      if (data.status === 'indexing') {
+        // A single-file corpus reports progress 1.0 while its file is still converting; never
+        // show 100% for a run that has not finished.
+        const pct = Math.min(99, Math.max(0, Math.round(Number(data.progress || 0) * 100)));
+        const file = String(data.current_file || '').trim();
+        setIsIndexing(true);
+        setForeignRun(true);
+        setProgress({ current: pct, total: 100, status: file ? `Indexing ${file}` : 'Indexing…' });
+        try {
+          const latestResp = await fetch(api(`index/${encodeURIComponent(rid)}/runs/latest`));
+          if (!latestResp.ok) return;
+          const latest: IndexRunSummary = await latestResp.json();
+          const runId = String(latest.run_id || '');
+          if (!runId) return;
+          if (runId !== foreignRunIdRef.current) {
+            foreignRunIdRef.current = runId;
+            foreignEventsSeenRef.current = 0;
+            setLatestRun(latest);
+            setTerminalVisible(true);
+            resetTerminal(`Indexing: ${rid} (run ${runId.slice(0, 12)}, started outside this tab)`);
+          }
+          const eventsResp = await fetch(
+            api(`index/${encodeURIComponent(rid)}/runs/${encodeURIComponent(runId)}/events?limit=500`)
+          );
+          if (!eventsResp.ok) return;
+          const events: IndexRunEvent[] = await eventsResp.json();
+          if (cancelled || !Array.isArray(events)) return;
+          appendEvents(events);
+          setLatestRunEvents(events);
+        } catch {
+          // best effort only
+        }
+      } else if (foreignRunIdRef.current) {
+        // The adopted run ended while we were watching it.
+        foreignRunIdRef.current = '';
+        foreignEventsSeenRef.current = 0;
+        setForeignRun(false);
+        setIsIndexing(false);
+        isIndexingRef.current = false;
+        setProgress(
+          data.status === 'complete'
+            ? { current: 100, total: 100, status: 'Complete' }
+            : data.status === 'error'
+              ? { current: 0, total: 100, status: `Error: ${String(data.error || '')}` }
+              : { current: 0, total: 100, status: 'Cancelled' }
+        );
+        void loadStats();
+        void loadLatestRunReplay();
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => {
+      void tick();
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      if (foreignRunIdRef.current) {
+        foreignRunIdRef.current = '';
+        foreignEventsSeenRef.current = 0;
+        setForeignRun(false);
+        setIsIndexing(false);
+      }
+    };
+  }, [activeRepo, api, fetchIndexStatus, loadLatestRunReplay, loadStats, resetTerminal]);
+
   const handleStopIndex = useCallback(async () => {
     const rid = String(activeRepo || '').trim();
     if (!rid) return;
     try {
-      await stopIndex(rid, { terminalId: 'indexing_terminal' });
+      const stopped = await stopIndex(rid, { terminalId: 'indexing_terminal' });
       setIsIndexing(false);
-      setProgress((prev) => ({ ...prev, status: 'Cancelled' }));
-      terminalRef.current?.appendLine(`\x1b[33m⚠ Indexing cancelled by user\x1b[0m`);
+      if (stopped.status === 'complete') {
+        // The stop landed after the generation manifest was committed: the run is
+        // complete and the new index is live; only best-effort retirement was cut short.
+        setProgress((prev) => ({ ...prev, status: 'Complete', current: 100, total: 100 }));
+        terminalRef.current?.appendLine(`\x1b[32m✓ Stop arrived after the commit: the new index is live\x1b[0m`);
+      } else {
+        setProgress((prev) => ({ ...prev, status: 'Cancelled' }));
+        terminalRef.current?.appendLine(`\x1b[33m⚠ Indexing cancelled by user\x1b[0m`);
+      }
       await loadStats();
       await refreshStatus();
       await loadLatestRunReplay();
@@ -562,11 +732,20 @@ export function IndexingSubtab() {
         const totalCostUsd = estimate.total_cost_usd ?? estimate.embedding_cost_usd;
         const embedCostUsd = estimate.embedding_cost_usd;
         const semanticKgCostUsd = estimate.semantic_kg_cost_usd;
+        const figureCostUsd = estimate.figure_description_cost_usd;
         const cost = totalCostUsd == null ? 'N/A' : formatCurrency(Number(totalCostUsd || 0));
         const costBreakdown =
-          semanticKgCostUsd == null
+          semanticKgCostUsd == null && figureCostUsd == null
             ? null
-            : `Embed ${embedCostUsd == null ? 'N/A' : formatCurrency(Number(embedCostUsd || 0))} + Semantic KG ${formatCurrency(Number(semanticKgCostUsd || 0))}`;
+            : [
+                `Embed ${embedCostUsd == null ? 'N/A' : formatCurrency(Number(embedCostUsd || 0))}`,
+                semanticKgCostUsd == null ? null : `Semantic KG ${formatCurrency(Number(semanticKgCostUsd || 0))}`,
+                figureCostUsd == null
+                  ? null
+                  : `Figures ${formatCurrency(Number(figureCostUsd || 0))}${estimate.estimated_figures != null ? ` (~${formatNumber(Number(estimate.estimated_figures))})` : ''}`,
+              ]
+                .filter(Boolean)
+                .join(' + ');
         const time =
           estimate.estimated_seconds_low != null && estimate.estimated_seconds_high != null
             ? `${formatDuration(Number(estimate.estimated_seconds_low) * 1000)}–${formatDuration(
@@ -600,16 +779,21 @@ export function IndexingSubtab() {
                 } + Semantic KG ~${formatDuration(Number(semanticKgSeconds) * 1000)}`,
               ]
             : []),
-          '',
-          'Start indexing now?',
         ].join('\n');
 
-        if (!window.confirm(msg)) {
+        const proceed = await confirmDialog({
+          title: 'Start indexing?',
+          message: msg,
+          confirmLabel: 'Start indexing',
+        });
+        if (!proceed) {
           return;
         }
       }
 
+      localRunRef.current = true;
       setIsIndexing(true);
+      setForeignRun(false);
       setProgress({ current: 0, total: 100, status: 'Starting...' });
       setTerminalVisible(true);
       resetTerminal(`Indexing: ${rid}`);
@@ -629,6 +813,7 @@ export function IndexingSubtab() {
         onError: (err) => {
           terminalRef.current?.appendLine(`\x1b[31mERROR: ${err}\x1b[0m`);
           setProgress((prev) => ({ ...prev, status: `Error: ${err}` }));
+          localRunRef.current = false;
           setIsIndexing(false);
           void loadLatestRunReplay();
         },
@@ -636,6 +821,7 @@ export function IndexingSubtab() {
           terminalRef.current?.updateProgress(100, 'Complete');
           terminalRef.current?.appendLine(`\x1b[32m✓ Indexing complete!\x1b[0m`);
           setProgress({ current: 100, total: 100, status: 'Complete' });
+          localRunRef.current = false;
           setIsIndexing(false);
           void loadStats();
           void refreshStatus();
@@ -644,6 +830,7 @@ export function IndexingSubtab() {
         onCancelled: () => {
           terminalRef.current?.appendLine(`\x1b[33m⚠ Indexing cancelled\x1b[0m`);
           setProgress((prev) => ({ ...prev, status: 'Cancelled' }));
+          localRunRef.current = false;
           setIsIndexing(false);
           void loadStats();
           void refreshStatus();
@@ -655,6 +842,7 @@ export function IndexingSubtab() {
       const msg = e instanceof Error ? e.message : 'Indexing failed';
       setErrorBanner(msg);
       terminalRef.current?.appendLine(`\x1b[31mFailed: ${msg}\x1b[0m`);
+      localRunRef.current = false;
       setIsIndexing(false);
     }
   }, [
@@ -679,7 +867,13 @@ export function IndexingSubtab() {
   const handleDeleteIndex = useCallback(async () => {
     const rid = String(activeRepo || '').trim();
     if (!rid) return;
-    if (!confirm(`Delete index for corpus "${rid}"?`)) return;
+    const proceed = await confirmDialog({
+      title: 'Delete index',
+      message: `Delete index for corpus "${rid}"?`,
+      confirmLabel: 'Delete index',
+      danger: true,
+    });
+    if (!proceed) return;
 
     setErrorBanner(null);
     setIsIndexing(false);
@@ -700,31 +894,6 @@ export function IndexingSubtab() {
       setErrorBanner(e instanceof Error ? e.message : 'Delete failed');
     }
   }, [activeRepo, api, loadStats, refreshStatus]);
-
-  const loadVocabPreview = useCallback(async () => {
-    const rid = String(activeRepo || '').trim();
-    if (!rid) return;
-    setVocabLoading(true);
-    try {
-      const url = api(`/api/index/vocab-preview?corpus_id=${encodeURIComponent(rid)}&top_n=${encodeURIComponent(String(vocabTopN))}`);
-      const r = await fetch(url);
-      if (!r.ok) {
-        const text = await r.text().catch(() => '');
-        throw new Error(text || `Vocab preview failed (${r.status})`);
-      }
-      const data: VocabPreviewResponse = await r.json();
-      setVocabPreview(Array.isArray(data.terms) ? data.terms : []);
-      setVocabTotal(Number(data.total_terms || 0));
-    } catch (e) {
-      setVocabPreview([]);
-      setVocabTotal(0);
-      terminalRef.current?.appendLine?.(
-        `\x1b[33m⚠ Vocabulary preview unavailable: ${e instanceof Error ? e.message : 'unknown error'}\x1b[0m`
-      );
-    } finally {
-      setVocabLoading(false);
-    }
-  }, [activeRepo, api, vocabTopN]);
 
   // Avoid rendering “blank defaults” before config arrives
   if (!config) {
@@ -797,7 +966,9 @@ export function IndexingSubtab() {
           data-testid="index-run-status-panel"
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '12px', color: 'var(--fg-muted)' }}>Last run status</span>
+            <span style={{ fontSize: '12px', color: 'var(--fg-muted)' }}>
+              {isIndexing ? 'Current run' : 'Last run status'}
+            </span>
             <span
               style={{
                 fontSize: '11px',
@@ -810,7 +981,9 @@ export function IndexingSubtab() {
                     ? 'var(--error)'
                     : (_indexStatus?.status || latestRun?.status) === 'complete'
                       ? 'var(--ok)'
-                      : 'var(--fg)',
+                      : (_indexStatus?.status || latestRun?.status) === 'indexing'
+                        ? 'var(--link)'
+                        : 'var(--fg)',
               }}
               data-testid="index-run-status-pill"
             >
@@ -823,7 +996,15 @@ export function IndexingSubtab() {
             ) : null}
             {latestRunEvents.length > 0 ? (
               <span style={{ fontSize: '11px', color: 'var(--fg-muted)' }}>
-                {latestRunEvents.length} replayed events
+                {latestRunEvents.length} {isIndexing ? 'events so far' : 'replayed events'}
+              </span>
+            ) : null}
+            {foreignRun ? (
+              <span
+                data-testid="index-run-foreign-note"
+                style={{ fontSize: '11.5px', color: 'var(--fg-muted)' }}
+              >
+                started outside this tab (API, another operator, or a schedule) — progress mirrored from the server
               </span>
             ) : null}
           </div>
@@ -958,7 +1139,7 @@ export function IndexingSubtab() {
       </details>
 
       {/* Compatibility / mode callouts */}
-      {skipDense === 1 && (
+      {skipDense && (
         <div
           style={{
             background: 'rgba(var(--warn-rgb), 0.1)',
@@ -1078,7 +1259,7 @@ export function IndexingSubtab() {
                 <div style={{ color: 'var(--fg-muted)', fontSize: '12px', marginTop: '4px' }}>{modelsError}</div>
               </div>
             )}
-            {!supportedRuntimeProvider && String(embeddingBackend || '').toLowerCase() === 'provider' && skipDense !== 1 && (
+            {!supportedRuntimeProvider && String(embeddingBackend || '').toLowerCase() === 'provider' && !skipDense && (
               <div
                 style={{
                   padding: '12px',
@@ -1092,7 +1273,7 @@ export function IndexingSubtab() {
                   Unsupported embedding provider for runtime backend
                 </div>
                 <div style={{ color: 'var(--fg-muted)', fontSize: '12px', marginTop: '4px' }}>
-                  Select one of: {RUNTIME_SUPPORTED_PROVIDER_EMBEDDERS.join(', ')}
+                  Select one of: {(runtimeEmbeddingProviders.length ? runtimeEmbeddingProviders : visibleEmbedProviders).join(', ')}
                 </div>
               </div>
             )}
@@ -1132,7 +1313,7 @@ export function IndexingSubtab() {
                     }}
                   >
                     {(() => {
-                      const s = describeEmbeddingProviderStrategy(String(provider));
+                      const s = describeEmbeddingProviderStrategy(String(provider), runtimeCapabilities || undefined);
                       return (
                         <>
                     <div
@@ -1200,8 +1381,9 @@ export function IndexingSubtab() {
             {/* Model + dimensions */}
             <div className="input-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px' }}>
               <div className="input-group">
-                <ModelPicker
+                  <ModelPicker
                   componentType="EMB"
+                  selectionRole="embedding_provider"
                   provider={embeddingType}
                   value={currentModel}
                   onChange={setCurrentModel}
@@ -1461,8 +1643,8 @@ export function IndexingSubtab() {
                   <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                     <input
                       type="checkbox"
-                      checked={embeddingCacheEnabled === 1}
-                      onChange={(e) => setEmbeddingCacheEnabled(e.target.checked ? 1 : 0)}
+                      checked={embeddingCacheEnabled}
+                      onChange={(e) => setEmbeddingCacheEnabled(e.target.checked)}
                     />
                     <span style={{ fontSize: '13px', color: 'var(--fg)' }}>Enable embedding cache</span>
                     <TooltipIcon name="EMBEDDING_CACHE_ENABLED" />
@@ -1492,7 +1674,7 @@ export function IndexingSubtab() {
             </h4>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '20px' }}>
-              {CHUNKING_STRATEGIES.map((strat) => (
+              {chunkingStrategies.map((strat) => (
                 <button
                   key={strat.id}
                   onClick={() => setChunkingStrategy(strat.id)}
@@ -1870,7 +2052,7 @@ export function IndexingSubtab() {
                 </label>
               </div>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                <input type="checkbox" checked={preserveImports === 1} onChange={(e) => setPreserveImports(e.target.checked ? 1 : 0)} />
+                <input type="checkbox" checked={preserveImports} onChange={(e) => setPreserveImports(e.target.checked)} />
                 <span style={{ fontSize: '13px', color: 'var(--fg)' }}>Preserve imports in chunks</span>
                 <TooltipIcon name="PRESERVE_IMPORTS" />
               </label>
@@ -1881,7 +2063,7 @@ export function IndexingSubtab() {
           </div>
         )}
 
-        {/* TOKENIZER + VOCAB */}
+        {/* SPARSE TOKENIZATION */}
         {selectedComponent === 'bm25' && (
           <div>
             <h4
@@ -2152,7 +2334,7 @@ export function IndexingSubtab() {
             <div className="input-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '20px' }}>
               <div className="input-group">
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
-                  Postgres FTS tokenizer
+                  Sparse stemming (Qdrant/bm25)
                   <TooltipIcon name="BM25_TOKENIZER" />
                 </label>
                 <select
@@ -2203,109 +2385,11 @@ export function IndexingSubtab() {
             <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--fg-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <strong style={{ color: 'var(--fg)' }}>Resolved:</strong> {resolvedTokenizerDesc}
             </div>
-
             <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--fg-muted)' }}>
-              Vocabulary Preview reads from Postgres built-in FTS (<code>chunks.tsv</code>). If you switch sparse retrieval to <code>pg_search_bm25</code>, this preview may not reflect the active BM25 index.
+              Sparse vectors are IDF-modified BM25 (<code>Qdrant/bm25</code> via fastembed) stored in Qdrant next to the dense
+              vectors. Stemming, language, k1, and b are part of the sparse index contract: changing them requires a re-index.
             </div>
 
-            <details open={vocabExpanded} onToggle={(e) => setVocabExpanded((e.target as HTMLDetailsElement).open)} style={{ marginTop: '20px' }}>
-              <summary style={{ cursor: 'pointer', fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>
-                🔍 Vocabulary Preview
-                <TooltipIcon name="BM25_VOCAB_PREVIEW" />
-              </summary>
-
-              <div
-                style={{
-                  marginTop: '12px',
-                  padding: '16px',
-                  background: 'var(--bg-elev2)',
-                  borderRadius: '8px',
-                  border: '1px solid var(--line)',
-                }}
-              >
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap' }}>
-                  <label style={{ fontSize: '12px', color: 'var(--fg-muted)' }}>
-                    Top N:
-                    <input
-                      type="number"
-                      value={vocabTopN}
-                      onChange={(e) => setVocabTopN(Math.max(10, Math.min(500, parseInt(e.target.value || '50', 10))))}
-                      min={10}
-                      max={500}
-                      style={{
-                        width: '80px',
-                        marginLeft: '8px',
-                        padding: '4px 8px',
-                        background: 'var(--input-bg)',
-                        border: '1px solid var(--line)',
-                        borderRadius: '4px',
-                        color: 'var(--fg)',
-                        fontSize: '12px',
-                      }}
-                    />
-                  </label>
-                  <button
-                    onClick={loadVocabPreview}
-                    disabled={vocabLoading || !String(activeRepo || '').trim()}
-                    style={{
-                      padding: '6px 12px',
-                      fontSize: '12px',
-                      background: 'var(--accent)',
-                      color: 'var(--accent-contrast)',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: vocabLoading ? 'wait' : 'pointer',
-                      opacity: vocabLoading ? 0.7 : 1,
-                    }}
-                  >
-                    {vocabLoading ? 'Loading…' : 'Load Vocabulary'}
-                  </button>
-                </div>
-
-                {vocabPreview.length > 0 ? (
-                  <>
-                    <div
-                      style={{
-                        maxHeight: '280px',
-                        overflowY: 'auto',
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
-                        gap: '6px',
-                        fontFamily: 'var(--font-mono)',
-                        fontSize: '11px',
-                      }}
-                    >
-                      {vocabPreview.map((item, idx) => (
-                        <div
-                          key={`${item.term}-${idx}`}
-                          style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            padding: '6px 8px',
-                            background: 'var(--bg)',
-                            borderRadius: '6px',
-                            border: '1px solid var(--line)',
-                          }}
-                        >
-                          <span style={{ color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.term}</span>
-                          <span style={{ color: 'var(--fg-muted)', marginLeft: '10px' }}>{item.doc_count}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <div style={{ marginTop: '10px', fontSize: '11px', color: 'var(--fg-muted)', display: 'flex', justifyContent: 'space-between' }}>
-                      <span>Tokenizer: {bm25Tokenizer || '—'}</span>
-                      <span>
-                        Showing {vocabPreview.length} of {vocabTotal || '—'} terms
-                      </span>
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ fontSize: '12px', color: 'var(--fg-muted)', textAlign: 'center', padding: '20px' }}>
-                    Click “Load Vocabulary” to inspect tokenized terms.
-                  </div>
-                )}
-              </div>
-            </details>
           </div>
         )}
 
@@ -2405,7 +2489,7 @@ export function IndexingSubtab() {
                     </div>
                   </div>
                 </label>
-                {skipDense === 1 && storeChunkEmbeddings && (
+                {skipDense && storeChunkEmbeddings && (
                   <div
                     style={{
                       marginTop: '10px',
@@ -2416,7 +2500,7 @@ export function IndexingSubtab() {
                       fontSize: '11px',
                     }}
                   >
-                    skip_dense=1 disables embeddings. Re-index with dense enabled to populate Neo4j vectors.
+                    Skip dense disables embeddings. Re-index with dense enabled to populate Neo4j vectors.
                   </div>
                 )}
               </div>
@@ -2440,26 +2524,26 @@ export function IndexingSubtab() {
                     style={{ width: '18px', height: '18px' }}
                   />
                   <div>
-                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>Semantic KG (concepts + relations)</div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>Neo4j GraphRAG semantic graph</div>
                     <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '2px' }}>
-                      Extracts concept entities + related_to edges and links them to chunk_ids for graph expansion.
+                      Uses Neo4j GraphRAG over an OpenAI-compatible route to extract typed entities and relationships, then links them to chunk nodes for graph expansion.
                     </div>
                   </div>
                 </label>
 
                 {semanticKgEnabled && (
                   <div style={{ marginTop: '12px' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
                       <div className="input-group">
-                        <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Mode</label>
+                        <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Engine</label>
                         <select
                           data-testid="semantic-kg-mode"
                           value={semanticKgMode}
                           onChange={(e) => setSemanticKgMode(e.target.value as any)}
+                          disabled
                           style={{ width: '100%' }}
                         >
-                          <option value="heuristic">Heuristic</option>
-                          <option value="llm">LLM</option>
+                          <option value="llm">Neo4j GraphRAG (OpenAI-compatible)</option>
                         </select>
                       </div>
                       <div className="input-group">
@@ -2474,36 +2558,25 @@ export function IndexingSubtab() {
                           style={{ width: '100%' }}
                         />
                       </div>
-                      <div className="input-group">
-                        <label style={{ fontSize: '11px', color: 'var(--fg-muted)', marginBottom: '6px' }}>Max concepts / chunk</label>
-                        <input
-                          data-testid="semantic-kg-max-concepts"
-                          type="number"
-                          min={0}
-                          max={50}
-                          value={semanticKgMaxConcepts}
-                          onChange={(e) => setSemanticKgMaxConcepts(parseInt(e.target.value || '0', 10))}
-                          style={{ width: '100%' }}
-                        />
-                      </div>
                     </div>
 
-                    {semanticKgMode === 'llm' && (
-                      <div style={{ marginTop: '12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', alignItems: 'end' }}>
-                        <ModelPicker
-                          componentType="GEN"
+                    <div style={{ marginTop: '12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', alignItems: 'end' }}>
+                      <div className="input-group">
+                        <label>KG LLM Alias</label>
+                        <ChatModelPicker
                           value={semanticKgLlmModel}
                           onChange={setSemanticKgLlmModel}
-                          label="KG LLM Model"
-                          tooltipKey="SEMANTIC_KG_LLM_MODEL"
-                          allowCustom
+                          models={generationModels}
+                          valueMode="id"
+                          allowEmpty
                         />
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          <span style={{ fontSize: '11px', color: 'var(--fg-muted)' }}>empty = uses enrich_model</span>
-                          <PromptLink promptKey="semantic_kg_extraction">Edit KG Prompt</PromptLink>
-                        </div>
                       </div>
-                    )}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <span style={{ fontSize: '11px', color: 'var(--fg-muted)' }}>
+                          Choose a LiteLLM alias. Empty uses the configured gateway default.
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -2513,11 +2586,11 @@ export function IndexingSubtab() {
                   padding: '16px',
                   background: 'var(--bg-elev2)',
                   borderRadius: '8px',
-                  border: skipDense === 1 ? '2px solid var(--warn)' : '1px solid var(--line)',
+                  border: skipDense ? '2px solid var(--warn)' : '1px solid var(--line)',
                 }}
               >
                 <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={skipDense === 1} onChange={(e) => setSkipDense(e.target.checked ? 1 : 0)} style={{ width: '18px', height: '18px' }} />
+                  <input type="checkbox" checked={skipDense} onChange={(e) => setSkipDense(e.target.checked)} style={{ width: '18px', height: '18px' }} />
                   <div>
                     <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>Skip dense vectors</div>
                     <div style={{ fontSize: '11px', color: 'var(--fg-muted)', marginTop: '2px' }}>
@@ -2526,7 +2599,7 @@ export function IndexingSubtab() {
                   </div>
                   <TooltipIcon name="SKIP_DENSE" />
                 </label>
-                {skipDense === 1 && (
+                {skipDense && (
                   <div style={{ marginTop: '10px', padding: '8px 12px', background: 'rgba(var(--warn-rgb), 0.1)', borderRadius: '6px', color: 'var(--warn)', fontSize: '11px' }}>
                     Vector search will not work until you re-index with dense enabled.
                   </div>
@@ -2597,8 +2670,8 @@ export function IndexingSubtab() {
                   <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                     <input
                       type="checkbox"
-                      checked={parquetExtractTextColumnsOnly === 1}
-                      onChange={(e) => setParquetExtractTextColumnsOnly(e.target.checked ? 1 : 0)}
+                      checked={parquetExtractTextColumnsOnly}
+                      onChange={(e) => setParquetExtractTextColumnsOnly(e.target.checked)}
                     />
                     <span style={{ fontSize: '12px', color: 'var(--fg)' }}>Text columns only</span>
                     <TooltipIcon name="PARQUET_EXTRACT_TEXT_COLUMNS_ONLY" />
@@ -2606,8 +2679,8 @@ export function IndexingSubtab() {
                   <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                     <input
                       type="checkbox"
-                      checked={parquetExtractIncludeColumnNames === 1}
-                      onChange={(e) => setParquetExtractIncludeColumnNames(e.target.checked ? 1 : 0)}
+                      checked={parquetExtractIncludeColumnNames}
+                      onChange={(e) => setParquetExtractIncludeColumnNames(e.target.checked)}
                     />
                     <span style={{ fontSize: '12px', color: 'var(--fg)' }}>Include column names</span>
                     <TooltipIcon name="PARQUET_EXTRACT_INCLUDE_COLUMN_NAMES" />
@@ -2676,43 +2749,58 @@ export function IndexingSubtab() {
           marginBottom: '24px',
         }}
       >
-        <button
-          onClick={() => setStatsExpanded(!statsExpanded)}
+        {/* Toggle and Refresh are SIBLING buttons: nesting an interactive
+            control inside another (button-in-button or role=button) is
+            invalid and steals keyboard activation. */}
+        <div
           style={{
             width: '100%',
             padding: '16px',
-            background: 'transparent',
-            border: 'none',
-            cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
+            gap: '10px',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '16px' }}>📊</span>
-            <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--fg)' }}>Index Stats</span>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                void loadStats();
-                void refreshStatus();
-              }}
-              style={{
-                padding: '4px 8px',
-                fontSize: '11px',
-                background: 'var(--bg-elev2)',
-                border: '1px solid var(--line)',
-                borderRadius: '6px',
-                color: 'var(--fg-muted)',
-                cursor: 'pointer',
-              }}
-            >
-              ↻ Refresh
-            </button>
-          </div>
-          <span style={{ fontSize: '12px', color: 'var(--fg-muted)' }}>{statsExpanded ? '▼' : '▶'}</span>
-        </button>
+          <button
+            aria-expanded={statsExpanded}
+            onClick={() => setStatsExpanded(!statsExpanded)}
+            style={{
+              flex: 1,
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '10px',
+              padding: 0,
+            }}
+          >
+            <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '16px' }}>📊</span>
+              <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--fg)' }}>Index Stats</span>
+            </span>
+            <span style={{ fontSize: '12px', color: 'var(--fg-muted)' }}>{statsExpanded ? '▼' : '▶'}</span>
+          </button>
+          <button
+            onClick={() => {
+              void loadStats();
+              void refreshStatus();
+            }}
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              background: 'var(--bg-elev2)',
+              border: '1px solid var(--line)',
+              borderRadius: '6px',
+              color: 'var(--fg-muted)',
+              cursor: 'pointer',
+            }}
+          >
+            ↻ Refresh
+          </button>
+        </div>
 
         {statsExpanded && (
           <div style={{ padding: '0 16px 16px' }}>
@@ -2901,6 +2989,9 @@ export function IndexingSubtab() {
               ? ` (Embed ${indexEstimate.embedding_cost_usd == null ? 'N/A' : formatCurrency(Number(indexEstimate.embedding_cost_usd || 0))} + KG ${formatCurrency(
                   Number(indexEstimate.semantic_kg_cost_usd || 0)
                 )})`
+              : ''}
+            {indexEstimate.figure_description_cost_usd != null
+              ? ` + Figures ${formatCurrency(Number(indexEstimate.figure_description_cost_usd || 0))}`
               : ''}
             {' • '}
             {indexEstimate.estimated_seconds_low != null && indexEstimate.estimated_seconds_high != null
