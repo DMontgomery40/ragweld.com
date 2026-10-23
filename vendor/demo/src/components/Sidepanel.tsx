@@ -1,31 +1,35 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useConfigStore } from '@/stores';
+import { showToast } from '@/utils/toast';
 import { EmbeddingMismatchWarning } from './ui/EmbeddingMismatchWarning';
-import { ModelPicker } from './RAG/ModelPicker';
-import { useEmbeddingModel, useModels } from '@/hooks';
+import { ModelPicker as ChatModelPicker } from './Chat/ModelPicker';
+import { useAPI, useEmbeddingModel, useModels } from '@/hooks';
+import { useRepoStore } from '@/stores/useRepoStore';
+import type { ChatModelInfo, ChatModelsResponse } from '@/types/generated';
 
 export function Sidepanel() {
   const config = useConfigStore((s) => s.config);
   const patchSection = useConfigStore((s) => s.patchSection);
-
-  const genBackend = String(config?.generation?.gen_backend || 'openai');
+  const { api } = useAPI();
+  const activeRepo = useRepoStore((s) => s.activeRepo);
   const {
     providers: embeddingProviders,
     getModelsForProvider: getEmbeddingModelsForProvider,
     loading: embeddingModelsLoading,
     error: embeddingModelsError,
-  } = useModels('EMB');
+  } = useModels('EMB', { selectionRole: 'embedding_provider' });
   const {
     providers: rerankProviders,
     getModelsForProvider: getRerankModelsForProvider,
     loading: rerankModelsLoading,
     error: rerankModelsError,
-  } = useModels('RERANK');
+  } = useModels('RERANK', { selectionRole: 'reranker_cloud' });
 
   // Embedding model (derived from config via shared hook)
   const { embeddingType: configEmbeddingType, currentModel: configEmbeddingModel } = useEmbeddingModel();
 
   const [genModel, setGenModel] = useState<string>('');
+  const [generationModels, setGenerationModels] = useState<ChatModelInfo[]>([]);
   const [embeddingProvider, setEmbeddingProvider] = useState<string>('openai');
   const [embeddingModel, setEmbeddingModel] = useState<string>('');
   const [rerankProvider, setRerankProvider] = useState<string>('cohere');
@@ -41,10 +45,9 @@ export function Sidepanel() {
     setEmbeddingProvider(configEmbeddingType || 'openai');
     setEmbeddingModel(configEmbeddingModel);
 
-    const rrModeRaw = String(config.reranking?.reranker_mode || '').toLowerCase();
-    const rrMode = rrModeRaw === 'local' ? 'learning' : rrModeRaw;
+    const rrMode = String(config.reranking?.reranker_mode || '').toLowerCase();
     if (rrMode === 'cloud') {
-      setRerankProvider(String(config.reranking?.reranker_cloud_provider || 'cohere'));
+      setRerankProvider(String(config.reranking?.reranker_cloud_provider || 'litellm'));
       setRerankModel(String(config.reranking?.reranker_cloud_model || ''));
     } else if (rrMode === 'learning') {
       setRerankProvider('learning');
@@ -54,6 +57,30 @@ export function Sidepanel() {
       setRerankModel('');
     }
   }, [config, configEmbeddingType, configEmbeddingModel]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const scope = String(activeRepo || '').trim();
+    const query = scope ? `?corpus_id=${encodeURIComponent(scope)}` : '';
+    fetch(api(`chat/models${query}`), { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(String(response.status));
+        return response.json();
+      })
+      .then((payload) => {
+        const rows = (payload as ChatModelsResponse).models;
+        setGenerationModels(Array.isArray(rows) ? rows : []);
+      })
+      .catch((cause) => {
+        if (cause instanceof DOMException && cause.name === 'AbortError') return;
+        setGenerationModels([]);
+      });
+    return () => controller.abort();
+  }, [activeRepo, api]);
+
+  const generationAliasUnavailable = Boolean(
+    genModel && !generationModels.some((model) => String(model.id || '').trim() === genModel),
+  );
 
   const embeddingProviderOptions = useMemo(() => {
     const s = new Set<string>(embeddingProviders);
@@ -86,6 +113,9 @@ export function Sidepanel() {
 
   const handleApplyChanges = async () => {
     try {
+      if (generationAliasUnavailable) {
+        throw new Error(`Generation alias '${genModel}' is not available from LiteLLM`);
+      }
       // Build updates for different config sections (TriBridConfig is the law)
       const embeddingUpdates: Record<string, unknown> = {};
       const rerankingUpdates: Record<string, unknown> = {};
@@ -99,11 +129,14 @@ export function Sidepanel() {
       // Embedding provider + model
       if (embeddingProvider) {
         const p = embeddingProvider.toLowerCase();
-        if (p === 'voyage') {
+        if (p === 'mlx') {
+          embeddingUpdates.embedding_type = 'mlx';
+          if (embeddingModel) embeddingUpdates.embedding_model_mlx = embeddingModel;
+        } else if (p === 'voyage') {
           embeddingUpdates.embedding_type = 'voyage';
           if (embeddingModel) embeddingUpdates.voyage_model = embeddingModel;
         } else if (p === 'local' || p === 'ollama' || p === 'huggingface') {
-          embeddingUpdates.embedding_type = 'local';
+          embeddingUpdates.embedding_type = p;
           if (embeddingModel) embeddingUpdates.embedding_model_local = embeddingModel;
         } else {
           embeddingUpdates.embedding_type = p;
@@ -118,10 +151,6 @@ export function Sidepanel() {
           rerankingUpdates.reranker_mode = 'none';
         } else if (p === 'learning') {
           rerankingUpdates.reranker_mode = 'learning';
-        } else if (p === 'cohere' || p === 'voyage' || p === 'jina') {
-          rerankingUpdates.reranker_mode = 'cloud';
-          rerankingUpdates.reranker_cloud_provider = p;
-          if (rerankModel) rerankingUpdates.reranker_cloud_model = rerankModel;
         } else {
           rerankingUpdates.reranker_mode = 'cloud';
           rerankingUpdates.reranker_cloud_provider = p;
@@ -147,10 +176,10 @@ export function Sidepanel() {
         })
       );
 
-      alert('Changes applied successfully');
+      showToast('Changes applied successfully', 'success');
     } catch (e) {
       console.error('[Sidepanel] Apply changes error:', e);
-      alert(e instanceof Error ? e.message : 'Error applying changes');
+      showToast(e instanceof Error ? e.message : 'Error applying changes', 'error');
     }
   };
 
@@ -178,7 +207,7 @@ export function Sidepanel() {
             marginBottom: '12px',
           }}
         >
-          <span style={{ color: 'var(--accent)', fontSize: '8px' }}>●</span>
+          <span style={{ color: 'var(--accent-text)', fontSize: '8px' }}>●</span>
           <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--fg)' }}>
             Quick Model Switcher
           </span>
@@ -192,14 +221,17 @@ export function Sidepanel() {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div>
-            <ModelPicker
-              componentType="GEN"
-              provider={genBackend}
+            <ChatModelPicker
               value={genModel}
               onChange={setGenModel}
-              label="GENERATION MODEL"
-              allowCustom
+              models={generationModels}
+              valueMode="id"
             />
+            {generationAliasUnavailable ? (
+              <div style={{ color: 'var(--err)', fontSize: '11px', marginTop: '4px' }}>
+                Choose an available LiteLLM alias before applying changes.
+              </div>
+            ) : null}
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
@@ -321,7 +353,7 @@ export function Sidepanel() {
             marginBottom: '12px',
           }}
         >
-          <span style={{ color: 'var(--accent)', fontSize: '8px' }}>●</span>
+          <span style={{ color: 'var(--accent-text)', fontSize: '8px' }}>●</span>
           <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--fg)' }}>
             Secrets Ingest
           </span>
@@ -366,6 +398,7 @@ export function Sidepanel() {
       >
         <button
           onClick={handleApplyChanges}
+          disabled={generationAliasUnavailable}
           style={{
             width: '100%',
             background: 'var(--accent)',
