@@ -9,14 +9,16 @@ export const UI_SURFACES: UISurface[] = [
   { route: '/dashboard', subtab: 'glossary', label: 'Dashboard / Glossary' },
   { route: '/chat', subtab: 'ui', label: 'Chat / UI' },
   { route: '/chat', subtab: 'settings', label: 'Chat / Settings' },
-  { route: '/grafana', subtab: 'dashboard', label: 'Grafana / Dashboard' },
+  { route: '/grafana', subtab: 'overview', label: 'Grafana / Overview' },
+  { route: '/grafana', subtab: 'dashboards', label: 'Grafana / Dashboards' },
+  { route: '/grafana', subtab: 'incidents', label: 'Grafana / Incidents' },
   { route: '/grafana', subtab: 'config', label: 'Grafana / Config' },
   { route: '/benchmark', label: 'Benchmark' },
   { route: '/rag', subtab: 'data-quality', label: 'RAG / Data Quality' },
   { route: '/rag', subtab: 'retrieval', label: 'RAG / Retrieval' },
   { route: '/rag', subtab: 'graph', label: 'RAG / Graph' },
-  { route: '/rag', subtab: 'reranker-config', label: 'RAG / Reranker' },
-  { route: '/rag', subtab: 'learning-ranker', label: 'RAG / Learning Ranker' },
+  { route: '/rag', subtab: 'reranker', label: 'RAG / Reranker' },
+  { route: '/rag', subtab: 'learning-reranker', label: 'RAG / Learning Reranker' },
   { route: '/rag', subtab: 'learning-agent', label: 'RAG / Learning Agent Studio' },
   { route: '/rag', subtab: 'indexing', label: 'RAG / Indexing' },
   { route: '/eval', subtab: 'analysis', label: 'Eval / Analysis' },
@@ -28,25 +30,87 @@ export const UI_SURFACES: UISurface[] = [
   { route: '/infrastructure', subtab: 'mcp', label: 'Infrastructure / MCP' },
   { route: '/infrastructure', subtab: 'paths', label: 'Infrastructure / Paths' },
   { route: '/infrastructure', subtab: 'monitoring', label: 'Infrastructure / Monitoring' },
-  { route: '/admin', subtab: 'general', label: 'Admin / General' },
-  { route: '/admin', subtab: 'secrets', label: 'Admin / Secrets' },
-  { route: '/admin', subtab: 'integrations', label: 'Admin / Integrations' },
+  // Admin's real routes (AdminTab.tsx): basic | advanced | raw | dependencies.
+  // `raw` is deliberately not cataloged: its single control is the whole-config
+  // JSON textarea, and filling it with a generated string is not a field-level
+  // mutation — it just manufactures a validation-error toast.
+  { route: '/admin', subtab: 'basic', label: 'Admin / Basics' },
+  { route: '/admin', subtab: 'advanced', label: 'Admin / Explorer' },
+  { route: '/admin', subtab: 'dependencies', label: 'Admin / Dependencies' },
 ];
 
-export const REAL_WORLD_CHAT_QUESTIONS: string[] = [
-  'How does this system decide whether to use vector, sparse, or graph retrieval for a coding question?',
-  'What are the concrete tradeoffs between RRF fusion and weighted fusion in this project configuration?',
-  'If I need to reduce retrieval latency without losing too much recall, which three settings should I tune first and why?',
-  'Explain how reranking affects final answer quality here, including what happens when reranking fails.',
-  'How is corpus isolation implemented across storage and graph retrieval boundaries in this application?',
-  'What is the safest procedure to change embedding dimensions in production for this stack?',
-  'How can I detect that graph traversal is over-expanding and hurting relevance in real workloads?',
-  'Which observability signals in this system best indicate retrieval regressions after a config change?',
-  'What configuration would you choose for a medium codebase where developers ask architecture and bug triage questions?',
-  'How should we validate that eval analysis results align with what users see in chat quality?',
+/**
+ * Retrieval probes for the isolated corpus (`tests/fixtures/acceptance_corpus`,
+ * the Aurora Tidal Observatory). Real domain questions only — every answer is
+ * reranker triplet-mining signal (`.claude/rules/testing.md`), so each probe
+ * carries the evidence a grounded answer must contain; feedback is thumbs-up
+ * only when the answer actually cites it.
+ */
+export type CorpusProbe = {
+  question: string;
+  /** Evidence groups: EVERY group must be satisfied by at least one of its alternatives. */
+  evidence: string[][];
+};
+
+export const ACCEPTANCE_CORPUS_PROBES: CorpusProbe[] = [
+  {
+    question: 'How often is the salinity sensor array on each buoy calibrated, and against which reference standard?',
+    evidence: [['45 days', '45-day'], ['halcyon']],
+  },
+  {
+    question: 'What salinity drift between calibrations marks a sensor as suspect, and what happens to a suspect sensor?',
+    evidence: [['0.3'], ['quarantin']],
+  },
+  {
+    question: 'How are the temperature probes verified, and on what cycle?',
+    evidence: [['monthly', 'every month', 'each month'], ['platinum']],
+  },
+  {
+    question: 'Where is buoy telemetry stored, and how long is raw telemetry retained before archival?',
+    evidence: [['kestreldb'], ['400 days', '400-day']],
+  },
+  {
+    question: 'What does the Pelican gateway do to inbound telemetry frames before they are written to KestrelDB?',
+    evidence: [['checksum'], ['arrival', 'timestamp', 'stamps']],
+  },
+  {
+    question: 'When does the nightly KestrelDB compaction run and how long does it typically take?',
+    evidence: [['02:15', '2:15'], ['eleven minutes', '11 minutes']],
+  },
+  {
+    question: 'What must the duty technician do if the Pelican gateway stops emitting heartbeats for 90 seconds?',
+    evidence: [['osprey'], ['standby', 'fail over', 'failover']],
+  },
+  {
+    question: 'How long do both gateways run in mirrored observation mode after a failover?',
+    evidence: [['six hours', '6 hours', 'six-hour', '6-hour']],
+  },
+  {
+    question: 'What happens when a power interruption at the observatory lasts longer than four minutes?',
+    evidence: [['generator'], ['station lead']],
+  },
+  {
+    question: 'When was the Aurora Tidal Observatory commissioned, and how many marine technicians staff it?',
+    evidence: [['2011'], ['nine', '9 ']],
+  },
 ];
 
-export const RETRIEVAL_PROBES_PER_MUTATION = 3;
+function boundedInt(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(value)));
+}
+
+/** Probes per retrieval-impacting mutation (each is one gateway chat call). */
+export const RETRIEVAL_PROBES_PER_MUTATION = boundedInt(
+  process.env.EXHAUSTIVE_PROBES_PER_MUTATION,
+  1,
+  1,
+  ACCEPTANCE_CORPUS_PROBES.length
+);
+
+/** Wall-clock budget for the mutation loop; remaining surfaces are reported as skipped:budget. */
+export const EXHAUSTIVE_BUDGET_MS = boundedInt(process.env.EXHAUSTIVE_BUDGET_MS, 30 * 60 * 1000, 60 * 1000, 48 * 3600 * 1000);
 
 export const REQUIRED_CLOUD_PROVIDERS = ['openai', 'openrouter', 'cohere'] as const;
 
@@ -91,6 +155,20 @@ export const NEVER_TOUCH_HINTS = [
   'password',
 ];
 
+/**
+ * Whole-word connection/location fields: mutating a host, port, URL or path from
+ * a corpus-scoped session rewires the LIVE backend's service endpoints (Neo4j,
+ * Postgres, Qdrant, LiteLLM, corpus roots) — not something a UI validator may do.
+ */
+export const NEVER_TOUCH_PATTERNS: RegExp[] = [
+  /\b(url|uri|host|hostname|port|path|paths|endpoint|dsn|database|db)\b/,
+  // Search/query boxes are retrieval exercises: filling them with a generated
+  // string is a placeholder query (banned) and the topbar #global-search hangs
+  // the loop on every surface. Retrieval is probed through Chat with real
+  // corpus questions instead.
+  /\b(search|query|question)\b/,
+];
+
 export const ACTION_BLACKLIST_HINTS = [
   // Keep destructive infra actions out of default mode.
   'delete corpus',
@@ -98,3 +176,39 @@ export const ACTION_BLACKLIST_HINTS = [
   'factory reset',
   'drop database',
 ];
+
+/**
+ * Whole-word actions the default mode never triggers: host-side training or
+ * model lifecycle (MLX training and model loading crashed this machine twice;
+ * operator-present only), process/container lifecycle, and paid multi-minute
+ * runs (eval, promptfoo, synthetic generation, benchmarks). Chat probes stay
+ * the loop's only gateway traffic. `EXHAUSTIVE_DESTRUCTIVE=1` lifts this.
+ */
+export const ACTION_BLACKLIST_PATTERNS: RegExp[] = [
+  /\b(train|training|fine-?tune|finetune|promote|publish)\b/,
+  /\b(load|unload|download|pull|warm)\b.*\bmodel\b/,
+  /\b(start|launch|run|execute|deploy|trigger|submit|restart|stop|shutdown|kill|reboot|terminate|cancel)\b/,
+  /\bdocker\b/,
+  /\b(index now|reindex|re-index|generate|mine)\b/,
+];
+
+/**
+ * Surfaces whose generic buttons reach host processes, training, containers or
+ * paid runs. On these surfaces every button/role=button click is blocked in
+ * default mode regardless of its label (a "Start Run" or bare "Start" carries no
+ * safe-word); input/select/checkbox mutations still run through the config cycle.
+ */
+export const HOST_ACTION_SURFACE_KEYS = new Set<string>([
+  // Onboarding buttons switch the active corpus and launch indexing on operator corpora.
+  '/start|',
+  '/rag|learning-reranker',
+  '/rag|learning-agent',
+  '/rag|indexing',
+  '/rag|graph',
+  '/eval|analysis',
+  '/benchmark|',
+  '/infrastructure|docker',
+  '/infrastructure|mcp',
+  '/infrastructure|services',
+  '/dashboard|system',
+]);
