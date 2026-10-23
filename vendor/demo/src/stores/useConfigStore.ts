@@ -1,18 +1,22 @@
 import { create } from 'zustand';
 import { configApi } from '@/api/config';
 import type { TriBridConfig } from '@/types/generated';
+import { extractPatchErrorDetail, parseConfigPatchErrors } from '@/utils/configPatchErrors';
 
 interface ConfigStore {
   config: TriBridConfig | null;
+  /** Last server-acknowledged config. `config !== persisted` means unsaved local edits. */
+  persisted: TriBridConfig | null;
   loading: boolean;
   error: string | null;
-  saving: boolean;
   /**
-   * Optional mapping of flat config keys -> UI categories.
-   * Used by Eval drill-down to group config snapshots.
+   * Field-level detail from the last rejected config PATCH, keyed by full dotted TriBridConfig
+   * path (e.g. "enrichment.max_chunk_summaries") -- `NumberField`'s `configPath` prop reads
+   * this directly. Cleared for a section's paths as soon as that section's next PATCH lands,
+   * successful or not (a fresh attempt replaces stale errors rather than accumulating them).
    */
-  evalKeyCategories: Record<string, string>;
-
+  fieldErrors: Record<string, string>;
+  saving: boolean;
   // Actions
   loadConfig: () => Promise<void>;
   saveConfig: (config: TriBridConfig) => Promise<void>;
@@ -27,10 +31,104 @@ interface ConfigStore {
   /** Immediately flush all pending debounced patches for the active corpus. */
   flushPendingPatches: () => Promise<void>;
   resetConfig: () => Promise<void>;
-  loadEvalKeyCategories: () => void;
 
   reset: () => void;
 }
+
+type PatchObject = Record<string, unknown>;
+
+const isPatchObject = (value: unknown): value is PatchObject =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * Merge a PATCH payload into a config section exactly the way the server does
+ * (`_deep_merge_dicts`, server/api/config.py): recurse into nested objects, replace
+ * arrays and scalars wholesale.
+ *
+ * A shallow spread is wrong for any nested config group (`indexing.figures`,
+ * `chat.recall`, `chat.multimodal`): `useConfigField('indexing.figures.enabled')`
+ * emits `{ figures: { enabled: true } }`, and spreading that over the section drops
+ * every sibling key of `figures` from the optimistic copy and from the aggregated
+ * pending patch — so a second nested edit inside the debounce window would never
+ * send the first one, and "Apply All Changes" would PUT a collapsed group.
+ */
+const deepMergePatch = (base: PatchObject, updates: PatchObject): PatchObject => {
+  const merged: PatchObject = { ...base };
+  for (const key of Object.keys(updates)) {
+    if (key === '__proto__') continue;
+    const current = merged[key];
+    const next = updates[key];
+    merged[key] = isPatchObject(current) && isPatchObject(next) ? deepMergePatch(current, next) : next;
+  }
+  return merged;
+};
+
+/**
+ * Undo the optimistic edits a rejected PATCH applied, restoring only the leaf paths it
+ * actually set -- never the whole section.
+ *
+ * The server validates a section's merged body atomically (`TriBridConfig.model_validate`),
+ * so a 422 means nothing in this PATCH was saved (C-01/X-11: the field must not keep a value
+ * the server refused, or "Apply" re-sends it forever). But `flushSection` clears the pending
+ * entry before the `await`: a fresh `patchSectionDebounced` call for the same path during that
+ * in-flight window applies its own optimistic update AND queues its own pending patch. Blindly
+ * restoring the whole section here would erase that newer edit's on-screen value while its
+ * patch still lands later, and the field would snap back only for the wrong value to arrive
+ * moments after. A leaf is reverted only if the live config still holds exactly what this
+ * rejected patch wrote to it -- evidence nothing newer has touched it since.
+ */
+const revertPaths = (curNode: PatchObject, persistedNode: PatchObject, updateNode: PatchObject): PatchObject => {
+  let changed = false;
+  const next: PatchObject = { ...curNode };
+  for (const key of Object.keys(updateNode)) {
+    const updateValue = updateNode[key];
+    const curValue = curNode[key];
+    if (isPatchObject(updateValue) && isPatchObject(curValue)) {
+      const persistedChild = isPatchObject(persistedNode[key]) ? (persistedNode[key] as PatchObject) : {};
+      const revertedChild = revertPaths(curValue, persistedChild, updateValue);
+      if (revertedChild !== curValue) {
+        next[key] = revertedChild;
+        changed = true;
+      }
+      continue;
+    }
+    if (Object.is(curValue, updateValue)) {
+      next[key] = persistedNode[key];
+      changed = true;
+    }
+  }
+  return changed ? next : curNode;
+};
+
+/** Field errors under `sectionKey` (top-level equal, or dotted-prefixed) removed. */
+const withoutSectionFieldErrors = (
+  fieldErrors: Record<string, string>,
+  sectionKey: string
+): Record<string, string> => {
+  const next = { ...fieldErrors };
+  let changed = false;
+  for (const key of Object.keys(next)) {
+    if (key === sectionKey || key.startsWith(`${sectionKey}.`)) {
+      delete next[key];
+      changed = true;
+    }
+  }
+  return changed ? next : fieldErrors;
+};
+
+/** Field errors under `sectionKey`, replaced with what this PATCH failure parsed out of `detail`. */
+const withParsedFieldErrors = (
+  fieldErrors: Record<string, string>,
+  sectionKey: string,
+  detail: unknown
+): Record<string, string> => {
+  const cleared = withoutSectionFieldErrors(fieldErrors, sectionKey);
+  const parsed = parseConfigPatchErrors(detail);
+  if (parsed.length === 0) return cleared;
+  const next = { ...cleared };
+  for (const { path, message } of parsed) next[path] = message;
+  return next;
+};
 
 export const useConfigStore = create<ConfigStore>((set) => {
   // Debounce + aggregation per top-level section AND per corpus.
@@ -38,6 +136,17 @@ export const useConfigStore = create<ConfigStore>((set) => {
   const pendingByCorpus: Record<string, Record<string, Record<string, unknown>>> = {};
   const timersByCorpus: Record<string, Record<string, ReturnType<typeof setTimeout>>> = {};
   const DEBOUNCE_MS = 300;
+
+  // One GET /api/config per corpus in flight at a time. Several hooks call `loadConfig`
+  // on the same mount (app init, `useConfig`'s mount effect, the corpus-changed
+  // listener) and each one used to issue its own request: a single dashboard load spent
+  // four round trips fetching the identical document (M-129).
+  //
+  // This shares the request, it does not cache the answer: the entry is dropped the
+  // moment the load settles, so the next caller always goes to the server. A caller
+  // that arrives while patches are still queued for this corpus never joins -- the
+  // shared load already ran its flush, and joining it would drop the newer edits.
+  const inFlightLoadByCorpus: Record<string, Promise<void>> = {};
 
   const getActiveCorpusId = (): string => {
     try {
@@ -89,16 +198,49 @@ export const useConfigStore = create<ConfigStore>((set) => {
           const nextSection = (saved as any)?.[sectionKey];
           // Merge only the patched section to avoid clobbering other optimistic changes.
           const nextConfig = cur ? ({ ...cur, [sectionKey]: nextSection } as TriBridConfig) : saved;
-          return { config: nextConfig, saving: false, error: null };
+          const curPersisted = state.persisted as any;
+          const nextPersisted = curPersisted
+            ? ({ ...curPersisted, [sectionKey]: nextSection } as TriBridConfig)
+            : saved;
+          return {
+            config: nextConfig,
+            persisted: nextPersisted,
+            saving: false,
+            error: null,
+            fieldErrors: withoutSectionFieldErrors(state.fieldErrors, sectionKey),
+          };
         });
       } else {
-        set({ saving: false, error: null });
+        set((state) => ({
+          saving: false,
+          error: null,
+          fieldErrors: withoutSectionFieldErrors(state.fieldErrors, sectionKey),
+        }));
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to save configuration';
-      set({
-        saving: false,
-        error: message,
+      const detail = extractPatchErrorDetail(error);
+      set((state) => {
+        const cur = state.config as any;
+        const persisted = state.persisted as any;
+        // The server validated the whole merged section atomically, so nothing in this PATCH
+        // was saved: the optimistic local copy must not keep the value it refused (see
+        // `revertPaths`), or the next "Apply" silently re-sends the same rejected value.
+        const nextConfig =
+          cur && persisted && String(getActiveCorpusId() || '') === String(corpusKey || '')
+            ? (() => {
+                const curSection = (cur[sectionKey] as PatchObject) || {};
+                const persistedSection = (persisted[sectionKey] as PatchObject) || {};
+                const revertedSection = revertPaths(curSection, persistedSection, updates);
+                return revertedSection === curSection ? cur : { ...cur, [sectionKey]: revertedSection };
+              })()
+            : cur;
+        return {
+          config: nextConfig as TriBridConfig,
+          saving: false,
+          error: message,
+          fieldErrors: withParsedFieldErrors(state.fieldErrors, sectionKey, detail),
+        };
       });
       throw new Error(message);
     }
@@ -134,16 +276,16 @@ export const useConfigStore = create<ConfigStore>((set) => {
       const cur = state.config as any;
       if (!cur) return {};
       const curSection = (cur as any)[sectionKey] || {};
-      const nextSection = { ...(curSection as any), ...(updates as any) };
+      const nextSection = deepMergePatch(curSection as PatchObject, updates);
       return { config: { ...cur, [sectionKey]: nextSection } as TriBridConfig, error: null };
     });
 
     // Merge into pending patch and debounce the network call.
     pendingByCorpus[corpusKey] = pendingByCorpus[corpusKey] || {};
-    pendingByCorpus[corpusKey][sectionKey] = {
-      ...(pendingByCorpus[corpusKey][sectionKey] || {}),
-      ...(updates || {})
-    };
+    pendingByCorpus[corpusKey][sectionKey] = deepMergePatch(
+      pendingByCorpus[corpusKey][sectionKey] || {},
+      updates || {}
+    );
     timersByCorpus[corpusKey] = timersByCorpus[corpusKey] || {};
     if (timersByCorpus[corpusKey][sectionKey]) clearTimeout(timersByCorpus[corpusKey][sectionKey]);
     timersByCorpus[corpusKey][sectionKey] = setTimeout(() => {
@@ -153,18 +295,11 @@ export const useConfigStore = create<ConfigStore>((set) => {
     }, DEBOUNCE_MS);
   };
 
-  return ({
-  config: null,
-  loading: false,
-  error: null,
-  saving: false,
-  evalKeyCategories: {},
-
-  loadConfig: async () => {
+  /** The real load. `loadConfig` wraps it so concurrent callers share one request. */
+  const loadConfigOnce = async (corpusKey: string): Promise<void> => {
     // Critical: do NOT cancel optimistic patches here. Flush them before loading so
     // debounced saves are not lost and GET does not overwrite local updates.
-    
-    const corpusKey = String(getActiveCorpusId() || '');
+
 
     // Capture optimistic updates BEFORE flushing (flush will clear pendingByCorpus for this corpus)
     const optimisticUpdates = { ...(pendingByCorpus[corpusKey] || {}) } as Record<string, Record<string, unknown>>;
@@ -178,11 +313,11 @@ export const useConfigStore = create<ConfigStore>((set) => {
     } catch (error) {
       flushError = error instanceof Error ? error.message : 'Failed to save configuration';
     }
-    
+
     set({ loading: true, error: flushError });
     try {
       const config = await configApi.load();
-      
+
       // Merge server config with optimistic updates that were pending before flush,
       // but only when flush succeeded. If flush failed, show persisted server state.
       const mergedConfig = { ...config } as any;
@@ -190,18 +325,41 @@ export const useConfigStore = create<ConfigStore>((set) => {
         for (const [sectionKey, updates] of Object.entries(optimisticUpdates)) {
           if (updates && Object.keys(updates).length > 0) {
             const curSection = mergedConfig[sectionKey] || {};
-            mergedConfig[sectionKey] = { ...curSection, ...updates };
+            mergedConfig[sectionKey] = deepMergePatch(curSection as PatchObject, updates);
           }
         }
       }
-      
-      set({ config: mergedConfig as TriBridConfig, loading: false, error: flushError });
+
+      set({ config: mergedConfig as TriBridConfig, persisted: config, loading: false, error: flushError });
     } catch (error) {
       const loadError = error instanceof Error ? error.message : 'Failed to load configuration';
       set({
         loading: false,
         error: flushError ? `${flushError} | ${loadError}` : loadError,
       });
+    }
+  };
+
+  return ({
+  config: null,
+  persisted: null,
+  loading: false,
+  error: null,
+  fieldErrors: {},
+  saving: false,
+
+  loadConfig: async () => {
+    const sharedCorpusKey = String(getActiveCorpusId() || '');
+    const hasQueuedPatches = Object.keys(pendingByCorpus[sharedCorpusKey] || {}).length > 0;
+    const shared = inFlightLoadByCorpus[sharedCorpusKey];
+    if (shared && !hasQueuedPatches) return shared;
+
+    const run = loadConfigOnce(sharedCorpusKey);
+    inFlightLoadByCorpus[sharedCorpusKey] = run;
+    try {
+      await run;
+    } finally {
+      if (inFlightLoadByCorpus[sharedCorpusKey] === run) delete inFlightLoadByCorpus[sharedCorpusKey];
     }
   },
 
@@ -210,7 +368,7 @@ export const useConfigStore = create<ConfigStore>((set) => {
     try {
       const saved = await configApi.save(config);
       cancelPendingPatches(String(getActiveCorpusId() || ''));
-      set({ config: saved, saving: false, error: null });
+      set({ config: saved, persisted: saved, saving: false, error: null });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to save configuration';
       set({
@@ -223,25 +381,43 @@ export const useConfigStore = create<ConfigStore>((set) => {
 
   patchSection: async (section: keyof TriBridConfig, updates: Record<string, unknown>) => {
     const corpusKey = String(getActiveCorpusId() || '');
+    const sectionKey = String(section);
     set({ saving: true, error: null });
     try {
-      const saved = await configApi.patchSection(String(section), updates, corpusKey || undefined);
+      const saved = await configApi.patchSection(sectionKey, updates, corpusKey || undefined);
       if (String(getActiveCorpusId() || '') === String(corpusKey || '')) {
         set((state) => {
-          const sectionKey = String(section);
           const cur = state.config as any;
           const nextSection = (saved as any)?.[sectionKey];
           const nextConfig = cur ? ({ ...cur, [sectionKey]: nextSection } as TriBridConfig) : saved;
-          return { config: nextConfig, saving: false, error: null };
+          const curPersisted = state.persisted as any;
+          const nextPersisted = curPersisted
+            ? ({ ...curPersisted, [sectionKey]: nextSection } as TriBridConfig)
+            : saved;
+          return {
+            config: nextConfig,
+            persisted: nextPersisted,
+            saving: false,
+            error: null,
+            fieldErrors: withoutSectionFieldErrors(state.fieldErrors, sectionKey),
+          };
         });
       } else {
-        set({ saving: false, error: null });
+        set((state) => ({
+          saving: false,
+          error: null,
+          fieldErrors: withoutSectionFieldErrors(state.fieldErrors, sectionKey),
+        }));
       }
     } catch (error) {
-      set({
+      // No optimistic update precedes this call (unlike `patchSectionDebounced`), so there is
+      // nothing in `config` to revert -- only the field-attributed detail is worth recording.
+      const detail = extractPatchErrorDetail(error);
+      set((state) => ({
         saving: false,
         error: error instanceof Error ? error.message : 'Failed to save configuration',
-      });
+        fieldErrors: withParsedFieldErrors(state.fieldErrors, sectionKey, detail),
+      }));
     }
   },
 
@@ -256,7 +432,7 @@ export const useConfigStore = create<ConfigStore>((set) => {
     try {
       const saved = await configApi.reset();
       cancelPendingPatches(String(getActiveCorpusId() || ''));
-      set({ config: saved, saving: false, error: null });
+      set({ config: saved, persisted: saved, saving: false, error: null });
     } catch (error) {
       set({
         saving: false,
@@ -265,22 +441,16 @@ export const useConfigStore = create<ConfigStore>((set) => {
     }
   },
 
-  loadEvalKeyCategories: () => {
-    // Minimal implementation: keep empty mapping (everything groups as "Other").
-    // If/when we want richer grouping, we can populate this deterministically from
-    // `TriBridConfig.to_flat_dict()` key prefixes.
-    set({ evalKeyCategories: {} });
-  },
-
   reset: () =>
     (() => {
       cancelPendingPatches();
       set({
       config: null,
+      persisted: null,
       loading: false,
       error: null,
+      fieldErrors: {},
       saving: false,
-      evalKeyCategories: {},
       })
     })(),
 });
