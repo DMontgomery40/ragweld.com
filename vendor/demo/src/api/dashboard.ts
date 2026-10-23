@@ -1,23 +1,56 @@
 // TriBrid RAG - Dashboard API Client
 // Centralized API calls for all Dashboard operations
 
+import axios from 'axios';
+
 import { apiClient, api, withCorpusScope } from './client';
 import type {
+  AgentTrainControlPlaneStatusResponse,
+  AlertmanagerAlert,
+  AlertmanagerAlertsResponse,
+  AlertsUnavailableDetail,
+  BenchmarkObservabilitySummaryResponse,
   DashboardIndexStatsResponse,
   DashboardIndexStatusResponse,
   DockerContainer,
   DockerContainersResponse,
   DockerStatus,
+  EvalObservabilitySummaryResponse,
   HealthStatus,
+  IndexRunSummary,
+  LangfuseTraceAccess,
   LokiStatus,
   MCPStatusResponse,
+  ObservabilityCatalogResponse,
+  ObservabilityIncidentsResponse,
+  ObservabilityStatusResponse,
+  PromptObservabilitySummaryResponse,
+  ReadinessStatus,
   RerankerLogsResponse,
-  TriBridConfig,
   TracesLatestResponse,
 } from '@/types/generated';
 
 // Re-export selected generated types for convenience in consumers that import `* as DashAPI`.
-export type { DockerContainer, DockerStatus, HealthStatus, LokiStatus, TracesLatestResponse, TriBridConfig };
+export type {
+  AgentTrainControlPlaneStatusResponse,
+  AlertmanagerAlert,
+  AlertmanagerAlertsResponse,
+  AlertsUnavailableDetail,
+  BenchmarkObservabilitySummaryResponse,
+  DockerContainer,
+  DockerStatus,
+  EvalObservabilitySummaryResponse,
+  HealthStatus,
+  IndexRunSummary,
+  LangfuseTraceAccess,
+  LokiStatus,
+  ObservabilityCatalogResponse,
+  ObservabilityIncidentsResponse,
+  ObservabilityStatusResponse,
+  PromptObservabilitySummaryResponse,
+  ReadinessStatus,
+  TracesLatestResponse,
+};
 
 // ============================================================================
 // System Status APIs
@@ -28,8 +61,19 @@ export async function getHealth(): Promise<HealthStatus> {
   return data;
 }
 
-export async function getConfig(): Promise<TriBridConfig> {
-  const { data } = await apiClient.get<TriBridConfig>(withCorpusScope(api('/config')));
+/**
+ * The per-dependency readiness breakdown behind the top-bar health pill.
+ *
+ * `/api/ready` answers 200 when every required dependency is ready and **503** when one is
+ * not (the payload is the same shape either way -- the breakdown is exactly what an operator
+ * opens the pill to see in the not-ready case), so 503 is accepted as a status rather than
+ * thrown. Any other status still rejects. This is a global infrastructure probe, so it is
+ * intentionally unscoped by corpus.
+ */
+export async function getReadiness(): Promise<ReadinessStatus> {
+  const { data } = await apiClient.get<ReadinessStatus>(api('/ready'), {
+    validateStatus: (s) => s === 200 || s === 503,
+  });
   return data;
 }
 
@@ -42,31 +86,52 @@ export async function getMCPStatus(): Promise<MCPStatusResponse> {
 // Monitoring & Alerts APIs
 // ============================================================================
 
-export interface Alert {
-  labels?: {
-    alertname?: string;
-    [key: string]: any;
-  };
-  startsAt: string;
-  endsAt?: string;
-  annotations?: Record<string, any>;
+export async function getAlertmanagerAlerts(): Promise<AlertmanagerAlertsResponse> {
+  const { data } = await apiClient.get<AlertmanagerAlertsResponse>(api('/observability/alerts'));
+  return data;
 }
 
-export type AlertStatus = {
-  recent_alerts?: Alert[];
-  total_count?: number;
+/** Local view model for a failed alerts read: the server's own reason, never a bare "Failed to load". */
+export type AlertsViewError = {
+  status: number;
+  message: string;
+  operatorHint: string | null;
+  monitoringPath: string;
 };
 
-export async function getAlertStatus(): Promise<AlertStatus> {
-  const { data } = await apiClient.get<AlertStatus>(api('/webhooks/alertmanager/status'));
-  return data;
+const MONITORING_FALLBACK_PATH = '/infrastructure?subtab=monitoring';
+
+export function toAlertsViewError(err: unknown): AlertsViewError {
+  if (axios.isAxiosError(err)) {
+    const status = Number(err.response?.status ?? 0);
+    const detail = (err.response?.data as { detail?: AlertsUnavailableDetail | string } | undefined)?.detail;
+    if (detail && typeof detail === 'object') {
+      return {
+        status,
+        message: String(detail.message || err.message),
+        operatorHint: detail.operator_hint ? String(detail.operator_hint) : null,
+        monitoringPath: String(detail.monitoring_path || MONITORING_FALLBACK_PATH),
+      };
+    }
+    return {
+      status,
+      message: typeof detail === 'string' && detail ? detail : err.message,
+      operatorHint: null,
+      monitoringPath: MONITORING_FALLBACK_PATH,
+    };
+  }
+  return {
+    status: 0,
+    message: err instanceof Error ? err.message : 'The alerts request failed before it reached the API.',
+    operatorHint: null,
+    monitoringPath: MONITORING_FALLBACK_PATH,
+  };
 }
 
 export interface Trace {
   timestamp: string;
   query: string;
   repo?: string;
-  duration_ms?: number;
   [key: string]: any;
 }
 
@@ -84,16 +149,14 @@ export async function getTraces(limit: number = 50): Promise<Trace[]> {
         return kind === 'chat' || kind === 'search' || kind === 'query';
       })
       .map((row) => {
-        const startedAtMs = typeof row?.started_at_ms === 'number' ? row.started_at_ms : undefined;
-        const endedAtMs = typeof row?.ended_at_ms === 'number' ? row.ended_at_ms : undefined;
-        const durationMs =
-          typeof startedAtMs === 'number' && typeof endedAtMs === 'number'
-            ? Math.max(0, endedAtMs - startedAtMs)
-            : undefined;
+        // The query log records no per-request timing (no started/ended/latency field is
+        // written by the search or chat log writers), so there is nothing here to compute a
+        // duration from. The Monitoring table dropped its Duration column accordingly (M-139);
+        // this mapper must not resurrect a field nothing populates.
         const timestamp =
           (typeof row?.ts === 'string' && row.ts) ||
           (typeof row?.timestamp === 'string' && row.timestamp) ||
-          (typeof startedAtMs === 'number' ? new Date(startedAtMs).toISOString() : new Date().toISOString());
+          new Date().toISOString();
         const query =
           (typeof row?.query === 'string' && row.query) ||
           (typeof row?.query_raw === 'string' && row.query_raw) ||
@@ -105,7 +168,6 @@ export async function getTraces(limit: number = 50): Promise<Trace[]> {
           timestamp,
           query,
           repo,
-          duration_ms: durationMs,
           ...row,
         } as Trace;
       })
@@ -115,9 +177,118 @@ export async function getTraces(limit: number = 50): Promise<Trace[]> {
   }
 }
 
+/** Ask the API whether Langfuse actually holds a trace before offering its deep link. */
+export async function getLangfuseTraceAccess(traceId: string): Promise<LangfuseTraceAccess | null> {
+  const id = String(traceId || '').trim();
+  if (!id) return null;
+  const { data } = await apiClient.get<LangfuseTraceAccess>(
+    api(`/observability/langfuse/trace/${encodeURIComponent(id)}`)
+  );
+  return data;
+}
+
 export async function getLatestTrace(): Promise<TracesLatestResponse | null> {
   try {
     const { data } = await apiClient.get<TracesLatestResponse>(withCorpusScope(api('/traces/latest')));
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+export async function getObservabilityStatus(): Promise<ObservabilityStatusResponse | null> {
+  try {
+    const { data } = await apiClient.get<ObservabilityStatusResponse>(withCorpusScope(api('/observability/status')));
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+export async function getObservabilityCatalog(
+  corpusId?: string
+): Promise<ObservabilityCatalogResponse | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (corpusId) qs.set('corpus_id', corpusId);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    const { data } = await apiClient.get<ObservabilityCatalogResponse>(api(`/observability/catalog${suffix}`));
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+export async function getObservabilityIncidents(
+  corpusId?: string
+): Promise<ObservabilityIncidentsResponse | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (corpusId) qs.set('corpus_id', corpusId);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    const { data } = await apiClient.get<ObservabilityIncidentsResponse>(api(`/observability/incidents${suffix}`));
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+export async function getEvalObservabilitySummary(
+  corpusId?: string
+): Promise<EvalObservabilitySummaryResponse | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (corpusId) qs.set('corpus_id', corpusId);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    const { data } = await apiClient.get<EvalObservabilitySummaryResponse>(api(`/eval/observability/summary${suffix}`));
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+export async function getBenchmarkObservabilitySummary(
+  corpusId?: string
+): Promise<BenchmarkObservabilitySummaryResponse | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (corpusId) qs.set('corpus_id', corpusId);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    const { data } = await apiClient.get<BenchmarkObservabilitySummaryResponse>(
+      api(`/benchmark/observability/summary${suffix}`)
+    );
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+export async function getPromptObservabilitySummary(
+  corpusId?: string
+): Promise<PromptObservabilitySummaryResponse | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (corpusId) qs.set('corpus_id', corpusId);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    const { data } = await apiClient.get<PromptObservabilitySummaryResponse>(
+      api(`/prompts/observability/summary${suffix}`)
+    );
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+export async function getAgentControlPlaneStatus(
+  corpusId?: string
+): Promise<AgentTrainControlPlaneStatusResponse | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (corpusId) qs.set('corpus_id', corpusId);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    const { data } = await apiClient.get<AgentTrainControlPlaneStatusResponse>(
+      api(`/agent/train/control-plane/status${suffix}`)
+    );
     return data;
   } catch {
     return null;
@@ -142,9 +313,35 @@ export async function getIndexStats(): Promise<DashboardIndexStatsResponse> {
   return data;
 }
 
-export async function getIndexStatus(): Promise<DashboardIndexStatusResponse> {
-  const { data } = await apiClient.get<DashboardIndexStatusResponse>(withCorpusScope(api('/index/status')));
+export async function getIndexStatus(corpusId: string): Promise<DashboardIndexStatusResponse> {
+  const { data } = await apiClient.get<DashboardIndexStatusResponse>(
+    withCorpusScope(api('/index/status'), corpusId),
+  );
   return data;
+}
+
+/**
+ * The latest persisted run for one corpus, or null when it has never been indexed.
+ *
+ * `finalize=false`: a pure read of the stored summary. The default path reconciles a run
+ * stuck in `indexing` against the manifest and fence and REWRITES its summary, on top of a
+ * fence read, a scoped-config load and an event-queue flush per call. A listing that asks
+ * every corpus on every dashboard load must not do any of that, least of all mutate a run as
+ * a side effect of displaying it. Callers that need the reconciled answer (the Indexing tab
+ * watching its own run) keep the default.
+ *
+ * A never-indexed corpus is an expected answer here, not a failure, so the 404 is accepted
+ * as a status rather than thrown: the shared response interceptor console.errors every
+ * rejection, and a dashboard listing every corpus would log one per unindexed corpus on
+ * every load. Real failures (503 while a corpus is being de-indexed, 409 on a malformed
+ * fence) still reject, so the caller can tell "never indexed" from "could not be read".
+ */
+export async function getLatestIndexRun(corpusId: string): Promise<IndexRunSummary | null> {
+  const { status, data } = await apiClient.get<IndexRunSummary>(
+    api(`/index/${encodeURIComponent(corpusId)}/runs/latest`),
+    { params: { finalize: false }, validateStatus: (s) => s === 200 || s === 404 },
+  );
+  return status === 404 ? null : data;
 }
 
 // ============================================================================
@@ -175,17 +372,17 @@ export async function getRerankerOptions(): Promise<RerankerOption[]> {
 export type DockerOverview = {
   status: DockerStatus;
   containers: DockerContainer[];
+  inventoryAvailable: boolean;
 };
 
 /**
- * Get Docker daemon status + container list.
- * Calls both /api/docker/status and /api/docker/containers.
+ * Get Docker daemon status plus the project-scoped Ragweld service list.
  */
 export async function getDockerStatus(): Promise<DockerOverview> {
   try {
     const [statusRes, containersRes] = await Promise.allSettled([
       apiClient.get<DockerStatus>(api('/docker/status')),
-      apiClient.get<DockerContainersResponse>(api('/docker/containers')),
+      apiClient.get<DockerContainersResponse>(api('/docker/services')),
     ]);
 
     const status: DockerStatus =
@@ -198,117 +395,18 @@ export async function getDockerStatus(): Promise<DockerOverview> {
         ? containersRes.value.data.containers ?? []
         : [];
 
-    return { status, containers };
+    return {
+      status,
+      containers,
+      inventoryAvailable: containersRes.status === 'fulfilled',
+    };
   } catch (err) {
     console.error('[getDockerStatus] Error:', err);
-    return { status: { running: false, runtime: '', containers_count: 0 }, containers: [] };
+    return {
+      status: { running: false, runtime: '', containers_count: 0 },
+      containers: [],
+      inventoryAvailable: false,
+    };
   }
 }
 
-/**
- * Get raw container list from Docker.
- * Returns the containers array directly (unwrapped from response object).
- */
-export async function getDockerContainers(): Promise<DockerContainer[]> {
-  try {
-    const { data } = await apiClient.get<DockerContainersResponse>(api('/docker/containers'));
-    return data.containers || [];
-  } catch (err) {
-    console.error('[getDockerContainers] Error:', err);
-    return [];
-  }
-}
-
-export interface RepoInfo {
-  name: string;
-  profile?: string;
-  path?: string;
-  branch?: string;
-  [key: string]: any;
-}
-
-export async function getRepos(): Promise<RepoInfo[]> {
-  try {
-    const { data } = await apiClient.get<RepoInfo[]>(api('/repos'));
-    return data;
-  } catch {
-    return [];
-  }
-}
-
-// ============================================================================
-// Analytics APIs
-// ============================================================================
-
-export interface FolderMetrics {
-  folder: string;
-  access_count: number;
-  last_access?: string;
-}
-
-export interface TopQueryData {
-  query: string;
-  count: number;
-  routes: Array<[string, number]>;
-  ips: Array<[string, number]>;
-}
-
-export type TopQueriesResponse = {
-  total_queries: number;
-  top: TopQueryData[];
-};
-
-/**
- * Get top folder access metrics by extracting folder paths from query analytics.
- * Wired to /api/monitoring/top-queries endpoint.
- * @param _days - Number of days to analyze (reserved for future backend filtering)
- */
-export async function getTopFolders(_days: number = 5): Promise<FolderMetrics[]> {
-  try {
-    // Note: _days parameter reserved for future backend filtering implementation
-    const { data } = await apiClient.get<TopQueriesResponse>(api('/monitoring/top-queries?limit=100'));
-    
-    // Extract folder references from queries and aggregate by folder
-    const folderCounts: Record<string, number> = {};
-    
-    for (const item of data.top || []) {
-      // Extract file paths from queries that mention folders/files
-      const pathMatches = item.query.match(/(?:\/[\w.-]+)+/g) || [];
-      for (const path of pathMatches) {
-        // Get the folder part (parent directory)
-        const parts = path.split('/').filter(Boolean);
-        if (parts.length >= 2) {
-          const folder = parts.slice(0, -1).join('/');
-          folderCounts[folder] = (folderCounts[folder] || 0) + item.count;
-        }
-      }
-    }
-    
-    // Convert to array and sort by access count
-    const folders: FolderMetrics[] = Object.entries(folderCounts)
-      .map(([folder, count]) => ({ folder, access_count: count }))
-      .sort((a, b) => b.access_count - a.access_count)
-      .slice(0, 10);
-    
-    return folders;
-  } catch (err) {
-    console.error('[getTopFolders] Error:', err);
-    return [];
-  }
-}
-
-/**
- * Get raw top queries data from monitoring endpoint.
- */
-export async function getTopQueries(limit: number = 20): Promise<TopQueriesResponse> {
-  try {
-    const safeLimit = Number.isFinite(Number(limit)) ? Number(limit) : 20;
-    const { data } = await apiClient.get<TopQueriesResponse>(
-      api(`/monitoring/top-queries?limit=${encodeURIComponent(String(safeLimit))}`)
-    );
-    return data;
-  } catch (err) {
-    console.error('[getTopQueries] Error:', err);
-    return { total_queries: 0, top: [] };
-  }
-}
