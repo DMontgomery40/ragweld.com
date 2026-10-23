@@ -6,6 +6,7 @@ import { useHealthStore } from '@/stores';
 import { TabBar } from './components/Navigation/TabBar';
 import { TabRouter } from './components/Navigation/TabRouter';
 import { Breadcrumbs } from './components/Navigation/Breadcrumbs';
+import { CorpusParamGuard, DocumentTitle } from './components/Navigation/RouteGuards';
 
 // Right panel (Dock / Settings)
 import { DockPanel } from './components/Dock/DockPanel';
@@ -19,10 +20,20 @@ import { SubtabErrorFallback } from '@/components/ui/SubtabErrorFallback';
 import { useAppInit, useApplyButton, useTheme } from '@/hooks';
 import { GlobalSearch } from '@/components/Search/GlobalSearch';
 import { UiHelpers } from '@/utils/uiHelpers';
+import { CorpusRegistry } from '@/components/ui/CorpusRegistry';
+import { useRepoStore } from '@/stores/useRepoStore';
+
+/** How often a VISIBLE tab re-checks health. Unchanged from the original interval. */
+const HEALTH_POLL_INTERVAL_MS = 30_000;
 
 function App() {
   const [healthDisplay, setHealthDisplay] = useState('—');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [showCorpusRegistry, setShowCorpusRegistry] = useState(false);
+  const activeRepo = useRepoStore((state) => state.activeRepo);
+  const corpusName = useRepoStore(
+    (state) => state.repos.find((repo) => repo.corpus_id === state.activeRepo)?.name,
+  );
   const { status, checkHealth } = useHealthStore();
   const navigate = useNavigate();
   const isEmbed = new URLSearchParams(window.location.search).get('embed') === '1';
@@ -80,13 +91,36 @@ function App() {
     setMobileNavOpen(false);
   };
 
+  // Health polling follows the tab's visibility. A tab nobody is looking at has nothing to
+  // report, and the drive found an idle Chat page still paying for a header no one could
+  // see - every probe also shipping a Faro event with it (M-130/B-35). Becoming visible
+  // re-checks immediately, so the indicator is never stale on return.
   useEffect(() => {
-    // Initial health check
-    checkHealth();
+    let interval: number | undefined;
 
-    // Poll health status
-    const interval = setInterval(checkHealth, 30000);
-    return () => clearInterval(interval);
+    const stopPolling = () => {
+      if (interval === undefined) return;
+      window.clearInterval(interval);
+      interval = undefined;
+    };
+
+    const syncToVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        stopPolling();
+        return;
+      }
+      checkHealth();
+      if (interval === undefined) {
+        interval = window.setInterval(checkHealth, HEALTH_POLL_INTERVAL_MS);
+      }
+    };
+
+    syncToVisibility();
+    document.addEventListener('visibilitychange', syncToVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', syncToVisibility);
+      stopPolling();
+    };
   }, [checkHealth]);
 
   useEffect(() => {
@@ -113,6 +147,7 @@ function App() {
   if (isEmbed) {
     return (
       <div className="app-embed-root">
+        <DocumentTitle />
         <div className="app-embed-scroll">
           <ErrorBoundary
             context="embed-tab-router"
@@ -136,6 +171,8 @@ function App() {
 
   return (
     <>
+      <DocumentTitle />
+      <CorpusParamGuard />
       {/* Topbar */}
       <div className="topbar">
         <button 
@@ -162,12 +199,15 @@ function App() {
         </button>
         <h1>
           <span className="brand">ragweld</span>
-          <span className="tagline">MLOps Platform · API / MCP</span>
+          <span className="tagline">Versioned Config · API / MCP</span>
         </h1>
         <div className="top-actions">
+          {/* One name for one thing. This was labelled LEARN, named "Open Parameter
+              Glossary" to assistive tech, and navigated to a tab called Glossary
+              (M-160/A-39). */}
           <button
             id="btn-learn"
-            title="Open Parameter Glossary"
+            title="Open the parameter glossary"
             className="icon-btn"
             onClick={() => navigate('/dashboard?subtab=glossary')}
           >
@@ -176,7 +216,20 @@ function App() {
               <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
               <line x1="12" y1="17" x2="12.01" y2="17"></line>
             </svg>
-            <span>Learn</span>
+            <span>Glossary</span>
+          </button>
+          <button
+            id="btn-corpus"
+            className="icon-btn"
+            data-testid="topbar-corpus"
+            title={activeRepo ? `Corpus registry - active: ${activeRepo}` : 'Choose a corpus'}
+            aria-haspopup="dialog"
+            onClick={() => setShowCorpusRegistry(true)}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+            </svg>
+            <span>{corpusName || activeRepo || 'Choose corpus'}</span>
           </button>
           <GlobalSearch />
           <select
@@ -195,6 +248,9 @@ function App() {
           <span id="health-status">{healthDisplay}</span>
         </div>
       </div>
+
+      {/* The corpus registry is reachable from every page through the top bar (M-163). */}
+      <CorpusRegistry isOpen={showCorpusRegistry} onClose={() => setShowCorpusRegistry(false)} />
 
       {/* Main Layout - 3-column grid: sidebar | main | sidepanel */}
       <div className="layout">
