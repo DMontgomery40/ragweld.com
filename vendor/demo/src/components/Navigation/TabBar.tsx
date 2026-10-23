@@ -30,6 +30,14 @@ export function TabBar({ mobileOpen = false, onNavigate }: TabBarProps) {
 
   const pinned = (path: string) => (docked?.path === path ? ' 📌' : '');
 
+  // Pointing at (or tabbing to) a lazily split workspace starts downloading its code, so the
+  // click that usually follows does not wait on the network. import() caches the module, so
+  // repeated hovers cost nothing; a failed prefetch is retried by the real navigation.
+  const prefetch = (route: (typeof TAB_ROUTES)[number]) => () => {
+    if (!route.prefetch) return;
+    route.prefetch().catch(() => {});
+  };
+
   const buildCurrentMainTarget = (): DockTarget | null => {
     const route = getRouteByPath(location.pathname);
     if (!route) return null;
@@ -77,7 +85,18 @@ export function TabBar({ mobileOpen = false, onNavigate }: TabBarProps) {
             [isActive ? 'active' : '', route.nav?.className ?? ''].filter(Boolean).join(' ')
           }
           onClick={handleDockAwareClick(route.path)}
+          onMouseEnter={prefetch(route)}
+          onFocus={prefetch(route)}
           title={route.nav?.title}
+          // The link's name is its visible label. Two of the nine links carry a
+          // `nav.title` description sentence, and that sentence was what assistive tech
+          // announced ("Visible benchmark surface for runtime and prompt-regression
+          // triage" instead of "Benchmark"), so the sidebar read inconsistently
+          // (M-161/A-07). The description stays as the hover/`title` text.
+          // `title` already carries the description for both pointer and AT users;
+          // `aria-description` is still a draft attribute with thin support, so it
+          // promised more than it delivered.
+          aria-label={route.label}
         >
           {route.label}
           {pinned(route.path)}
