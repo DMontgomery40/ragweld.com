@@ -5,26 +5,64 @@
 // - We do NOT store Grafana API keys/tokens in the frontend.
 
 import { useConfigField } from '@/hooks/useConfig';
+import { useAPI } from '@/hooks';
+import { NumberField } from '@/components/ui/NumberField';
+import { useEffect, useState } from 'react';
+import { GRAFANA_DASHBOARD_PRESETS, findGrafanaPreset } from './dashboardPresets';
+import type { ObservabilityStatusResponse } from '@/types/generated';
 
 export function GrafanaConfig() {
-  const [embedEnabledRaw, setEmbedEnabled, embedMeta] = useConfigField<number>('ui.grafana_embed_enabled', 1);
-  const [baseUrl, setBaseUrl] = useConfigField<string>('ui.grafana_base_url', 'http://127.0.0.1:3001');
-  const [dashboardUid, setDashboardUid] = useConfigField<string>('ui.grafana_dashboard_uid', 'tribrid-overview');
-  const [dashboardSlug, setDashboardSlug] = useConfigField<string>('ui.grafana_dashboard_slug', 'tribrid-overview');
+  const { api } = useAPI();
+  const [embedEnabled, setEmbedEnabled, embedMeta] = useConfigField<boolean>('ui.grafana_embed_enabled', true);
+  const [baseUrl, setBaseUrl] = useConfigField<string>('ui.grafana_base_url', 'http://127.0.0.1:3301');
+  const [dashboardUid, setDashboardUid] = useConfigField<string>('ui.grafana_dashboard_uid', 'ragweld-oncall-overview');
+  const [dashboardSlug, setDashboardSlug] = useConfigField<string>('ui.grafana_dashboard_slug', 'on-call-overview');
   const [kiosk, setKiosk] = useConfigField<string>('ui.grafana_kiosk', 'tv');
   const [orgId, setOrgId] = useConfigField<number>('ui.grafana_org_id', 1);
   const [refresh, setRefresh] = useConfigField<string>('ui.grafana_refresh', '10s');
+  const [mimirBaseUrl, setMimirBaseUrl] = useConfigField<string>('tracing.mimir_base_url', '');
+  const [prometheusBaseUrl, setPrometheusBaseUrl] = useConfigField<string>('tracing.prometheus_base_url', '');
+  const [pyroscopeBaseUrl, setPyroscopeBaseUrl] = useConfigField<string>('tracing.pyroscope_base_url', '');
+  const [faroBaseUrl, setFaroBaseUrl] = useConfigField<string>('tracing.faro_base_url', '');
+  const [opencostBaseUrl, setOpencostBaseUrl] = useConfigField<string>('tracing.opencost_base_url', '');
+  const [alertmanagerBaseUrl, setAlertmanagerBaseUrl] = useConfigField<string>('tracing.alertmanager_base_url', '');
+  const [observability, setObservability] = useState<ObservabilityStatusResponse | null>(null);
 
-  const embedEnabled = Boolean(embedEnabledRaw);
+  useEffect(() => {
+    let cancelled = false;
+    const loadStatus = async () => {
+      try {
+        const response = await fetch(api('/observability/status'));
+        if (!response.ok) return;
+        const data = (await response.json()) as ObservabilityStatusResponse;
+        if (!cancelled) setObservability(data);
+      } catch {
+        if (!cancelled) setObservability(null);
+      }
+    };
+    loadStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
   const normalizedBase = String(baseUrl || '').replace(/\/$/, '');
   const normalizedUid = String(dashboardUid || '').trim();
   const normalizedSlug = String(dashboardSlug || normalizedUid).trim() || normalizedUid;
+  const activePreset = findGrafanaPreset(normalizedUid, normalizedSlug);
   const dashboardHref =
     normalizedBase && normalizedUid
       ? `${normalizedBase}/d/${encodeURIComponent(normalizedUid)}/${encodeURIComponent(normalizedSlug)}${
           normalizedBase.startsWith('/') ? '?embed=1' : ''
         }`
       : '';
+
+  function applyPreset(presetId: string) {
+    const preset = GRAFANA_DASHBOARD_PRESETS.find((item) => item.id === presetId);
+    if (!preset) return;
+    setDashboardUid(preset.uid);
+    setDashboardSlug(preset.slug);
+  }
 
   return (
     <div style={{ maxWidth: '980px', margin: '0 auto', padding: '24px' }}>
@@ -50,6 +88,23 @@ export function GrafanaConfig() {
         </div>
       )}
 
+      {observability && (
+        <div
+          style={{
+            padding: '12px 16px',
+            background: 'var(--bg-elev2)',
+            border: '1px solid var(--line)',
+            borderRadius: '8px',
+            color: 'var(--fg)',
+            fontSize: '12px',
+            marginBottom: '16px'
+          }}
+        >
+          <strong>Observability mode:</strong> {observability.mode}
+          {observability.operator_hint ? ` · ${observability.operator_hint}` : ''}
+        </div>
+      )}
+
       <div style={{
         background: 'var(--card-bg)',
         border: '1px solid var(--line)',
@@ -60,11 +115,40 @@ export function GrafanaConfig() {
         gap: '16px'
       }}>
         <div style={{ gridColumn: '1 / 3' }}>
+          <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: 'var(--fg)', marginBottom: '8px' }}>
+            Dashboard Preset
+          </label>
+          <select
+            value={activePreset?.id || ''}
+            onChange={(e) => applyPreset(e.target.value)}
+            style={{
+              width: '100%',
+              background: 'var(--input-bg)',
+              border: '1px solid var(--line)',
+              color: 'var(--fg)',
+              padding: '10px 12px',
+              borderRadius: '8px',
+              fontSize: '13px'
+            }}
+          >
+            <option value="">Custom</option>
+            {GRAFANA_DASHBOARD_PRESETS.map((preset) => (
+              <option key={preset.id} value={preset.id}>{preset.label}</option>
+            ))}
+          </select>
+          <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--fg-muted)' }}>
+            {activePreset
+              ? activePreset.description
+              : 'Use presets to expose provisioned backend dashboards in the UI without copying UIDs by hand.'}
+          </div>
+        </div>
+
+        <div style={{ gridColumn: '1 / 3' }}>
           <label style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '13px', fontWeight: 700, color: 'var(--fg)' }}>
             <input
               type="checkbox"
               checked={embedEnabled}
-              onChange={(e) => setEmbedEnabled(e.target.checked ? 1 : 0)}
+              onChange={(e) => setEmbedEnabled(e.target.checked)}
             />
             Enable embedded Grafana
           </label>
@@ -81,7 +165,7 @@ export function GrafanaConfig() {
             type="text"
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder="http://127.0.0.1:3001"
+                  placeholder="http://127.0.0.1:3301"
             style={{
               width: '100%',
               background: 'var(--input-bg)',
@@ -98,14 +182,11 @@ export function GrafanaConfig() {
           <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: 'var(--fg)', marginBottom: '8px' }}>
             Org ID
           </label>
-          <input
-            type="number"
+          <NumberField
+            configPath="ui.grafana_org_id"
             min={1}
             value={orgId}
-            onChange={(e) => {
-              const n = Number.parseInt(e.target.value || '1', 10);
-              setOrgId(Number.isFinite(n) && n > 0 ? n : 1);
-            }}
+            onCommit={setOrgId}
             style={{
               width: '100%',
               background: 'var(--input-bg)',
@@ -126,7 +207,7 @@ export function GrafanaConfig() {
             type="text"
             value={dashboardUid}
             onChange={(e) => setDashboardUid(e.target.value)}
-            placeholder="tribrid-overview"
+            placeholder="ragweld-oncall-overview"
             style={{
               width: '100%',
               background: 'var(--input-bg)',
@@ -147,7 +228,7 @@ export function GrafanaConfig() {
             type="text"
             value={dashboardSlug}
             onChange={(e) => setDashboardSlug(e.target.value)}
-            placeholder="tribrid-overview"
+            placeholder="on-call-overview"
             style={{
               width: '100%',
               background: 'var(--input-bg)',
@@ -206,6 +287,132 @@ export function GrafanaConfig() {
             <option value="1">1 (minimal)</option>
           </select>
         </div>
+
+        <div>
+          <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: 'var(--fg)', marginBottom: '8px' }}>
+            Alertmanager URL
+          </label>
+          <input
+            type="text"
+            value={alertmanagerBaseUrl}
+            onChange={(e) => setAlertmanagerBaseUrl(e.target.value)}
+            placeholder="http://127.0.0.1:9093"
+            style={{
+              width: '100%',
+              background: 'var(--input-bg)',
+              border: '1px solid var(--line)',
+              color: 'var(--fg)',
+              padding: '10px 12px',
+              borderRadius: '8px',
+              fontSize: '13px'
+            }}
+          />
+        </div>
+
+        <div>
+          <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: 'var(--fg)', marginBottom: '8px' }}>
+            Mimir URL
+          </label>
+          <input
+            type="text"
+            value={mimirBaseUrl}
+            onChange={(e) => setMimirBaseUrl(e.target.value)}
+            placeholder="http://127.0.0.1:9009"
+            style={{
+              width: '100%',
+              background: 'var(--input-bg)',
+              border: '1px solid var(--line)',
+              color: 'var(--fg)',
+              padding: '10px 12px',
+              borderRadius: '8px',
+              fontSize: '13px'
+            }}
+          />
+        </div>
+
+        <div>
+          <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: 'var(--fg)', marginBottom: '8px' }}>
+            Prometheus URL
+          </label>
+          <input
+            type="text"
+            value={prometheusBaseUrl}
+            onChange={(e) => setPrometheusBaseUrl(e.target.value)}
+            placeholder="http://127.0.0.1:59090"
+            style={{
+              width: '100%',
+              background: 'var(--input-bg)',
+              border: '1px solid var(--line)',
+              color: 'var(--fg)',
+              padding: '10px 12px',
+              borderRadius: '8px',
+              fontSize: '13px'
+            }}
+          />
+        </div>
+
+        <div>
+          <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: 'var(--fg)', marginBottom: '8px' }}>
+            Pyroscope URL
+          </label>
+          <input
+            type="text"
+            value={pyroscopeBaseUrl}
+            onChange={(e) => setPyroscopeBaseUrl(e.target.value)}
+            placeholder="http://127.0.0.1:4040"
+            style={{
+              width: '100%',
+              background: 'var(--input-bg)',
+              border: '1px solid var(--line)',
+              color: 'var(--fg)',
+              padding: '10px 12px',
+              borderRadius: '8px',
+              fontSize: '13px'
+            }}
+          />
+        </div>
+
+        <div>
+          <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: 'var(--fg)', marginBottom: '8px' }}>
+            Faro URL
+          </label>
+          <input
+            type="text"
+            value={faroBaseUrl}
+            onChange={(e) => setFaroBaseUrl(e.target.value)}
+            placeholder="http://127.0.0.1:12347"
+            style={{
+              width: '100%',
+              background: 'var(--input-bg)',
+              border: '1px solid var(--line)',
+              color: 'var(--fg)',
+              padding: '10px 12px',
+              borderRadius: '8px',
+              fontSize: '13px'
+            }}
+          />
+        </div>
+
+        <div>
+          <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: 'var(--fg)', marginBottom: '8px' }}>
+            OpenCost URL
+          </label>
+          <input
+            type="text"
+            value={opencostBaseUrl}
+            onChange={(e) => setOpencostBaseUrl(e.target.value)}
+            placeholder="http://127.0.0.1:9003"
+            style={{
+              width: '100%',
+              background: 'var(--input-bg)',
+              border: '1px solid var(--line)',
+              color: 'var(--fg)',
+              padding: '10px 12px',
+              borderRadius: '8px',
+              fontSize: '13px'
+            }}
+          />
+        </div>
       </div>
 
       <div style={{
@@ -216,7 +423,7 @@ export function GrafanaConfig() {
         alignItems: 'center'
       }}>
         <a
-                href={normalizedBase || 'http://127.0.0.1:3001'}
+                href={normalizedBase || 'http://127.0.0.1:3301'}
           target="_blank"
           rel="noopener noreferrer"
           style={{
@@ -253,23 +460,30 @@ export function GrafanaConfig() {
           </a>
         )}
 
-        <a
-          href="http://localhost:9090"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{
-            background: 'var(--bg-elev2)',
-            color: 'var(--fg)',
-            border: '1px solid var(--line)',
-            padding: '8px 12px',
-            borderRadius: '8px',
-            fontSize: '12px',
-            fontWeight: 700,
-            textDecoration: 'none'
-          }}
-        >
-          Open Prometheus
-        </a>
+        {String(prometheusBaseUrl || '').trim() ? (
+          <a
+            href={String(prometheusBaseUrl).replace(/\/$/, '')}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="grafana-config-open-prometheus"
+            style={{
+              background: 'var(--bg-elev2)',
+              color: 'var(--fg)',
+              border: '1px solid var(--line)',
+              padding: '8px 12px',
+              borderRadius: '8px',
+              fontSize: '12px',
+              fontWeight: 700,
+              textDecoration: 'none'
+            }}
+          >
+            Open Prometheus
+          </a>
+        ) : (
+          <span style={{ fontSize: '12px', color: 'var(--fg-muted)', alignSelf: 'center' }}>
+            Prometheus URL not configured
+          </span>
+        )}
       </div>
 
       {embedMeta.loading && (
