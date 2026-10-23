@@ -6,12 +6,14 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useSubtab } from '@/hooks';
 import { EvalDrillDown } from '@/components/Evaluation/EvalDrillDown';
 import { EvalDatasetSubtab } from '@/components/Evaluation/EvalDatasetSubtab';
+import { PromptfooRegressionPanel } from '@/components/Evaluation/PromptfooRegressionPanel';
 import { SystemPromptsSubtab } from '@/components/Evaluation/SystemPromptsSubtab';
 import { TraceViewer } from '@/components/Evaluation/TraceViewer';
 import { LiveTerminal, LiveTerminalHandle } from '@/components/LiveTerminal/LiveTerminal';
 import { TerminalService } from '@/services/TerminalService';
 import { evalApi } from '@/api';
 import { CollapsibleSection } from '@/components/ui/CollapsibleSection';
+import { NumberField } from '@/components/ui/NumberField';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useActiveRepo, useRepoStore, useRepoInitialized, useRepoLoading, useRepos } from '@/stores';
 import type { EvalRunMeta } from '@/types/generated';
@@ -51,7 +53,7 @@ export const EvalAnalysisTab: React.FC = () => {
   }, [activeRepo]);
 
   // Derive eval settings from config store - these mirror retrieval settings
-  const evalUseMulti = (config?.retrieval?.eval_multi ?? 1) !== 0; // 0 = disabled, 1 = enabled
+  const evalUseMulti = config?.retrieval?.eval_multi ?? true;
   const evalFinalK = config?.retrieval?.eval_final_k ?? 5;
   const evalMultiM = config?.evaluation?.eval_multi_m ?? 10;
 
@@ -328,8 +330,6 @@ export const EvalAnalysisTab: React.FC = () => {
   const showAnalysisHeader = activeSubtab === 'analysis';
   const showRunSelectors = activeSubtab === 'analysis' && !loading && !error && runs.length > 0;
 
-  const clamp = (n: number, min: number, max: number): number => Math.min(max, Math.max(min, n));
-
   const renderRunSettings = () => (
     <CollapsibleSection
       title="Run Settings"
@@ -408,18 +408,15 @@ export const EvalAnalysisTab: React.FC = () => {
           >
             Final K (eval)
           </label>
-          <input
+          <NumberField
             id="eval-run-settings-final-k"
-            type="number"
+            configPath="retrieval.eval_final_k"
             min={1}
             max={50}
             step={1}
             value={Number(evalFinalK)}
             disabled={evalRunning}
-            onChange={(e) => {
-              const next = clamp(parseInt(e.target.value || '0', 10) || 1, 1, 50);
-              patchSectionDebounced('retrieval', { eval_final_k: next });
-            }}
+            onCommit={(next) => patchSectionDebounced('retrieval', { eval_final_k: next })}
             style={{
               width: '100%',
               background: 'var(--input-bg)',
@@ -433,35 +430,25 @@ export const EvalAnalysisTab: React.FC = () => {
         </div>
 
         <div>
-          <label
-            htmlFor="eval-run-settings-eval-multi"
-            style={{ display: 'block', fontSize: '12px', color: 'var(--fg-muted)', marginBottom: '6px' }}
-          >
+          <div style={{ display: 'block', fontSize: '12px', color: 'var(--fg-muted)', marginBottom: '6px' }}>
             Multi Q (eval)
+          </div>
+          <label className="toggle" style={{ opacity: evalRunning ? 0.7 : 1 }}>
+            <input
+              id="eval-run-settings-eval-multi"
+              type="checkbox"
+              aria-label="Multi Q (eval)"
+              checked={evalUseMulti}
+              disabled={evalRunning}
+              onChange={(e) => {
+                patchSectionDebounced('retrieval', { eval_multi: e.target.checked });
+              }}
+            />
+            <span className="toggle-track" aria-hidden="true">
+              <span className="toggle-thumb"></span>
+            </span>
+            <span className="toggle-label">{evalUseMulti ? 'Enabled' : 'Disabled'}</span>
           </label>
-          <select
-            id="eval-run-settings-eval-multi"
-            value={String(config?.retrieval?.eval_multi ?? 1)}
-            disabled={evalRunning}
-            onChange={(e) => {
-              const next = e.target.value === '0' ? 0 : 1;
-              patchSectionDebounced('retrieval', { eval_multi: next });
-            }}
-            style={{
-              width: '100%',
-              background: 'var(--input-bg)',
-              border: '1px solid var(--line)',
-              color: 'var(--fg)',
-              padding: '10px 12px',
-              borderRadius: '8px',
-              fontSize: '13px',
-              cursor: evalRunning ? 'not-allowed' : 'pointer',
-              opacity: evalRunning ? 0.7 : 1,
-            }}
-          >
-            <option value="1">Enabled</option>
-            <option value="0">Disabled</option>
-          </select>
         </div>
 
         <div>
@@ -471,18 +458,15 @@ export const EvalAnalysisTab: React.FC = () => {
           >
             Multi Q M (variants)
           </label>
-          <input
+          <NumberField
             id="eval-run-settings-eval-multi-m"
-            type="number"
+            configPath="evaluation.eval_multi_m"
             min={1}
             max={20}
             step={1}
             value={Number(evalMultiM)}
             disabled={evalRunning}
-            onChange={(e) => {
-              const next = clamp(parseInt(e.target.value || '0', 10) || 1, 1, 20);
-              patchSectionDebounced('evaluation', { eval_multi_m: next });
-            }}
+            onCommit={(next) => patchSectionDebounced('evaluation', { eval_multi_m: next })}
             style={{
               width: '100%',
               background: 'var(--input-bg)',
@@ -535,18 +519,15 @@ export const EvalAnalysisTab: React.FC = () => {
               >
                 RRF k
               </label>
-              <input
+              <NumberField
                 id="eval-run-settings-fusion-rrf-k"
-                type="number"
+                configPath="fusion.rrf_k"
                 min={1}
                 max={200}
                 step={1}
                 value={Number(config?.fusion?.rrf_k ?? 60)}
                 disabled={evalRunning}
-                onChange={(e) => {
-                  const next = clamp(parseInt(e.target.value || '0', 10) || 1, 1, 200);
-                  patchSectionDebounced('fusion', { rrf_k: next });
-                }}
+                onCommit={(next) => patchSectionDebounced('fusion', { rrf_k: next })}
                 style={{
                   width: '100%',
                   background: 'var(--input-bg)',
@@ -572,18 +553,15 @@ export const EvalAnalysisTab: React.FC = () => {
               >
                 Vector
               </label>
-              <input
+              <NumberField
                 id="eval-run-settings-fusion-vector-weight"
-                type="number"
+                configPath="fusion.vector_weight"
                 min={0}
                 max={1}
                 step={0.05}
                 value={Number(config?.fusion?.vector_weight ?? 0.4)}
                 disabled={evalRunning}
-                onChange={(e) => {
-                  const next = clamp(parseFloat(e.target.value || '0') || 0, 0, 1);
-                  patchSectionDebounced('fusion', { vector_weight: next });
-                }}
+                onCommit={(next) => patchSectionDebounced('fusion', { vector_weight: next })}
                 style={{
                   width: '100%',
                   background: 'var(--input-bg)',
@@ -603,18 +581,15 @@ export const EvalAnalysisTab: React.FC = () => {
               >
                 Sparse
               </label>
-              <input
+              <NumberField
                 id="eval-run-settings-fusion-sparse-weight"
-                type="number"
+                configPath="fusion.sparse_weight"
                 min={0}
                 max={1}
                 step={0.05}
                 value={Number(config?.fusion?.sparse_weight ?? 0.3)}
                 disabled={evalRunning}
-                onChange={(e) => {
-                  const next = clamp(parseFloat(e.target.value || '0') || 0, 0, 1);
-                  patchSectionDebounced('fusion', { sparse_weight: next });
-                }}
+                onCommit={(next) => patchSectionDebounced('fusion', { sparse_weight: next })}
                 style={{
                   width: '100%',
                   background: 'var(--input-bg)',
@@ -634,18 +609,15 @@ export const EvalAnalysisTab: React.FC = () => {
               >
                 Graph
               </label>
-              <input
+              <NumberField
                 id="eval-run-settings-fusion-graph-weight"
-                type="number"
+                configPath="fusion.graph_weight"
                 min={0}
                 max={1}
                 step={0.05}
                 value={Number(config?.fusion?.graph_weight ?? 0.3)}
                 disabled={evalRunning}
-                onChange={(e) => {
-                  const next = clamp(parseFloat(e.target.value || '0') || 0, 0, 1);
-                  patchSectionDebounced('fusion', { graph_weight: next });
-                }}
+                onCommit={(next) => patchSectionDebounced('fusion', { graph_weight: next })}
                 style={{
                   width: '100%',
                   background: 'var(--input-bg)',
@@ -674,18 +646,15 @@ export const EvalAnalysisTab: React.FC = () => {
                 />
                 Vector
               </label>
-              <input
+              <NumberField
                 id="eval-run-settings-vector-topk"
-                type="number"
+                configPath="vector_search.top_k"
                 min={10}
                 max={200}
                 step={1}
                 value={Number(config?.vector_search?.top_k ?? 50)}
                 disabled={evalRunning || !(config?.vector_search?.enabled ?? true)}
-                onChange={(e) => {
-                  const next = clamp(parseInt(e.target.value || '0', 10) || 10, 10, 200);
-                  patchSectionDebounced('vector_search', { top_k: next });
-                }}
+                onCommit={(next) => patchSectionDebounced('vector_search', { top_k: next })}
                 style={{
                   width: '120px',
                   background: 'var(--input-bg)',
@@ -708,18 +677,15 @@ export const EvalAnalysisTab: React.FC = () => {
                 />
                 Sparse
               </label>
-              <input
+              <NumberField
                 id="eval-run-settings-sparse-topk"
-                type="number"
+                configPath="sparse_search.top_k"
                 min={10}
                 max={200}
                 step={1}
                 value={Number(config?.sparse_search?.top_k ?? 50)}
                 disabled={evalRunning || !(config?.sparse_search?.enabled ?? true)}
-                onChange={(e) => {
-                  const next = clamp(parseInt(e.target.value || '0', 10) || 10, 10, 200);
-                  patchSectionDebounced('sparse_search', { top_k: next });
-                }}
+                onCommit={(next) => patchSectionDebounced('sparse_search', { top_k: next })}
                 style={{
                   width: '120px',
                   background: 'var(--input-bg)',
@@ -742,18 +708,15 @@ export const EvalAnalysisTab: React.FC = () => {
                 />
                 Graph
               </label>
-              <input
+              <NumberField
                 id="eval-run-settings-graph-topk"
-                type="number"
+                configPath="graph_search.top_k"
                 min={5}
                 max={100}
                 step={1}
                 value={Number(config?.graph_search?.top_k ?? 30)}
                 disabled={evalRunning || !(config?.graph_search?.enabled ?? true)}
-                onChange={(e) => {
-                  const next = clamp(parseInt(e.target.value || '0', 10) || 5, 5, 100);
-                  patchSectionDebounced('graph_search', { top_k: next });
-                }}
+                onCommit={(next) => patchSectionDebounced('graph_search', { top_k: next })}
                 style={{
                   width: '120px',
                   background: 'var(--input-bg)',
@@ -792,7 +755,7 @@ export const EvalAnalysisTab: React.FC = () => {
           style={{
             padding: '12px 20px',
             background: activeSubtab === 'analysis' ? 'var(--bg)' : 'transparent',
-            color: activeSubtab === 'analysis' ? 'var(--accent)' : 'var(--fg-muted)',
+            color: activeSubtab === 'analysis' ? 'var(--accent-text)' : 'var(--fg-muted)',
             border: 'none',
             borderBottom: activeSubtab === 'analysis' ? '2px solid var(--accent)' : '2px solid transparent',
             fontSize: '13px',
@@ -812,7 +775,7 @@ export const EvalAnalysisTab: React.FC = () => {
           style={{
             padding: '12px 20px',
             background: activeSubtab === 'dataset' ? 'var(--bg)' : 'transparent',
-            color: activeSubtab === 'dataset' ? 'var(--accent)' : 'var(--fg-muted)',
+            color: activeSubtab === 'dataset' ? 'var(--accent-text)' : 'var(--fg-muted)',
             border: 'none',
             borderBottom: activeSubtab === 'dataset' ? '2px solid var(--accent)' : '2px solid transparent',
             fontSize: '13px',
@@ -833,7 +796,7 @@ export const EvalAnalysisTab: React.FC = () => {
           style={{
             padding: '12px 20px',
             background: activeSubtab === 'prompts' ? 'var(--bg)' : 'transparent',
-            color: activeSubtab === 'prompts' ? 'var(--accent)' : 'var(--fg-muted)',
+            color: activeSubtab === 'prompts' ? 'var(--accent-text)' : 'var(--fg-muted)',
             border: 'none',
             borderBottom: activeSubtab === 'prompts' ? '2px solid var(--accent)' : '2px solid transparent',
             fontSize: '13px',
@@ -854,7 +817,7 @@ export const EvalAnalysisTab: React.FC = () => {
           style={{
             padding: '12px 20px',
             background: activeSubtab === 'trace' ? 'var(--bg)' : 'transparent',
-            color: activeSubtab === 'trace' ? 'var(--accent)' : 'var(--fg-muted)',
+            color: activeSubtab === 'trace' ? 'var(--accent-text)' : 'var(--fg-muted)',
             border: 'none',
             borderBottom: activeSubtab === 'trace' ? '2px solid var(--accent)' : '2px solid transparent',
             fontSize: '13px',
@@ -871,7 +834,16 @@ export const EvalAnalysisTab: React.FC = () => {
         </button>
       </div>
 
-      {/* Header with Run Selectors - only show for analysis subtab when runs exist */}
+      {/* Content Area - only the subtab nav stays pinned. The header (title,
+          selectors, run settings, terminal, progress) scrolls with the content:
+          a fixed header inside the overflow:hidden tab root clips the whole
+          screen on short viewports (2026-08-24 Promptfoo finding).
+          paddingBottom reserves space above App.tsx action-buttons. */}
+      <div style={{
+        flex: 1,
+        overflow: 'auto',
+        paddingBottom: '80px'
+      }}>
       {showAnalysisHeader && (
       <div style={{
         padding: '20px 24px',
@@ -933,7 +905,7 @@ export const EvalAnalysisTab: React.FC = () => {
                     display: 'block', 
                     fontSize: '11px', 
                     fontWeight: 600, 
-                    color: 'var(--accent)',
+                    color: 'var(--accent-text)',
                     textTransform: 'uppercase',
                     marginBottom: '6px',
                     letterSpacing: '0.5px'
@@ -1133,7 +1105,7 @@ export const EvalAnalysisTab: React.FC = () => {
               fontSize: '12px'
             }}>
               <span style={{ color: 'var(--fg)' }}>{evalProgress.status}</span>
-              <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{evalProgress.current}%</span>
+              <span style={{ color: 'var(--accent-text)', fontWeight: 600 }}>{evalProgress.current}%</span>
             </div>
             <div style={{
               height: '6px',
@@ -1156,37 +1128,37 @@ export const EvalAnalysisTab: React.FC = () => {
       </div>
       )}
 
-      {/* Content Area - paddingBottom reserves space above App.tsx action-buttons */}
-      <div style={{
-        flex: 1,
-        overflow: 'auto',
-        paddingBottom: '80px'
-      }}>
         {activeSubtab === 'analysis' ? (
-          // Analysis subtab: handle loading/error/empty/data states
-          loading ? (
-            <AnalysisLoadingState />
-          ) : error ? (
-            <AnalysisErrorState />
-          ) : runs.length === 0 ? (
-            <div style={{ padding: '24px' }}>
-              <AnalysisEmptyState />
-            </div>
-          ) : selectedRunId ? (
-            <EvalDrillDown
-              key={`${selectedRunId}-${compareRunId || 'none'}`}
-              runId={selectedRunId}
-              compareWithRunId={compareRunId || undefined}
-            />
-          ) : (
-            <div style={{
-              padding: '48px',
-              textAlign: 'center',
-              color: 'var(--fg-muted)'
-            }}>
-              Select an evaluation run to view details
-            </div>
-          )
+          // Analysis subtab: Promptfoo panel scrolls with the content, then the
+          // loading/error/empty/data states below it
+          <>
+            {String(activeRepo || '').trim() ? (
+              <PromptfooRegressionPanel corpusId={String(activeRepo || '').trim()} />
+            ) : null}
+            {loading ? (
+              <AnalysisLoadingState />
+            ) : error ? (
+              <AnalysisErrorState />
+            ) : runs.length === 0 ? (
+              <div style={{ padding: '24px' }}>
+                <AnalysisEmptyState />
+              </div>
+            ) : selectedRunId ? (
+              <EvalDrillDown
+                key={`${selectedRunId}-${compareRunId || 'none'}`}
+                runId={selectedRunId}
+                compareWithRunId={compareRunId || undefined}
+              />
+            ) : (
+              <div style={{
+                padding: '48px',
+                textAlign: 'center',
+                color: 'var(--fg-muted)'
+              }}>
+                Select an evaluation run to view details
+              </div>
+            )}
+          </>
         ) : activeSubtab === 'dataset' ? (
           <div style={{ padding: '24px' }}>
             <EvalDatasetSubtab />
