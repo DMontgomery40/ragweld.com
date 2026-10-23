@@ -4,15 +4,11 @@ import type { TriBridConfig } from '@/types/generated';
 
 interface ConfigStore {
   config: TriBridConfig | null;
+  /** Last server-acknowledged config. `config !== persisted` means unsaved local edits. */
+  persisted: TriBridConfig | null;
   loading: boolean;
   error: string | null;
   saving: boolean;
-  /**
-   * Optional mapping of flat config keys -> UI categories.
-   * Used by Eval drill-down to group config snapshots.
-   */
-  evalKeyCategories: Record<string, string>;
-
   // Actions
   loadConfig: () => Promise<void>;
   saveConfig: (config: TriBridConfig) => Promise<void>;
@@ -27,7 +23,6 @@ interface ConfigStore {
   /** Immediately flush all pending debounced patches for the active corpus. */
   flushPendingPatches: () => Promise<void>;
   resetConfig: () => Promise<void>;
-  loadEvalKeyCategories: () => void;
 
   reset: () => void;
 }
@@ -89,7 +84,11 @@ export const useConfigStore = create<ConfigStore>((set) => {
           const nextSection = (saved as any)?.[sectionKey];
           // Merge only the patched section to avoid clobbering other optimistic changes.
           const nextConfig = cur ? ({ ...cur, [sectionKey]: nextSection } as TriBridConfig) : saved;
-          return { config: nextConfig, saving: false, error: null };
+          const curPersisted = state.persisted as any;
+          const nextPersisted = curPersisted
+            ? ({ ...curPersisted, [sectionKey]: nextSection } as TriBridConfig)
+            : saved;
+          return { config: nextConfig, persisted: nextPersisted, saving: false, error: null };
         });
       } else {
         set({ saving: false, error: null });
@@ -155,10 +154,10 @@ export const useConfigStore = create<ConfigStore>((set) => {
 
   return ({
   config: null,
+  persisted: null,
   loading: false,
   error: null,
   saving: false,
-  evalKeyCategories: {},
 
   loadConfig: async () => {
     // Critical: do NOT cancel optimistic patches here. Flush them before loading so
@@ -195,7 +194,7 @@ export const useConfigStore = create<ConfigStore>((set) => {
         }
       }
       
-      set({ config: mergedConfig as TriBridConfig, loading: false, error: flushError });
+      set({ config: mergedConfig as TriBridConfig, persisted: config, loading: false, error: flushError });
     } catch (error) {
       const loadError = error instanceof Error ? error.message : 'Failed to load configuration';
       set({
@@ -210,7 +209,7 @@ export const useConfigStore = create<ConfigStore>((set) => {
     try {
       const saved = await configApi.save(config);
       cancelPendingPatches(String(getActiveCorpusId() || ''));
-      set({ config: saved, saving: false, error: null });
+      set({ config: saved, persisted: saved, saving: false, error: null });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to save configuration';
       set({
@@ -232,7 +231,11 @@ export const useConfigStore = create<ConfigStore>((set) => {
           const cur = state.config as any;
           const nextSection = (saved as any)?.[sectionKey];
           const nextConfig = cur ? ({ ...cur, [sectionKey]: nextSection } as TriBridConfig) : saved;
-          return { config: nextConfig, saving: false, error: null };
+          const curPersisted = state.persisted as any;
+          const nextPersisted = curPersisted
+            ? ({ ...curPersisted, [sectionKey]: nextSection } as TriBridConfig)
+            : saved;
+          return { config: nextConfig, persisted: nextPersisted, saving: false, error: null };
         });
       } else {
         set({ saving: false, error: null });
@@ -256,7 +259,7 @@ export const useConfigStore = create<ConfigStore>((set) => {
     try {
       const saved = await configApi.reset();
       cancelPendingPatches(String(getActiveCorpusId() || ''));
-      set({ config: saved, saving: false, error: null });
+      set({ config: saved, persisted: saved, saving: false, error: null });
     } catch (error) {
       set({
         saving: false,
@@ -265,22 +268,15 @@ export const useConfigStore = create<ConfigStore>((set) => {
     }
   },
 
-  loadEvalKeyCategories: () => {
-    // Minimal implementation: keep empty mapping (everything groups as "Other").
-    // If/when we want richer grouping, we can populate this deterministically from
-    // `TriBridConfig.to_flat_dict()` key prefixes.
-    set({ evalKeyCategories: {} });
-  },
-
   reset: () =>
     (() => {
       cancelPendingPatches();
       set({
       config: null,
+      persisted: null,
       loading: false,
       error: null,
       saving: false,
-      evalKeyCategories: {},
       })
     })(),
 });
